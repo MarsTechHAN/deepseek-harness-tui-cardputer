@@ -15,6 +15,13 @@ repository.
 
 ## Features
 
+**Animated splash**
+- The opening screen is the dsh-TUI pixel whale (`art.rs`, ported from
+  `whaleFrames.ts`): 13 unique frames — blink, fins, spout, tail, heart, sleep —
+  tone-mapped to `█ ▓ ░` so it reads on an 8-colour framebuffer terminal.
+- It animates while idle (any typing pauses it, the first message ends it), and
+  `/clear` brings the animated splash back.
+
 **Terminal UI**
 - Markdown-aware rendering (headings, bullets, numbered lists, dimmed code
   blocks), word-aware wrapping at the real 53-cell width, UTF-8 input.

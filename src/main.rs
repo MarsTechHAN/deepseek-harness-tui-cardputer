@@ -11,6 +11,7 @@
 //! Zero external crates: JSON is hand-rolled, HTTP goes through `curl`.
 
 mod api;
+mod art;
 mod cmd;
 mod config;
 mod harness;
@@ -54,6 +55,9 @@ pub struct Scr {
     qr: Option<Vec<String>>,
     /// Whether speech (ASR/TTS) is available for the current endpoint.
     speech_ok: bool,
+    /// Animated splash: current frame and whether the animation is running.
+    art_frame: usize,
+    art_on: bool,
     /// menuconfig-style configuration screen.
     menu: Option<Menu>,
     /// Selected row in the `/` command palette.
@@ -130,6 +134,8 @@ impl Scr {
             busy: false,
             voice_pending: false,
             speech_ok: true,
+            art_frame: 0,
+            art_on: false,
             menu: None,
             palette_sel: 0,
             qr: None,
@@ -240,6 +246,37 @@ impl Scr {
                 self.push(&strip_inline(t), K_NORM);
             }
         }
+    }
+
+    /// Draw frame 0 of the animated splash plus the hint line. Used at startup
+    /// and whenever `/clear` resets the screen.
+    pub fn seed_splash(&mut self, model: &str) {
+        self.lines.clear();
+        self.scroll = 0;
+        self.splash_done = false;
+        self.art_frame = 0;
+        for l in art_frame_lines(0, self.cols) {
+            self.lines.push((l, K_ART));
+        }
+        self.lines.push((format!("  {}", i18n::tf("hints", &[model])), K_DIM));
+        self.art_on = true;
+        self.draw();
+    }
+
+    /// Advance the splash animation while the user has not started working.
+    fn anim_tick(&mut self) {
+        if !self.art_on
+            || !self.input.is_empty()
+            || self.scroll != 0
+            || self.lines.len() > art::ART_ROWS + 1
+        {
+            return;
+        }
+        self.art_frame = (self.art_frame + 1) % art::FRAMES.len();
+        for (i, l) in art_frame_lines(self.art_frame, self.cols).into_iter().enumerate() {
+            self.lines[i] = (l, K_ART);
+        }
+        self.draw();
     }
 
     pub fn push(&mut self, text: &str, kind: u8) {
@@ -780,6 +817,7 @@ impl Scr {
                         f(self);
                         self.on_tick = Some(f);
                     }
+                    self.anim_tick();
                     continue;
                 }
             };
@@ -1419,20 +1457,13 @@ fn poll_mode(on: bool) {
 
 // ------------------------------------------------------------------ splash
 
-/// Opening splash: the DeepSeek pixel whale from dsh-TUI `whaleFrames.ts`
-/// (40x25 sprite, standard frame), tone-mapped to block glyphs so it reads on
-/// an 8-colour framebuffer terminal. 34x8 cells, fits above the prompt.
-const SPLASH: &[&str] = &[
-    "      ████████████      ██▓▓▓▓▓▓▓█",
-    "    ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███",
-    "   ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█",
-    "   █▓▓▓█▓▓▓▓▓▓█▓▓▓▓▓▓▓▓▓▓▓▓▓▓██",
-    "   █▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓█▓▓▓▓██",
-    "   ██▓░           ▓█▓▓▓▓██▓██",
-    "     ███░░░      ░░██▓▓▓▓███",
-    "        █████████████████████",
-];
-
+/// One animation frame, centred in the current terminal width. The art is
+/// pre-rendered to block glyphs (see `art.rs`), so this stays cheap.
+fn art_frame_lines(frame: usize, cols: usize) -> Vec<String> {
+    let f = &art::FRAMES[frame % art::FRAMES.len()];
+    let pad = " ".repeat(cols.saturating_sub(art::ART_WIDTH) / 2);
+    f.iter().map(|l| format!("{pad}{l}")).collect()
+}
 
 /// Wifi + battery for the header. Read directly so a tmux-formatted status
 /// script cannot leak markup like ``#[fg=green]`` into the line.
@@ -2043,12 +2074,7 @@ user you can search the web or speak.\n",
     let mut session_path: Option<std::path::PathBuf> = None;
     raw_mode(true);
 
-    for line in SPLASH {
-        scr.push(line, K_ART);
-    }
-    scr.push(&format!("  {}", i18n::t("tagline")), K_DIM);
-    scr.push(&format!("  {}", i18n::tf("hints", &[&cfg.model])), K_DIM);
-    scr.ctx_window = api::context_window(&cfg).unwrap_or(0);
+    scr.seed_splash(&cfg.model);
     scr.hdr = device_status();
     onboarding(&mut scr, &config_rc, &login_rx);
     cfg = api_cfg(&config_rc.borrow());
@@ -2103,9 +2129,7 @@ user you can search the web or speak.\n",
             if let Some(out) = dispatched {
                 scr.push(&format!("> {line}"), K_USER);
                 if out.clear {
-                    scr.lines.clear();
-                    scr.scroll = 0;
-                    scr.splash_done = true;
+                    scr.seed_splash(&config_rc.borrow().model.clone());
                 }
                 for (text, kind) in out.lines {
                     scr.push(&text, kind);
@@ -2149,6 +2173,7 @@ user you can search the web or speak.\n",
                 scr.lines.clear();
                 scr.scroll = 0;
                 scr.splash_done = true;
+                scr.art_on = false;
             }
             scr.push(&format!("> {submit}"), K_USER);
             cfg = api_cfg(&config_rc.borrow());
