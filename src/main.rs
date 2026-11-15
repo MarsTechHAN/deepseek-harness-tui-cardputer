@@ -14,10 +14,12 @@ mod api;
 mod cmd;
 mod config;
 mod harness;
+mod i18n;
 mod jobs;
 mod login;
 mod mcp;
 mod skills;
+mod usage;
 mod json;
 mod tool;
 mod tools;
@@ -48,6 +50,10 @@ pub struct Scr {
     busy: bool,
     /// Tab was pressed while busy: start recording once the turn ends.
     voice_pending: bool,
+    /// Full-screen QR overlay (login).
+    qr: Option<Vec<String>>,
+    /// Context window size of the current model, for the ring widget.
+    ctx_window: u64,
     /// Hide typed characters (API key entry).
     mask: bool,
     /// Submit automatically once speech fills the input.
@@ -101,6 +107,8 @@ impl Scr {
             quit: false,
             busy: false,
             voice_pending: false,
+            qr: None,
+            ctx_window: 0,
             mask: false,
             auto_send: true,
             utf8_buf: Vec::new(),
@@ -220,6 +228,20 @@ impl Scr {
     }
 
     fn draw(&self) {
+        if let Some(lines) = &self.qr {
+            let mut s = String::with_capacity(4096);
+            s.push_str("\x1b[?25l\x1b[H");
+            for i in 0..self.rows {
+                if let Some(l) = lines.get(i) {
+                    s.push_str(l);
+                }
+                s.push_str("\x1b[0m\x1b[K\r\n");
+            }
+            let mut out = std::io::stdout();
+            let _ = out.write_all(s.as_bytes());
+            let _ = out.flush();
+            return;
+        }
         if let Some(a) = &self.artifact {
             self.draw_artifact(a);
             return;
@@ -294,14 +316,28 @@ impl Scr {
             live_line.push_str(t);
         }
         if live_line.is_empty() && !self.queue.is_empty() {
-            live_line = format!("{} queued", self.queue.len());
+            live_line = i18n::tf("queued", &[&self.queue.len().to_string()]);
         }
         // Scrolled back: say so, and how to get back.
+        if self.ctx_window > 0 {
+            let pct = crate::usage::context_pct(self.ctx_window);
+            let label = if pct > 0.0 && pct < 0.10 {
+                format!("{:.1}%", pct * 100.0)
+            } else {
+                format!("{:.0}%", pct * 100.0)
+            };
+            let ring = format!("{} {}", crate::usage::ring(pct), label);
+            if live_line.is_empty() {
+                live_line = ring;
+            } else {
+                live_line = format!("{live_line}  {ring}");
+            }
+        }
         if self.busy && live_line.is_empty() {
-            live_line = "Enter 排队 · Shift+Enter 立即打断 · Esc 中止".to_string();
+            live_line = i18n::t("busy").to_string();
         }
         if self.scroll > 0 {
-            let hint = format!("\u{2191}{} \u{884c} \u{00b7} End", self.scroll);
+            let hint = i18n::tf("scrolled", &[&self.scroll.to_string()]);
             if live_line.is_empty() {
                 live_line = hint;
             } else {
@@ -610,6 +646,15 @@ impl Scr {
     fn edit(&mut self) -> Option<String> {
         loop {
             self.draw();
+            if self.qr.is_some() {
+                match self.read_key_timeout() {
+                    Some(0x1b) | Some(0x0d) | Some(0x0a) | Some(0x03) | Some(b'q') => {
+                        close_qr(self);
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             if self.artifact.is_some() {
                 self.artifact_keystroke();
                 continue;
@@ -1101,7 +1146,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                     if !self.scr.voice_pending {
                         self.scr.voice_pending = true;
                         self.scr
-                            .push("\u{1f3a4} 已排队录音（本轮结束后开始）", K_DIM);
+                            .push(i18n::t("voice_queued"), K_DIM);
                         changed = true;
                     }
                 }
@@ -1192,7 +1237,7 @@ impl<'a> TermUi<'a> {
         self.scr.cursor = 0;
         self.scr.queue.insert(0, line.clone());
         self.scr
-            .push(&format!("\u{26a1} 已打断，立即发送: {line}"), K_TOOL);
+            .push(&i18n::tf("force_sent", &[&line]), K_TOOL);
     }
 }
 
@@ -1296,19 +1341,56 @@ type ConfigRc = std::rc::Rc<std::cell::RefCell<config::Config>>;
 type LoginRx = std::rc::Rc<std::cell::RefCell<Option<std::sync::mpsc::Receiver<login::Submitted>>>>;
 
 /// Start the QR login server and render its code in the transcript.
+/// The QR is 13 rows tall; inside tmux the status bar costs one row, so hide it
+/// while the code is up and restore it afterwards. The pseudo-terminal also
+/// grows from 12 to 13 rows, which `term_size` re-reads.
+fn set_tmux_status(on: bool) {
+    if std::env::var("TMUX").is_err() {
+        return;
+    }
+    let _ = std::process::Command::new("tmux")
+        .args(["set-option", "-g", "status", if on { "on" } else { "off" }])
+        .status();
+    std::thread::sleep(std::time::Duration::from_millis(150));
+}
+
+fn close_qr(scr: &mut Scr) {
+    if scr.qr.is_none() {
+        return;
+    }
+    set_tmux_status(true);
+    let (r, c) = term_size();
+    scr.rows = r;
+    scr.cols = c;
+    scr.qr = None;
+    scr.draw();
+}
+
 fn start_login(scr: &mut Scr, login_rx: &LoginRx) {
     match login::start(login::DEFAULT_PORT) {
         Ok((url, rx)) => {
             let (qr, note) = login::qr_lines(&url);
-            scr.push(&format!("登录地址 {url}"), K_NORM);
+            scr.push(&i18n::tf("login_url", &[&url]), K_NORM);
             if qr.is_empty() {
-                scr.push(&format!("二维码不可用（{note}），请手动打开上面的地址"), K_DIM);
+                scr.push(&i18n::tf("login_no_qr", &[&note]), K_DIM);
+                scr.push(i18n::t("login_phone"), K_DIM);
             } else {
-                for line in qr {
-                    scr.push(&line, K_NORM);
-                }
+                // Full-screen overlay: 13 QR rows must all be visible at once.
+                set_tmux_status(false);
+                let (r, c) = term_size();
+                scr.rows = r;
+                scr.cols = c;
+                // Centre the code horizontally; it is usually 25 modules wide
+                // in a 53-column pane.
+                let widest = qr.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+                let pad = c.saturating_sub(widest) / 2;
+                let centered: Vec<String> = qr
+                    .iter()
+                    .map(|l| format!("{}{}", " ".repeat(pad), l))
+                    .collect();
+                scr.qr = Some(centered);
+                scr.draw();
             }
-            scr.push("用手机扫码并粘贴 API key，这里会自动完成", K_DIM);
             *login_rx.borrow_mut() = Some(rx);
         }
         Err(e) => scr.push(&format!("无法启动登录服务: {e}"), K_ERR),
@@ -1325,7 +1407,7 @@ fn apply_login(c: &mut config::Config, sub: login::Submitted) -> String {
     }
     c.configured = true;
     match c.save() {
-        Ok(()) => format!("已登录，保存到 {}", config::config_path().display()),
+        Ok(()) => i18n::tf("login_done", &[&config::config_path().display().to_string()]),
         Err(e) => format!("已收到 key，但保存失败: {e}"),
     }
 }
@@ -1335,29 +1417,29 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc, login_rx: &LoginRx) {
     if config_rc.borrow().configured {
         return;
     }
-    scr.push("欢迎使用 dst", K_NORM);
-    scr.push("还没有配置 API，请选择接入方式：", K_NORM);
-    scr.push("  1) DeepSeek 官方（推荐）— 手机扫码", K_TOOL);
-    scr.push("  2) 自有 / 自建 OpenAI 兼容 API", K_TOOL);
-    scr.push("输入 1 或 2 后回车（直接回车 = 1）", K_DIM);
+    scr.push(i18n::t("onboard_welcome"), K_NORM);
+    scr.push(i18n::t("onboard_choose"), K_NORM);
+    scr.push(i18n::t("onboard_opt1"), K_TOOL);
+    scr.push(i18n::t("onboard_opt2"), K_TOOL);
+    scr.push(i18n::t("onboard_prompt"), K_DIM);
     let choice = match scr.edit() {
         Some(l) => l.trim().to_string(),
         None => return,
     };
     if choice == "2" {
-        scr.push("Base URL（例如 https://api.openai.com/v1）:", K_DIM);
+        scr.push(i18n::t("onboard_base"), K_DIM);
         let base = match scr.edit() {
             Some(l) => l.trim().to_string(),
             None => return,
         };
-        scr.push("API key（输入时不回显）:", K_DIM);
+        scr.push(i18n::t("onboard_key"), K_DIM);
         scr.mask = true;
         let key = match scr.edit() {
             Some(l) => l.trim().to_string(),
             None => return,
         };
         scr.mask = false;
-        scr.push("模型名（回车 = deepseek-flash）:", K_DIM);
+        scr.push(i18n::t("onboard_model"), K_DIM);
         let model = match scr.edit() {
             Some(l) => l.trim().to_string(),
             None => return,
@@ -1373,7 +1455,7 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc, login_rx: &LoginRx) {
             }
             c.configured = !c.api_key.is_empty();
             match c.save() {
-                Ok(()) => scr.push("已保存到 ~/.dst/config.yml", K_NORM),
+                Ok(()) => scr.push(i18n::t("onboard_saved"), K_NORM),
                 Err(e) => scr.push(&format!("保存失败: {e}"), K_ERR),
             }
         }
@@ -1394,13 +1476,13 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc, login_rx: &LoginRx) {
             if let Some(k) = scr.read_key_timeout() {
                 if k == 0x1b || k == 0x03 {
                     *login_rx.borrow_mut() = None;
-                    scr.push("已取消登录", K_DIM);
+                    scr.push(i18n::t("onboard_cancelled"), K_DIM);
                     return;
                 }
             }
         }
         *login_rx.borrow_mut() = None;
-        scr.push("登录超时，稍后可再输入 /login", K_ERR);
+        scr.push(i18n::t("onboard_timeout"), K_ERR);
     }
 }
 
@@ -1474,15 +1556,16 @@ fn config_wizard(scr: &mut Scr, config_rc: &ConfigRc) {
                 c.queued_default,
             )
         };
-        scr.push("配置 — 输入编号，0 返回", K_DIM);
-        scr.push(&format!(" 1) 模型       {model}"), K_TOOL);
-        scr.push(&format!(" 2) 推理强度   {effort}"), K_TOOL);
-        scr.push(&format!(" 3) 接口地址   {base}"), K_TOOL);
-        scr.push(&format!(" 4) API key    {kstate}"), K_TOOL);
-        scr.push(&format!(" 5) TTS 音色   {voice}"), K_TOOL);
-        scr.push(&format!(" 6) 语音自动发送  {}", if auto { "开" } else { "关" }), K_TOOL);
-        scr.push(&format!(" 7) 消息排队模式  {}", if queued { "排队" } else { "立即" }), K_TOOL);
-        scr.push(" 9) 保存并返回", K_TOOL);
+        scr.push(i18n::t("wizard_title"), K_DIM);
+        scr.push(&i18n::tf("w1", &[&model]), K_TOOL);
+        scr.push(&i18n::tf("w2", &[&effort]), K_TOOL);
+        scr.push(&i18n::tf("w3", &[&base]), K_TOOL);
+        scr.push(&i18n::tf("w4", &[&kstate]), K_TOOL);
+        scr.push(&i18n::tf("w5", &[&voice]), K_TOOL);
+        scr.push(&i18n::tf("w6", &[if auto { i18n::t("on") } else { i18n::t("off") }]), K_TOOL);
+        scr.push(&i18n::tf("w7", &[if queued { i18n::t("queued_mode") } else { i18n::t("immediate_mode") }]), K_TOOL);
+        scr.push(&i18n::tf("w8", &[&config_rc.borrow().language]), K_TOOL);
+        scr.push(i18n::t("w9"), K_TOOL);
         let choice = match scr.edit() {
             Some(l) => l.trim().to_string(),
             None => return,
@@ -1496,7 +1579,7 @@ fn config_wizard(scr: &mut Scr, config_rc: &ConfigRc) {
                         for (i, (id, name, _)) in models.iter().enumerate() {
                             scr.push(&format!(" {}) {id}  {name}", i + 1), K_TOOL);
                         }
-                        scr.push("输入编号或模型名（0 取消）", K_DIM);
+                        scr.push(i18n::t("w_choose"), K_DIM);
                         let sel = match scr.edit() {
                             Some(l) => l.trim().to_string(),
                             None => return,
@@ -1518,7 +1601,7 @@ fn config_wizard(scr: &mut Scr, config_rc: &ConfigRc) {
                 }
             }
             "2" => {
-                scr.push(" 1) auto   2) low   3) high   4) max", K_TOOL);
+                scr.push(i18n::t("w_efforts"), K_TOOL);
                 let sel = match scr.edit() {
                     Some(l) => l.trim().to_string(),
                     None => return,
@@ -1536,7 +1619,7 @@ fn config_wizard(scr: &mut Scr, config_rc: &ConfigRc) {
                 }
             }
             "3" => {
-                scr.push(" 1) DeepSeek 官方   2) 自定义（输入 URL）", K_TOOL);
+                scr.push(i18n::t("w_base"), K_TOOL);
                 let sel = match scr.edit() {
                     Some(l) => l.trim().to_string(),
                     None => return,
@@ -1563,7 +1646,7 @@ fn config_wizard(scr: &mut Scr, config_rc: &ConfigRc) {
                 }
             }
             "4" => {
-                scr.push("粘贴 API key（输入不回显）", K_DIM);
+                scr.push(i18n::t("w_key_prompt"), K_DIM);
                 scr.mask = true;
                 let k = match scr.edit() {
                     Some(l) => l.trim().to_string(),
@@ -1581,7 +1664,7 @@ fn config_wizard(scr: &mut Scr, config_rc: &ConfigRc) {
                 }
             }
             "5" => {
-                scr.push(" 1) stella（女声）   2) tide（男声）", K_TOOL);
+                scr.push(i18n::t("w_voice"), K_TOOL);
                 let sel = match scr.edit() {
                     Some(l) => l.trim().to_string(),
                     None => return,
@@ -1608,9 +1691,24 @@ fn config_wizard(scr: &mut Scr, config_rc: &ConfigRc) {
                 c.queued_default = !c.queued_default;
                 changed = true;
             }
+            "8" => {
+                scr.push(i18n::t("w_lang"), K_TOOL);
+                let sel = match scr.edit() {
+                    Some(l) => l.trim().to_string(),
+                    None => return,
+                };
+                match sel.as_str() {
+                    "1" => { config_rc.borrow_mut().language = "en".into(); changed = true; }
+                    "2" => { config_rc.borrow_mut().language = "zh".into(); changed = true; }
+                    _ => {}
+                }
+                if changed {
+                    i18n::set(&config_rc.borrow().language);
+                }
+            }
             "9" | "" => {
                 match config_rc.borrow().save() {
-                    Ok(()) => scr.push("已保存到 ~/.dst/config.yml", K_NORM),
+                    Ok(()) => scr.push(i18n::t("w_saved"), K_NORM),
                     Err(e) => scr.push(&format!("保存失败: {e}"), K_ERR),
                 }
                 return;
@@ -1645,12 +1743,14 @@ fn main() {
 
     let config_rc: ConfigRc = std::rc::Rc::new(std::cell::RefCell::new(config::Config::load()));
     let login_rx: LoginRx = std::rc::Rc::new(std::cell::RefCell::new(None));
+    i18n::set(&config_rc.borrow().language);
     let mut cfg = api_cfg(&config_rc.borrow());
     tools::set_cfg(cfg.clone());
     voice::set_cfg(cfg.clone());
     let shared_cfg = std::rc::Rc::new(std::cell::RefCell::new(cfg.clone()));
     // Skills first (their catalog goes into the prompt), then MCP servers
     // (their tools are discovered over JSON-RPC at startup).
+    usage::load();
     let skill_list = skills::load_all();
     tools::set_skills(skill_list.clone());
     mcp::install(mcp::start_all());
@@ -1681,8 +1781,9 @@ fn main() {
     for line in SPLASH {
         scr.push(line, K_ART);
     }
-    scr.push("  dst \u{b7} a DeepSeek harness on a Cardputer Zero", K_DIM);
-    scr.push(&format!("  {} | Tab \u{957f}\u{6309}\u{5f55}\u{97f3} | /quit", cfg.model), K_DIM);
+    scr.push(&format!("  {}", i18n::t("tagline")), K_DIM);
+    scr.push(&format!("  {}", i18n::tf("hints", &[&cfg.model])), K_DIM);
+    scr.ctx_window = api::context_window(&cfg).unwrap_or(0);
     scr.hdr = device_status();
     onboarding(&mut scr, &config_rc, &login_rx);
     cfg = api_cfg(&config_rc.borrow());
@@ -1690,7 +1791,7 @@ fn main() {
     tools::set_cfg(cfg.clone());
     voice::set_cfg(cfg.clone());
     if !config_rc.borrow().configured {
-        scr.push("仍未配置：可随时输入 /login 或 /key <api-key>", K_ERR);
+        scr.push(i18n::t("unconfigured"), K_ERR);
     }
     let msgs: jobs::Msgs = std::rc::Rc::new(std::cell::RefCell::new(vec![harness::msg("system", &system_prompt)]));
     {
@@ -1709,6 +1810,7 @@ fn main() {
             if let Some(sub) = got {
                 let msg = apply_login(&mut crc.borrow_mut(), sub);
                 *lrx.borrow_mut() = None;
+                close_qr(s);
                 let c = api_cfg(&crc.borrow());
                 *sc.borrow_mut() = c.clone();
                 tools::set_cfg(c.clone());
@@ -1759,6 +1861,7 @@ fn main() {
                         }
                     }
                 }
+                i18n::set(&config_rc.borrow().language);
                 cfg = api_cfg(&config_rc.borrow());
                 *shared_cfg.borrow_mut() = cfg.clone();
                 tools::set_cfg(cfg.clone());

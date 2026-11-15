@@ -229,7 +229,7 @@ pub fn start(port: u16) -> Result<(String, Receiver<Submitted>), String> {
 /// Returns (qr_lines, note) where note explains a fallback.
 pub fn qr_lines(url: &str) -> (Vec<String>, String) {
     let out = std::process::Command::new("qrencode")
-        .args(["-t", "UTF8", "-m", "1", "-o", "-"])
+        .args(["-t", "UTF8", "-m", "0", "-o", "-"])
         .arg(url)
         .output();
     match out {

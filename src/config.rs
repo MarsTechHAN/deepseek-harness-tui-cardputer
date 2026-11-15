@@ -438,6 +438,8 @@ pub struct Config {
     pub tts_voice: String,
     pub queued_default: bool,
     pub auto_send_voice: bool,
+    /// UI language: en | zh (default en).
+    pub language: String,
     pub disabled_tools: Vec<String>,
     pub tool_config: Vec<(String, Y)>,
     /// True once a usable API key has been provided.
@@ -455,6 +457,7 @@ impl Default for Config {
             tts_voice: "stella".into(),
             queued_default: true,
             auto_send_voice: true,
+            language: "en".into(),
             disabled_tools: Vec::new(),
             tool_config: Vec::new(),
             configured: false,
@@ -522,6 +525,9 @@ impl Config {
             if let Some(v) = tui.get("auto_send_voice").and_then(|v| v.as_bool()) {
                 self.auto_send_voice = v;
             }
+            if let Some(v) = tui.get("language").and_then(|v| v.as_str()) {
+                self.language = v.to_string();
+            }
         }
         if let Some(voice) = doc.get("voice") {
             if let Some(v) = voice.get("tts_voice").and_then(|v| v.as_str()) {
@@ -567,6 +573,7 @@ impl Config {
         s.push_str("tui:\n");
         s.push_str(&format!("  queued_default: {}\n", self.queued_default));
         s.push_str(&format!("  auto_send_voice: {}\n", self.auto_send_voice));
+        s.push_str(&format!("  language: {}\n", yaml_quote(&self.language)));
         if !self.disabled_tools.is_empty() || !self.tool_config.is_empty() {
             s.push_str("insert:\n");
             for t in &self.disabled_tools {
@@ -608,7 +615,10 @@ impl Config {
             format!("api key    {shown}"),
             format!("max_tokens {}", self.max_tokens),
             format!("tts_voice  {}", self.tts_voice),
-            format!("queued     {}   auto_send_voice {}", self.queued_default, self.auto_send_voice),
+            format!(
+                "queued     {}   auto_send_voice {}   language {}",
+                self.queued_default, self.auto_send_voice, self.language
+            ),
             format!("home       {}", home().display()),
             format!("config     {}", config_path().display()),
         ]

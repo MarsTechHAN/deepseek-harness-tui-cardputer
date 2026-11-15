@@ -35,6 +35,17 @@ pub struct StreamOut {
     pub text: String,
     pub calls: Vec<ToolCall>,
     pub finish: String,
+    pub usage: Option<Usage>,
+}
+
+/// Token accounting for one request. DeepSeek splits input into cache hits and
+/// misses, which is what makes a meaningful cache-hit rate possible.
+#[derive(Default, Clone)]
+pub struct Usage {
+    pub prompt: u64,
+    pub completion: u64,
+    pub cache_hit: u64,
+    pub cache_miss: u64,
 }
 
 /// One stream event. `Reason` is the model's thinking, `Content` the answer.
@@ -64,6 +75,10 @@ fn body_json(cfg: &Cfg, messages: &J, tools: &J) -> String {
         ("max_tokens".to_string(), J::Num(cfg.max_tokens as f64)),
         ("tool_choice".to_string(), J::s("auto")),
         ("parallel_tool_calls".to_string(), J::Bool(true)),
+        (
+            "stream_options".to_string(),
+            J::o(vec![("include_usage", J::Bool(true))]),
+        ),
     ];
     if cfg.effort != "auto" && !cfg.effort.is_empty() {
         fields.push(("reasoning_effort".to_string(), J::s(&cfg.effort)));
@@ -88,6 +103,16 @@ fn apply_line(line: &str, out: &mut StreamOut, tx: &std::sync::mpsc::Sender<ApiE
         Some(c) => c,
         None => return false,
     };
+    // Usage arrives on its own chunk (choices empty) when include_usage is set.
+    if let Some(u) = v.get("usage") {
+        let num = |k: &str| u.get(k).and_then(|x| x.as_num()).unwrap_or(0.0) as u64;
+        out.usage = Some(Usage {
+            prompt: num("prompt_tokens"),
+            completion: num("completion_tokens"),
+            cache_hit: num("prompt_cache_hit_tokens"),
+            cache_miss: num("prompt_cache_miss_tokens"),
+        });
+    }
     if let Some(f) = choice.get("finish_reason").and_then(|f| f.as_str()) {
         if !f.is_empty() {
             out.finish = f.to_string();
@@ -233,6 +258,33 @@ pub fn spawn_chat(cfg: &Cfg, messages: &J, tools: &J) -> Result<Chat, String> {
     });
 
     Ok(Chat { rx, pid })
+}
+
+/// Context window (tokens) of the configured model, from `/models`.
+pub fn context_window(cfg: &Cfg) -> Option<u64> {
+    let url = format!("{}/models", cfg.base.trim_end_matches('/'));
+    let out = Command::new("curl")
+        .args([
+            "-sS",
+            "--max-time",
+            "15",
+            "-H",
+            &format!("Authorization: Bearer {}", cfg.key),
+            &url,
+        ])
+        .output()
+        .ok()?;
+    let v = parse(&String::from_utf8_lossy(&out.stdout))?;
+    let arr = v.get("data")?.as_arr()?;
+    for m in arr {
+        if m.get("id").and_then(|x| x.as_str()) == Some(cfg.model.as_str()) {
+            return m
+                .get("context_window")
+                .and_then(|x| x.as_num())
+                .map(|n| n as u64);
+        }
+    }
+    None
 }
 
 /// Models the endpoint advertises, with their supported effort levels.

@@ -304,7 +304,10 @@ pub fn run_turn(
 
         let snapshot = J::Arr(msgs.clone());
         let out = match stream_once(cfg, &snapshot, &defs, ui) {
-            Ok(o) => o,
+            Ok(o) => {
+                crate::usage::record_opt(o.usage.as_ref());
+                o
+            }
             Err((partial, was_cancelled)) => {
                 let text = partial.text.trim().to_string();
                 if !text.is_empty() {

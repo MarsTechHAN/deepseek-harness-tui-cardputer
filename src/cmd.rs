@@ -46,6 +46,11 @@ pub const COMMANDS: &[Command] = &[
         input_hint: Some("<api-key>"),
     },
     Command {
+        name: "usage",
+        description: "token usage, cache hit rate and context pressure",
+        input_hint: None,
+    },
+    Command {
         name: "resume",
         description: "list or resume a previous session",
         input_hint: Some("[n]"),
@@ -137,7 +142,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
 
     let out = match name.as_str() {
         "help" | "?" => {
-            let mut lines = vec![("commands".to_string(), KIND_DIM)];
+            let mut lines = vec![(crate::i18n::t("cmd_help_title").to_string(), KIND_DIM)];
             for c in COMMANDS {
                 let hint = c
                     .input_hint
@@ -181,7 +186,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             if arg.is_empty() {
                 Outcome::many(vec![
                     (format!("effort  {}", cfg.effort), KIND_NORMAL),
-                    ("values: auto | low | high | max".into(), KIND_DIM),
+                    (crate::i18n::t("effort_values").to_string(), KIND_DIM),
                     ("usage: /effort high".into(), KIND_DIM),
                 ])
             } else {
@@ -238,6 +243,13 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 Outcome::many(lines)
             }
         }
+        "usage" => {
+            let mut lines = vec![("usage".to_string(), KIND_DIM)];
+            for l in crate::usage::report() {
+                lines.push((l, KIND_NORMAL));
+            }
+            Outcome::many(lines)
+        }
         "resume" => {
             let sessions = config::list_sessions();
             if sessions.is_empty() {
@@ -282,8 +294,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
         },
         "" => usage("/"),
         other => Outcome::many(vec![
-            (format!("unknown command /{other}"), KIND_ERR),
-            ("try /help".into(), KIND_DIM),
+            (crate::i18n::tf("cmd_unknown", &[other]), KIND_ERR),
+            (crate::i18n::t("try_help").to_string(), KIND_DIM),
         ]),
     };
     Some(out)
