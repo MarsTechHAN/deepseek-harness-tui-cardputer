@@ -86,7 +86,7 @@ fn post_json(path: &str, body: &str, what: &str) -> Result<J, Fail> {
     parse_or_fail(&stdout, what)
 }
 
-pub fn registry() -> Vec<ToolDef> {
+fn registry_all() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "bash",
@@ -370,6 +370,22 @@ fn skill_exec(args: &J) -> Result<J, Fail> {
 
 fn skill_render(_args: &J, v: &J) -> String {
     v.get("body").and_then(|b| b.as_str()).unwrap_or("").to_string()
+}
+
+/// Tools available for this endpoint. Server-side tools (search/fetch/ocr) and
+/// speech only exist on DeepSeek's own API, so a third-party endpoint gets a
+/// smaller, honest tool set instead of tools that always fail.
+pub fn registry(caps: crate::config::Capabilities) -> Vec<ToolDef> {
+    let web = ["search", "fetch", "ocr"];
+    let mut seen = std::collections::HashSet::new();
+    registry_all()
+        .into_iter()
+        .filter(|t| caps.web_tools || !web.contains(&t.name))
+        .filter(|t| caps.speech || t.name != "speak")
+        // The API rejects duplicated tool names, so a misconfigured MCP server
+        // must never be able to break the agent.
+        .filter(|t| seen.insert(t.name))
+        .collect()
 }
 
 fn short(s: &str, n: usize) -> String {
@@ -691,7 +707,7 @@ fn jobs_render(_args: &J, v: &J) -> String {
 // ---------------------------------------------------------------------------
 
 pub fn exec(name: &str, raw_args: &str) -> String {
-    let reg = registry();
+    let reg = registry_all();
     let calls = vec![Call {
         id: "j".to_string(),
         name: name.to_string(),

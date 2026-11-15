@@ -99,6 +99,35 @@ fn human(n: u64) -> String {
     }
 }
 
+/// Display width in terminal cells (CJK counts as two).
+fn dw(s: &str) -> usize {
+    s.chars()
+        .map(|c| {
+            let u = c as u32;
+            if (0x1100..=0x115F).contains(&u)
+                || (0x2E80..=0xA4CF).contains(&u)
+                || (0xAC00..=0xD7A3).contains(&u)
+                || (0xF900..=0xFAFF).contains(&u)
+                || (0xFF00..=0xFF60).contains(&u)
+            {
+                2
+            } else {
+                1
+            }
+        })
+        .sum()
+}
+
+fn row(label: &str, value: &str, bar: Option<String>, label_w: usize) -> String {
+    let pad = label_w.saturating_sub(dw(label));
+    let mut s = format!("{label}{} {:>7}", " ".repeat(pad), value);
+    if let Some(b) = bar {
+        s.push_str("  ");
+        s.push_str(&b);
+    }
+    s
+}
+
 /// `/usage` panel: totals, cache-hit rate and a share bar per bucket.
 pub fn report() -> Vec<String> {
     let g = snapshot();
@@ -109,34 +138,47 @@ pub fn report() -> Vec<String> {
         0.0
     };
     let total = (input_total + g.completion).max(1);
+    let l_cache = crate::i18n::t("usage_cache_rate");
+    let l_read = crate::i18n::t("usage_cache_read");
+    let l_unc = crate::i18n::t("usage_uncached");
+    let l_out = crate::i18n::t("usage_output");
+    let l_in = crate::i18n::t("usage_input_total");
+    // One bar width for every row, and a label column wide enough for the
+    // longest translated label, so the bars line up in both languages.
+    let label_w = [l_cache, l_read, l_unc, l_out, l_in]
+        .iter()
+        .map(|l| dw(l))
+        .max()
+        .unwrap_or(12)
+        .max(11);
     let mut out = Vec::new();
     out.push(format!("{} · {} requests", crate::i18n::t("usage_title"), g.requests));
     out.push(String::new());
-    out.push(format!(
-        "{}  {:>5.1}%   {}",
-        crate::i18n::t("usage_cache_rate"),
-        hit_rate * 100.0,
-        bar(hit_rate, 10)
+    out.push(row(
+        l_cache,
+        &format!("{:.1}%", hit_rate * 100.0),
+        Some(bar(hit_rate, 10)),
+        label_w,
     ));
-    out.push(format!(
-        "{}      {:>8}   {}",
-        crate::i18n::t("usage_cache_read"),
-        human(g.cache_hit),
-        bar(g.cache_hit as f64 / total as f64, 10)
+    out.push(row(
+        l_read,
+        &human(g.cache_hit),
+        Some(bar(g.cache_hit as f64 / total as f64, 10)),
+        label_w,
     ));
-    out.push(format!(
-        "{}  {:>8}   {}",
-        crate::i18n::t("usage_uncached"),
-        human(g.cache_miss),
-        bar(g.cache_miss as f64 / total as f64, 10)
+    out.push(row(
+        l_unc,
+        &human(g.cache_miss),
+        Some(bar(g.cache_miss as f64 / total as f64, 10)),
+        label_w,
     ));
-    out.push(format!(
-        "{}          {:>8}   {}",
-        crate::i18n::t("usage_output"),
-        human(g.completion),
-        bar(g.completion as f64 / total as f64, 10)
+    out.push(row(
+        l_out,
+        &human(g.completion),
+        Some(bar(g.completion as f64 / total as f64, 10)),
+        label_w,
     ));
-    out.push(format!("{}     {:>8}", crate::i18n::t("usage_input_total"), human(input_total)));
+    out.push(row(l_in, &human(input_total), None, label_w));
     out.push(String::new());
     out.push(crate::i18n::tf("usage_context", &[&human(g.last_prompt)]));
     out
@@ -151,8 +193,7 @@ pub fn context_pct(window: u64) -> f64 {
     (last as f64 / window as f64).clamp(0.0, 1.0)
 }
 
-/// Small ring glyph for the status line; falls back to a bar shape in the same
-/// 5-step granularity if the font lacks the circle quadrants.
+/// Small ring glyph for the status line.
 pub fn ring(pct: f64) -> &'static str {
     match (pct * 4.0).round() as u32 {
         0 => "○",

@@ -287,6 +287,14 @@ fn yaml_quote(s: &str) -> String {
     }
 }
 
+/// True when the endpoint is DeepSeek's own API. The server-side tools
+/// (search/fetch/ocr) and the speech APIs only exist there.
+pub fn is_official(base: &str) -> bool {
+    base.trim()
+        .trim_end_matches('/')
+        .starts_with("https://api.deepseek.com")
+}
+
 pub fn home() -> PathBuf {
     let h = std::env::var("HOME").unwrap_or_else(|_| "/home/hanxiao".into());
     PathBuf::from(h).join(".dst")
@@ -428,6 +436,13 @@ pub fn ensure_home() {
     }
 }
 
+/// What this endpoint can actually do.
+#[derive(Clone, Copy, Debug)]
+pub struct Capabilities {
+    pub web_tools: bool,
+    pub speech: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub model: String,
@@ -466,6 +481,15 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Tools and features that require the official endpoint.
+    pub fn capabilities(&self) -> Capabilities {
+        let official = is_official(&self.base);
+        Capabilities {
+            web_tools: official,
+            speech: official,
+        }
+    }
+
     pub fn load() -> Config {
         ensure_home();
         migrate_legacy();

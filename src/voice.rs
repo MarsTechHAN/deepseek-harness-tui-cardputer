@@ -1,4 +1,4 @@
-//! Voice input/output on DeepSeek's own APIs — pure Rust, no Python helper.
+//! Voice input/output on DeepSeek's own APIs — no Python, no Volcengine.
 //!
 //!   TTS: POST /v1/tools/tts   {text, voice_id, format:"pcm"}
 //!        -> 24 kHz s16 mono PCM, converted here to 48 kHz S32 stereo for

@@ -44,6 +44,22 @@ repository.
   `/config`. Only interface text is translated; tool descriptions and the system
   prompt stay English so model behaviour is unchanged.
 
+**Command palette**
+- Typing `/` opens an inline palette of every command with its description; Up/Down
+  select, Enter runs it (commands that need an argument are completed with a space
+  instead). The list scrolls with the selection.
+
+**Configuration screen**
+- `/config` is a menuconfig-style screen: arrows move, Enter edits, Esc leaves. It
+  edits model, effort, endpoint, API key, TTS voice, auto-send, queue mode and
+  language, and warns before switching to a third-party endpoint.
+
+**Endpoint capabilities**
+- Speech and the server-side tools (`search`/`fetch`/`ocr`) only exist on DeepSeek's
+  official API. On a third-party endpoint those tools are removed from the registry
+  and the model is told they are unavailable; the wizard warns first. `dst --tools`
+  prints the effective tool set for diagnosis.
+
 **Sessions**
 - Every turn is saved to `~/.dst/sessions/<timestamp>.json`; `/resume` lists and
   restores them.
@@ -118,7 +134,8 @@ file location.
 Zero crates, so no network is needed to build:
 
 ```sh
-cargo build --release
+# The device only has 512 MB; LTO can be OOM-killed. Build single-threaded there.
+CARGO_BUILD_JOBS=1 cargo build --release
 install -m755 target/release/dst /usr/local/bin/dst
 ```
 

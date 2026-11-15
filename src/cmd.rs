@@ -72,6 +72,39 @@ pub const COMMANDS: &[Command] = &[
     },
 ];
 
+/// Commands matching what has been typed after `/` (before any space).
+/// Used by the interactive palette.
+/// Localized one-line description for a command.
+pub fn describe(name: &str) -> String {
+    let key = format!("cmd_{name}");
+    let t = crate::i18n::t(&key);
+    if t.is_empty() {
+        COMMANDS
+            .iter()
+            .find(|c| c.name == name)
+            .map(|c| c.description.to_string())
+            .unwrap_or_default()
+    } else {
+        t.to_string()
+    }
+}
+
+pub fn palette(input: &str) -> Vec<(&'static str, String, Option<&'static str>)> {
+    let t = input.trim_start();
+    if !t.starts_with('/') {
+        return Vec::new();
+    }
+    let q = &t[1..];
+    if q.contains(char::is_whitespace) {
+        return Vec::new();
+    }
+    COMMANDS
+        .iter()
+        .filter(|c| c.name.starts_with(q))
+        .map(|c| (c.name, describe(c.name), c.input_hint))
+        .collect()
+}
+
 pub struct Outcome {
     pub lines: Vec<(String, u8)>,
     pub quit: bool,
@@ -149,7 +182,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                     .map(|h| format!(" {h}"))
                     .unwrap_or_default();
                 lines.push((format!("/{}{hint}", c.name), KIND_TOOL));
-                lines.push((format!("   {}", c.description), KIND_DIM));
+                lines.push((format!("   {}", describe(c.name)), KIND_DIM));
             }
             lines.push(("Enter queues while busy; Shift+Enter interrupts".into(), KIND_DIM));
             Outcome::many(lines)
@@ -244,9 +277,16 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             }
         }
         "usage" => {
-            let mut lines = vec![("usage".to_string(), KIND_DIM)];
+            let mut lines = vec![(crate::i18n::t("usage_title").to_string(), KIND_DIM)];
             for l in crate::usage::report() {
                 lines.push((l, KIND_NORMAL));
+            }
+            if !config::is_official(&cfg.base) {
+                lines.push((
+                    "note: cache accounting is reported by the official DeepSeek API only"
+                        .to_string(),
+                    KIND_DIM,
+                ));
             }
             Outcome::many(lines)
         }

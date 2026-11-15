@@ -253,3 +253,131 @@ pub fn qr_lines(url: &str) -> (Vec<String>, String) {
         ),
     }
 }
+
+/// Render the QR and blit it straight into the framebuffer.
+///
+/// `qrencode` on this image supports SVG but not PBM, and terminal block glyphs
+/// are not pixel-exact on a 6x13 cell (the 1px gaps break the module grid), so
+/// the code is rasterised from SVG `<rect>` elements ourselves and written as
+/// pixels. `rect` limits the blit area so the guide text drawn by the terminal
+/// on the right stays intact.
+pub fn draw_qr_fb(url: &str, rect: Option<(usize, usize, usize, usize)>) -> Result<(usize, usize), String> {
+    const SCALE: usize = 5;
+    let out = std::process::Command::new("qrencode")
+        .args(["-t", "SVG", "-m", "4", "-o", "-"])
+        .arg(url)
+        .output()
+        .map_err(|e| format!("qrencode: {e}"))?;
+    if !out.status.success() {
+        return Err("qrencode failed".into());
+    }
+    let svg = String::from_utf8_lossy(&out.stdout);
+
+    // viewBox tells us the module count (QR modules + quiet zone).
+    let vb = svg
+        .split("viewBox=\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .ok_or("no viewBox")?;
+    let mut dims = vb.split_whitespace().skip(2).map(|v| v.parse::<f64>());
+    let vw = dims.next().and_then(|r| r.ok()).ok_or("bad viewBox width")?;
+    let vh = dims.next().and_then(|r| r.ok()).ok_or("bad viewBox height")?;
+    let modules_w = vw.round() as usize;
+    let modules_h = vh.round() as usize;
+    if modules_w == 0 || modules_h == 0 || modules_w > 200 {
+        return Err("implausible SVG size".into());
+    }
+
+    // Rasterise: one rect per dark module in viewBox units.
+    let w = modules_w * SCALE;
+    let h = modules_h * SCALE;
+    let mut bitmap = vec![false; w * h];
+    let mut rest: &str = &svg;
+    while let Some(i) = rest.find("<rect") {
+        rest = &rest[i + 5..];
+        let end = match rest.find('>') {
+            Some(e) => e,
+            None => break,
+        };
+        let tag = &rest[..end];
+        rest = &rest[end..];
+        let attr = |name: &str| -> Option<f64> {
+            let pat = format!("{name}=\"");
+            let i = tag.find(&pat)? + pat.len();
+            let j = tag[i..].find('"')? + i;
+            tag[i..j].trim().parse::<f64>().ok()
+        };
+        // qrencode emits a white background rect plus one rect per dark
+        // module; only the dark ones are modules.
+        let lc = tag.to_ascii_lowercase();
+        if lc.contains("ffffff") || lc.contains("fill:#fff") || lc.contains("fill: #fff") {
+            continue;
+        }
+        let (x, y) = match (attr("x"), attr("y")) {
+            (Some(x), Some(y)) => (x, y),
+            _ => continue,
+        };
+        let (rw, rh) = (attr("width").unwrap_or(1.0), attr("height").unwrap_or(1.0));
+        let x0 = (x * SCALE as f64).round() as usize;
+        let y0 = (y * SCALE as f64).round() as usize;
+        let rw = (rw * SCALE as f64).round() as usize;
+        let rh = (rh * SCALE as f64).round() as usize;
+        for py in y0..(y0 + rh).min(h) {
+            for px in x0..(x0 + rw).min(w) {
+                bitmap[py * w + px] = true;
+            }
+        }
+    }
+
+    const FB_W: usize = 320;
+    const FB_H: usize = 170;
+    let (rx, ry, rw, rh) = rect.unwrap_or((0, 0, FB_W, FB_H));
+    let ox = rx + rw.saturating_sub(w) / 2;
+    let oy = ry + rh.saturating_sub(h) / 2;
+    let mut fb = vec![0u8; FB_W * FB_H * 2];
+    // Standard polarity: white background, black modules (phones do not all
+    // handle inverted codes).
+    for y in 0..rh.min(FB_H.saturating_sub(ry)) {
+        let start = ((ry + y) * FB_W + rx) * 2;
+        let end = start + rw.min(FB_W.saturating_sub(rx)) * 2;
+        if end <= fb.len() {
+            for b in &mut fb[start..end] {
+                *b = 0xFF;
+            }
+        }
+    }
+    for y in 0..h {
+        let py = oy + y;
+        if py >= FB_H {
+            break;
+        }
+        for x in 0..w {
+            let px = ox + x;
+            if px >= FB_W {
+                break;
+            }
+            let v: u16 = if bitmap[y * w + x] { 0x0000 } else { 0xFFFF };
+            let o = (py * FB_W + px) * 2;
+            fb[o] = (v & 0xFF) as u8;
+            fb[o + 1] = (v >> 8) as u8;
+        }
+    }
+    use std::io::{Seek, SeekFrom, Write as _};
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/fb_panel")
+        .map_err(|e| format!("/dev/fb_panel: {e}"))?;
+    for y in 0..rh.min(FB_H.saturating_sub(ry)) {
+        let start = ((ry + y) * FB_W + rx) * 2;
+        let end = start + rw.min(FB_W.saturating_sub(rx)) * 2;
+        if end > fb.len() {
+            break;
+        }
+        f.seek(SeekFrom::Start(start as u64))
+            .map_err(|e| format!("fb seek: {e}"))?;
+        f.write_all(&fb[start..end])
+            .map_err(|e| format!("fb write: {e}"))?;
+    }
+    f.flush().ok();
+    Ok((w, h))
+}

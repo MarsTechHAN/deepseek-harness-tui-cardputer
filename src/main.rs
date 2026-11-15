@@ -52,6 +52,15 @@ pub struct Scr {
     voice_pending: bool,
     /// Full-screen QR overlay (login).
     qr: Option<Vec<String>>,
+    /// Whether speech (ASR/TTS) is available for the current endpoint.
+    speech_ok: bool,
+    /// menuconfig-style configuration screen.
+    menu: Option<Menu>,
+    /// Selected row in the `/` command palette.
+    palette_sel: usize,
+    /// True once the QR has been blitted to the framebuffer: further terminal
+    /// repaints would paint over it, so draw() becomes a no-op.
+    qr_blit: bool,
     /// Context window size of the current model, for the ring widget.
     ctx_window: u64,
     /// Hide typed characters (API key entry).
@@ -85,6 +94,19 @@ pub const K_HEAD: u8 = 8;
 /// width is fixed here rather than trusted from the pty.
 const PANEL_COLS: usize = 53;
 
+#[derive(Clone)]
+struct MenuItem {
+    label: String,
+    value: String,
+}
+
+struct Menu {
+    title: String,
+    items: Vec<MenuItem>,
+    sel: usize,
+    hint: String,
+}
+
 /// A full-screen panel composed by the agent (`artifact` tool).
 struct Artifact {
     title: String,
@@ -107,7 +129,11 @@ impl Scr {
             quit: false,
             busy: false,
             voice_pending: false,
+            speech_ok: true,
+            menu: None,
+            palette_sel: 0,
             qr: None,
+            qr_blit: false,
             ctx_window: 0,
             mask: false,
             auto_send: true,
@@ -227,8 +253,21 @@ impl Scr {
         self.draw();
     }
 
+    /// Palette rows for the current input (empty when not composing a command).
+    fn palette_items(&self) -> Vec<(&'static str, String, Option<&'static str>)> {
+        let text: String = self.input.iter().collect();
+        cmd::palette(&text)
+    }
+
     fn draw(&self) {
+        if let Some(m) = &self.menu {
+            self.draw_menu(m);
+            return;
+        }
         if let Some(lines) = &self.qr {
+            if self.qr_blit {
+                return;
+            }
             let mut s = String::with_capacity(4096);
             s.push_str("\x1b[?25l\x1b[H");
             for i in 0..self.rows {
@@ -250,11 +289,14 @@ impl Scr {
         s.push_str("\x1b[?25l");
         s.push_str("\x1b[H");
 
-        // Layout: [header(1)] + transcript + live(1) + input(1).
+        // Layout: [header(1)] + transcript + palette + live(1) + input(1).
+        let pal = self.palette_items();
+        let pal_rows = pal.len().min(4);
         let body_rows = self
             .rows
             .saturating_sub(if self.hide_header { 2 } else { 3 })
-            .max(1);
+            .max(1)
+            .saturating_sub(pal_rows);
 
         // ---- header: title left, device state right ----
         // Under tmux the status bar already shows wifi/battery, so drawing it
@@ -299,6 +341,30 @@ impl Scr {
             s.push_str("\x1b[0m\x1b[K\r\n");
         }
 
+        // ---- command palette (only while composing a `/` command) ----
+        let pal_start = if self.palette_sel >= pal_rows && pal_rows > 0 {
+            self.palette_sel + 1 - pal_rows
+        } else {
+            0
+        };
+        for (vis, (name, desc, hint)) in pal.iter().skip(pal_start).take(pal_rows).enumerate() {
+            let i = pal_start + vis;
+            let selected = i == self.palette_sel;
+            let marker = if selected { "\u{25b8}" } else { " " };
+            let hint = hint.map(|h| format!(" {h}")).unwrap_or_default();
+            let head = format!("{marker} /{name}{hint}");
+            let pad = dw(&head);
+            let room = self.cols.saturating_sub(pad + 3);
+            let d: String = desc.chars().take(room).collect();
+            if selected {
+                s.push_str("\x1b[1;36m");
+            } else {
+                s.push_str("\x1b[90m");
+            }
+            s.push_str(&fit(&format!("{head}   {d}"), self.cols));
+            s.push_str("\x1b[0m\x1b[K\r\n");
+        }
+
         // ---- live line: thinking / streaming tail / queue depth ----
         // One always-visible status line. Recording state used to be drawn
         // only in the header, which is hidden under fbterm/tmux - so pressing
@@ -319,20 +385,6 @@ impl Scr {
             live_line = i18n::tf("queued", &[&self.queue.len().to_string()]);
         }
         // Scrolled back: say so, and how to get back.
-        if self.ctx_window > 0 {
-            let pct = crate::usage::context_pct(self.ctx_window);
-            let label = if pct > 0.0 && pct < 0.10 {
-                format!("{:.1}%", pct * 100.0)
-            } else {
-                format!("{:.0}%", pct * 100.0)
-            };
-            let ring = format!("{} {}", crate::usage::ring(pct), label);
-            if live_line.is_empty() {
-                live_line = ring;
-            } else {
-                live_line = format!("{live_line}  {ring}");
-            }
-        }
         if self.busy && live_line.is_empty() {
             live_line = i18n::t("busy").to_string();
         }
@@ -351,9 +403,21 @@ impl Scr {
         }
         s.push_str("\x1b[K\r\n");
 
-        // ---- input line ----
+        // ---- input line: prompt + text, with the context ring pinned right ----
+        let ring = if self.ctx_window > 0 {
+            let pct = crate::usage::context_pct(self.ctx_window);
+            let label = if pct > 0.0 && pct < 0.10 {
+                format!("{:.1}%", pct * 100.0)
+            } else {
+                format!("{:.0}%", pct * 100.0)
+            };
+            format!("{} {}", crate::usage::ring(pct), label)
+        } else {
+            String::new()
+        };
+        let ring_w = dw(&ring);
         s.push_str("\x1b[1;33m> \x1b[0m");
-        let avail = self.cols.saturating_sub(2);
+        let avail = self.cols.saturating_sub(2 + if ring_w > 0 { ring_w + 1 } else { 0 });
         let cur = self.cursor.min(self.input.len());
         // Scroll window fills backwards from the cursor so it stays visible.
         let mut w = 0usize;
@@ -375,6 +439,11 @@ impl Scr {
         s.push_str("\x1b[K");
 
         // Cursor column = width of everything BEFORE the cursor in the window.
+        // Right-aligned ring on the same row as the input.
+        if ring_w > 0 {
+            let rcol = self.cols.saturating_sub(ring_w) + 1;
+            s.push_str(&format!("\x1b[{};{}H\x1b[90m{}\x1b[0m", self.rows, rcol, ring));
+        }
         let col = 2 + self.input[start_i..cur]
             .iter()
             .map(|c| Self::cw(*c))
@@ -382,6 +451,44 @@ impl Scr {
         let col = col.min(self.cols.saturating_sub(1));
         s.push_str(&format!("\x1b[{};{}H\x1b[?25h", self.rows, col + 1));
 
+        let mut out = std::io::stdout();
+        let _ = out.write_all(s.as_bytes());
+        let _ = out.flush();
+    }
+
+    fn draw_menu(&self, m: &Menu) {
+        let mut s = String::with_capacity(2048);
+        // Full-screen panel: clear so no transcript shows through.
+        s.push_str("\x1b[?25l\x1b[2J\x1b[H");
+        s.push_str("\x1b[1;36m");
+        s.push_str(&fit(&format!(" {} ", m.title), self.cols));
+        s.push_str("\x1b[0m\x1b[K\r\n");
+        let rows = self.rows.saturating_sub(2).max(1);
+        // Window the list around the selection (menuconfig behaviour).
+        let start = if m.sel >= rows { m.sel + 1 - rows } else { 0 };
+        for i in 0..rows {
+            let idx = start + i;
+            if let Some(item) = m.items.get(idx) {
+                let selected = idx == m.sel;
+                let mark = if selected { "\u{25b8}" } else { " " };
+                let left = format!("{mark} {}", item.label);
+                let room = self.cols.saturating_sub(dw(&left) + dw(&item.value) + 1);
+                let dots = " ".repeat(room.min(20));
+                let line = format!("{left}{dots} {}", item.value);
+                if selected {
+                    s.push_str("\x1b[7m");
+                } else {
+                    s.push_str("\x1b[0;37m");
+                }
+                s.push_str(&fit(&line, self.cols));
+                s.push_str("\x1b[0m\x1b[K\r\n");
+            } else {
+                s.push_str("\x1b[K\r\n");
+            }
+        }
+        s.push_str("\x1b[90m");
+        s.push_str(&fit(&m.hint, self.cols));
+        s.push_str("\x1b[0m\x1b[K");
         let mut out = std::io::stdout();
         let _ = out.write_all(s.as_bytes());
         let _ = out.flush();
@@ -562,6 +669,13 @@ impl Scr {
     }
 
     fn voice_input(&mut self) {
+        if !self.speech_ok {
+            self.push(
+                "\u{8bed}\u{97f3}\u{4ec5}\u{652f}\u{6301} DeepSeek \u{5b98}\u{65b9} API\u{ff08}\u{7b2c}\u{4e09}\u{65b9} endpoint \u{65e0} ASR/TTS\u{ff09}",
+                K_ERR,
+            );
+            return;
+        }
         // Open the mic BEFORE the hold is confirmed: the codec takes a moment
         // to settle and starting late clipped the first syllable of speech.
         // The pre-roll is discarded by the arming check below.
@@ -673,6 +787,32 @@ impl Scr {
                 0x03 => return None,                       // Ctrl-C
                 0x04 => return None,                       // Ctrl-D
                 0x0d | 0x0a => {
+                    // Enter on an open palette: run a no-argument command, or
+                    // complete a command that expects input.
+                    let pal = self.palette_items();
+                    if !pal.is_empty() {
+                        let i = self.palette_sel.min(pal.len() - 1);
+                        let (name, _desc, hint) = pal[i].clone();
+                        let typed: String = self.input.iter().collect();
+                        let typed = typed.trim_end();
+                        // A hint in [] is optional, <..> is required: only the
+                        // latter completes with a space instead of running.
+                        let needs_arg = hint.map(|h| h.starts_with('<')).unwrap_or(false);
+                        let exact = typed == format!("/{name}");
+                        if !needs_arg || exact {
+                            let cmd = format!("/{name}");
+                            self.input.clear();
+                            self.cursor = 0;
+                            return Some(cmd);
+                        }
+                        self.input.clear();
+                        self.cursor = 0;
+                        for ch in format!("/{name} ").chars() {
+                            self.input.push(ch);
+                        }
+                        self.cursor = self.input.len();
+                        continue;
+                    }
                     if self.input.is_empty() {
                         continue;
                     }
@@ -728,8 +868,22 @@ impl Scr {
                             continue;
                         }
                         match b2 {
-                            b'A' => self.scroll = (self.scroll + 5).min(self.lines.len()),
-                            b'B' => self.scroll = self.scroll.saturating_sub(5),
+                            b'A' => {
+                                let n = self.palette_items().len();
+                                if n > 0 {
+                                    self.palette_sel = self.palette_sel.saturating_sub(1);
+                                } else {
+                                    self.scroll = (self.scroll + 5).min(self.lines.len());
+                                }
+                            }
+                            b'B' => {
+                                let n = self.palette_items().len();
+                                if n > 0 {
+                                    self.palette_sel = (self.palette_sel + 1).min(n - 1);
+                                } else {
+                                    self.scroll = self.scroll.saturating_sub(5);
+                                }
+                            }
                             b'C' => self.cursor = (self.cursor + 1).min(self.input.len()),
                             b'D' => self.cursor = self.cursor.saturating_sub(1),
                             b'H' => self.cursor = 0,
@@ -751,6 +905,7 @@ impl Scr {
                 0x20..=0x7e => {
                     self.input.insert(self.cursor, b as char);
                     self.cursor += 1;
+                    self.palette_sel = 0;
                 }
                 0x80..=0xff => self.utf8_push(b),
                 _ => {}
@@ -1090,10 +1245,11 @@ impl<'a> harness::Ui for TermUi<'a> {
                     .unwrap_or_else(|| (String::new(), String::new(), 0.0));
                 // Always one row: the tool line must never wrap, whatever the
                 // command was, or it steals space from the answer.
+                // One row, guaranteed: cap by characters first (width tables
+                // have proven unreliable across glyphs), then trim if needed.
+                let raw = format!("* {name} > {title} | {took:.1}s");
+                let line: String = raw.chars().take(44).collect();
                 let cols = self.scr.cols;
-                // Minimal: which tool, how long. The command text is noise on a 53-wide
-                // screen and the answer already says what was found.
-                let line = format!("* {name} > {title} | {took:.1}s");
                 self.scr.push(&fit(&line, cols.saturating_sub(1)), K_TOOL);
                 if is_error {
                     self.scr
@@ -1363,6 +1519,13 @@ fn close_qr(scr: &mut Scr) {
     scr.rows = r;
     scr.cols = c;
     scr.qr = None;
+    scr.qr_blit = false;
+    {
+        use std::io::Write as _;
+        let mut o = std::io::stdout();
+        let _ = o.write_all(b"\x1b[2J\x1b[H");
+        let _ = o.flush();
+    }
     scr.draw();
 }
 
@@ -1375,21 +1538,55 @@ fn start_login(scr: &mut Scr, login_rx: &LoginRx) {
                 scr.push(&i18n::tf("login_no_qr", &[&note]), K_DIM);
                 scr.push(i18n::t("login_phone"), K_DIM);
             } else {
-                // Full-screen overlay: 13 QR rows must all be visible at once.
-                set_tmux_status(false);
                 let (r, c) = term_size();
                 scr.rows = r;
                 scr.cols = c;
-                // Centre the code horizontally; it is usually 25 modules wide
-                // in a 53-column pane.
-                let widest = qr.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-                let pad = c.saturating_sub(widest) / 2;
-                let centered: Vec<String> = qr
-                    .iter()
-                    .map(|l| format!("{}{}", " ".repeat(pad), l))
-                    .collect();
-                scr.qr = Some(centered);
+                // Two columns: QR on the left (painted as real pixels), guide
+                // text on the right, which is also what keeps the code crisp.
+                const QR_PX: usize = 168;
+                let left_cols = QR_PX / 6 + 2;
+                let mut guide: Vec<String> = Vec::new();
+                guide.push(format!("扫码登录 DeepSeek"));
+                guide.push(String::new());
+                guide.push(format!("地址"));
+                let url_txt = url.clone();
+                let width = c.saturating_sub(left_cols);
+                let mut chunk = String::new();
+                for ch in url_txt.chars() {
+                    if chunk.chars().count() + 1 > width {
+                        guide.push(chunk.clone());
+                        chunk.clear();
+                    }
+                    chunk.push(ch);
+                }
+                if !chunk.is_empty() {
+                    guide.push(chunk);
+                }
+                guide.push(String::new());
+                guide.push("1. 手机扫码".to_string());
+                guide.push("2. 打开页面并粘贴 key".to_string());
+                guide.push("3. 本机自动完成".to_string());
+                guide.push(String::new());
+                guide.push("Esc 取消".to_string());
+                let mut lines: Vec<String> = Vec::new();
+                for g in guide.iter().take(scr.rows) {
+                    lines.push(format!("{}{}", " ".repeat(left_cols), g));
+                }
+                scr.qr = Some(lines);
                 scr.draw();
+                if login::draw_qr_fb(&url, Some((0, 0, QR_PX, 170))).is_ok() {
+                    scr.qr_blit = true;
+                } else {
+                    // Fallback: terminal-drawn QR across the full width.
+                    let widest = qr.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+                    let pad = c.saturating_sub(widest) / 2;
+                    scr.qr = Some(
+                        qr.iter()
+                            .map(|l| format!("{}{}", " ".repeat(pad), l))
+                            .collect(),
+                    );
+                    scr.draw();
+                }
             }
             *login_rx.borrow_mut() = Some(rx);
         }
@@ -1540,187 +1737,235 @@ fn resume_session(scr: &mut Scr, msgs: &jobs::Msgs, idx: usize) -> Option<std::p
 
 // ---------------------------------------------------------- config wizard
 
-/// Interactive configuration: everything is a numbered option except the API
-/// key, the only value that must be typed.
-fn config_wizard(scr: &mut Scr, config_rc: &ConfigRc) {
+/// prompt inside the menu screens (menu is hidden while typing)
+fn menu_prompt(scr: &mut Scr, prompt: &str, mask: bool) -> Option<String> {
+    scr.menu = None;
+    scr.mask = mask;
+    scr.push(prompt, K_DIM);
+    scr.draw();
+    let r = scr.edit();
+    scr.mask = false;
+    r.map(|s| s.trim().to_string())
+}
+
+/// menuconfig-style configuration: arrows move, Enter edits, Esc leaves.
+fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
+    let mut sel = 0usize;
     loop {
-        let (model, effort, base, kstate, voice, auto, queued) = {
-            let c = config_rc.borrow();
-            (
-                c.model.clone(),
-                c.effort.clone(),
-                c.base.clone(),
-                if c.api_key.is_empty() { "未配置".to_string() } else { "已配置".to_string() },
-                c.tts_voice.clone(),
-                c.auto_send_voice,
-                c.queued_default,
-            )
+        let c = config_rc.borrow();
+        let (model, effort, base, kstate, voice, auto, queued, lang, caps) = (
+            c.model.clone(),
+            c.effort.clone(),
+            c.base.clone(),
+            if c.api_key.is_empty() { "not set".to_string() } else { "configured".to_string() },
+            c.tts_voice.clone(),
+            c.auto_send_voice,
+            c.queued_default,
+            c.language.clone(),
+            c.capabilities(),
+        );
+        drop(c);
+        let items = vec![
+            MenuItem { label: i18n::t("menu_model").into(), value: model },
+            MenuItem { label: i18n::t("menu_effort").into(), value: effort },
+            MenuItem { label: i18n::t("menu_endpoint").into(), value: base },
+            MenuItem { label: i18n::t("menu_key").into(), value: kstate },
+            MenuItem { label: i18n::t("menu_voice").into(), value: voice },
+            MenuItem {
+                label: i18n::t("menu_autosend").into(),
+                value: if auto { i18n::t("on").into() } else { i18n::t("off").into() },
+            },
+            MenuItem {
+                label: i18n::t("menu_queue").into(),
+                value: if queued { i18n::t("queued_mode").into() } else { i18n::t("immediate_mode").into() },
+            },
+            MenuItem { label: i18n::t("menu_language").into(), value: lang },
+            MenuItem { label: i18n::t("menu_save").into(), value: String::new() },
+        ];
+        let hint = if caps.web_tools && caps.speech {
+            i18n::t("menu_hint").to_string()
+        } else {
+            i18n::t("menu_hint_gated").to_string()
         };
-        scr.push(i18n::t("wizard_title"), K_DIM);
-        scr.push(&i18n::tf("w1", &[&model]), K_TOOL);
-        scr.push(&i18n::tf("w2", &[&effort]), K_TOOL);
-        scr.push(&i18n::tf("w3", &[&base]), K_TOOL);
-        scr.push(&i18n::tf("w4", &[&kstate]), K_TOOL);
-        scr.push(&i18n::tf("w5", &[&voice]), K_TOOL);
-        scr.push(&i18n::tf("w6", &[if auto { i18n::t("on") } else { i18n::t("off") }]), K_TOOL);
-        scr.push(&i18n::tf("w7", &[if queued { i18n::t("queued_mode") } else { i18n::t("immediate_mode") }]), K_TOOL);
-        scr.push(&i18n::tf("w8", &[&config_rc.borrow().language]), K_TOOL);
-        scr.push(i18n::t("w9"), K_TOOL);
-        let choice = match scr.edit() {
-            Some(l) => l.trim().to_string(),
-            None => return,
+        scr.menu = Some(Menu { title: i18n::t("menu_title").into(), items: items.clone(), sel, hint });
+        scr.draw();
+        let k = match scr.read_key_timeout() {
+            Some(k) => k,
+            None => continue,
         };
-        let mut changed = false;
-        match choice.as_str() {
-            "1" => {
+        if k == 0x1b {
+            match scr.read_key_timeout() {
+                Some(b'[') => match scr.read_key_timeout() {
+                    Some(b'A') => sel = sel.saturating_sub(1),
+                    Some(b'B') => sel = (sel + 1).min(items.len() - 1),
+                    _ => {}
+                },
+                _ => {
+                    scr.menu = None;
+                    scr.draw();
+                    return;
+                }
+            }
+            continue;
+        }
+        if k == 0x03 || k == b'q' {
+            scr.menu = None;
+            scr.draw();
+            return;
+        }
+        if k != 0x0d {
+            continue;
+        }
+        match sel {
+            0 => {
                 let cfg = api_cfg(&config_rc.borrow());
-                match crate::api::list_models(&cfg) {
-                    Ok(models) if !models.is_empty() => {
-                        for (i, (id, name, _)) in models.iter().enumerate() {
-                            scr.push(&format!(" {}) {id}  {name}", i + 1), K_TOOL);
+                let models = crate::api::list_models(&cfg).unwrap_or_default();
+                if models.is_empty() {
+                    if let Some(v) = menu_prompt(scr, "Model name:", false) {
+                        if !v.is_empty() {
+                            config_rc.borrow_mut().model = v;
+                            let _ = config_rc.borrow().save();
                         }
-                        scr.push(i18n::t("w_choose"), K_DIM);
-                        let sel = match scr.edit() {
-                            Some(l) => l.trim().to_string(),
-                            None => return,
-                        };
-                        if !sel.is_empty() && sel != "0" {
-                            if let Ok(n) = sel.parse::<usize>() {
-                                if n >= 1 && n <= models.len() {
-                                    config_rc.borrow_mut().model = models[n - 1].0.clone();
-                                    changed = true;
+                    }
+                } else {
+                    let mut msel = 0usize;
+                    loop {
+                        let its: Vec<MenuItem> = models
+                            .iter()
+                            .map(|(id, name, _)| MenuItem { label: id.clone(), value: name.clone() })
+                            .collect();
+                        scr.menu = Some(Menu {
+                            title: i18n::t("menu_model").into(),
+                            items: its,
+                            sel: msel,
+                            hint: i18n::t("menu_model_hint").into(),
+                        });
+                        scr.draw();
+                        let kk = match scr.read_key_timeout() { Some(k) => k, None => continue };
+                        if kk == 0x1b {
+                            match scr.read_key_timeout() {
+                                Some(b'[') => {
+                                    match scr.read_key_timeout() {
+                                        Some(b'A') => msel = msel.saturating_sub(1),
+                                        Some(b'B') => msel = (msel + 1).min(models.len() - 1),
+                                        _ => {}
+                                    }
                                 }
-                            } else {
-                                config_rc.borrow_mut().model = sel;
-                                changed = true;
+                                _ => break,
+                            }
+                            continue;
+                        }
+                        if kk == 0x0d {
+                            config_rc.borrow_mut().model = models[msel].0.clone();
+                            let _ = config_rc.borrow().save();
+                            break;
+                        }
+                    }
+                }
+            }
+            1 => {
+                let cur = config_rc.borrow().effort.clone();
+                let next = match cur.as_str() {
+                    "auto" => "low",
+                    "low" => "high",
+                    "high" => "max",
+                    _ => "auto",
+                };
+                config_rc.borrow_mut().effort = next.to_string();
+                let _ = config_rc.borrow().save();
+            }
+            2 => {
+                let mut esel = if crate::config::is_official(&config_rc.borrow().base) { 0 } else { 1 };
+                loop {
+                    let its = vec![
+                        MenuItem { label: i18n::t("menu_official").into(), value: "api.deepseek.com".into() },
+                        MenuItem { label: i18n::t("menu_custom").into(), value: config_rc.borrow().base.clone() },
+                    ];
+                    scr.menu = Some(Menu { title: i18n::t("menu_endpoint").into(), items: its, sel: esel, hint: i18n::t("menu_endpoint_hint").into() });
+                    scr.draw();
+                    let kk = match scr.read_key_timeout() { Some(k) => k, None => continue };
+                    if kk == 0x1b {
+                        match scr.read_key_timeout() {
+                            Some(b'[') => {
+                                match scr.read_key_timeout() {
+                                    Some(b'A') => esel = 0,
+                                    Some(b'B') => esel = 1,
+                                    _ => {}
+                                }
+                            }
+                            _ => break,
+                        }
+                        continue;
+                    }
+                    if kk != 0x0d {
+                        continue;
+                    }
+                    if esel == 0 {
+                        config_rc.borrow_mut().base = "https://api.deepseek.com/v1".into();
+                        let _ = config_rc.borrow().save();
+                        break;
+                    }
+                    // Warn before a third-party endpoint: capabilities shrink.
+                    scr.menu = None;
+                    scr.draw();
+                    scr.push(i18n::t("menu_gate_warn"), K_ERR);
+                    scr.push(i18n::t("menu_gate_ask"), K_DIM);
+                    let go = match scr.edit() { Some(a) => a.trim().eq_ignore_ascii_case("y"), None => false };
+                    if go {
+                        if let Some(u) = menu_prompt(scr, "Base URL (https://host/v1):", false) {
+                            if u.starts_with("http") {
+                                config_rc.borrow_mut().base = u;
+                                let _ = config_rc.borrow().save();
+                            } else if !u.is_empty() {
+                                scr.push("Must be an http(s) URL", K_ERR);
                             }
                         }
                     }
-                    Ok(_) => scr.push("未取到模型列表", K_ERR),
-                    Err(e) => scr.push(&format!("模型列表不可用: {e}"), K_ERR),
+                    break;
                 }
             }
-            "2" => {
-                scr.push(i18n::t("w_efforts"), K_TOOL);
-                let sel = match scr.edit() {
-                    Some(l) => l.trim().to_string(),
-                    None => return,
-                };
-                let v = match sel.as_str() {
-                    "1" => Some("auto"),
-                    "2" => Some("low"),
-                    "3" => Some("high"),
-                    "4" => Some("max"),
-                    _ => None,
-                };
-                if let Some(v) = v {
-                    config_rc.borrow_mut().effort = v.to_string();
-                    changed = true;
+            3 => {
+                if let Some(k) = menu_prompt(scr, "API key (not echoed):", true) {
+                    if !k.is_empty() {
+                        let mut c = config_rc.borrow_mut();
+                        c.api_key = k;
+                        c.configured = true;
+                        let _ = c.save();
+                    }
                 }
             }
-            "3" => {
-                scr.push(i18n::t("w_base"), K_TOOL);
-                let sel = match scr.edit() {
-                    Some(l) => l.trim().to_string(),
-                    None => return,
-                };
-                match sel.as_str() {
-                    "1" => {
-                        config_rc.borrow_mut().base = "https://api.deepseek.com/v1".into();
-                        changed = true;
-                    }
-                    "2" => {
-                        scr.push("输入 base URL（如 https://host/v1）", K_DIM);
-                        let u = match scr.edit() {
-                            Some(l) => l.trim().to_string(),
-                            None => return,
-                        };
-                        if u.starts_with("http") {
-                            config_rc.borrow_mut().base = u;
-                            changed = true;
-                        } else if !u.is_empty() {
-                            scr.push("必须是 http(s) URL", K_ERR);
-                        }
-                    }
-                    _ => {}
-                }
+            4 => {
+                let cur = config_rc.borrow().tts_voice.clone();
+                config_rc.borrow_mut().tts_voice = if cur == "stella" { "tide".into() } else { "stella".into() };
+                let _ = config_rc.borrow().save();
             }
-            "4" => {
-                scr.push(i18n::t("w_key_prompt"), K_DIM);
-                scr.mask = true;
-                let k = match scr.edit() {
-                    Some(l) => l.trim().to_string(),
-                    None => {
-                        scr.mask = false;
-                        return;
-                    }
-                };
-                scr.mask = false;
-                if !k.is_empty() {
-                    let mut c = config_rc.borrow_mut();
-                    c.api_key = k;
-                    c.configured = true;
-                    changed = true;
-                }
-            }
-            "5" => {
-                scr.push(i18n::t("w_voice"), K_TOOL);
-                let sel = match scr.edit() {
-                    Some(l) => l.trim().to_string(),
-                    None => return,
-                };
-                match sel.as_str() {
-                    "1" => {
-                        config_rc.borrow_mut().tts_voice = "stella".into();
-                        changed = true;
-                    }
-                    "2" => {
-                        config_rc.borrow_mut().tts_voice = "tide".into();
-                        changed = true;
-                    }
-                    _ => {}
-                }
-            }
-            "6" => {
+            5 => {
                 let mut c = config_rc.borrow_mut();
                 c.auto_send_voice = !c.auto_send_voice;
-                changed = true;
+                let _ = c.save();
             }
-            "7" => {
+            6 => {
                 let mut c = config_rc.borrow_mut();
                 c.queued_default = !c.queued_default;
-                changed = true;
+                let _ = c.save();
             }
-            "8" => {
-                scr.push(i18n::t("w_lang"), K_TOOL);
-                let sel = match scr.edit() {
-                    Some(l) => l.trim().to_string(),
-                    None => return,
-                };
-                match sel.as_str() {
-                    "1" => { config_rc.borrow_mut().language = "en".into(); changed = true; }
-                    "2" => { config_rc.borrow_mut().language = "zh".into(); changed = true; }
-                    _ => {}
-                }
-                if changed {
-                    i18n::set(&config_rc.borrow().language);
-                }
+            7 => {
+                let cur = config_rc.borrow().language.clone();
+                let next = if cur.starts_with("zh") { "en" } else { "zh" };
+                config_rc.borrow_mut().language = next.to_string();
+                i18n::set(&config_rc.borrow().language);
+                let _ = config_rc.borrow().save();
             }
-            "9" | "" => {
-                match config_rc.borrow().save() {
-                    Ok(()) => scr.push(i18n::t("w_saved"), K_NORM),
-                    Err(e) => scr.push(&format!("保存失败: {e}"), K_ERR),
-                }
+            _ => {
+                let _ = config_rc.borrow().save();
+                scr.menu = None;
+                scr.draw();
                 return;
             }
-            "0" => return,
-            _ => {}
-        }
-        if changed {
-            let _ = config_rc.borrow().save();
         }
     }
 }
+
 
 fn main() {
     // A panic must not leave the panel full of half-drawn glyphs and escape
@@ -1736,11 +1981,6 @@ fn main() {
         eprintln!("dst: internal error: {info}");
     }));
 
-    if !single_instance() {
-        eprintln!("dst: another instance is already running on this terminal");
-        std::process::exit(1);
-    }
-
     let config_rc: ConfigRc = std::rc::Rc::new(std::cell::RefCell::new(config::Config::load()));
     let login_rx: LoginRx = std::rc::Rc::new(std::cell::RefCell::new(None));
     i18n::set(&config_rc.borrow().language);
@@ -1754,9 +1994,16 @@ fn main() {
     let skill_list = skills::load_all();
     tools::set_skills(skill_list.clone());
     mcp::install(mcp::start_all());
-    let mut reg = tools::registry();
+    let mut reg = tools::registry(config_rc.borrow().capabilities());
     reg.extend(mcp::tool_defs());
-    let system_prompt = format!("{}{}", SYSTEM_PROMPT, skills::catalog_prompt(&skill_list));
+    let mut caps_at_start = config_rc.borrow().capabilities();
+    let mut system_prompt = format!("{}{}", SYSTEM_PROMPT, skills::catalog_prompt(&skill_list));
+    if !caps_at_start.web_tools {
+        system_prompt.push_str(
+            "\nCAPABILITIES\nThe configured endpoint is a third-party OpenAI-compatible API. search, fetch, ocr and speech tools are not registered because they only exist on DeepSeek's official API. Use bash/read_file/write_file instead, and do not tell the \
+user you can search the web or speak.\n",
+        );
+    }
     let tdefs = tool::definitions(&reg);
 
     let argv: Vec<String> = std::env::args().collect();
@@ -1769,12 +2016,30 @@ fn main() {
         }
         return;
     }
+    if argv.len() >= 2 && argv[1] == "--tools" {
+        // Diagnostics: the exact tool set and capability decision.
+        let caps = config_rc.borrow().capabilities();
+        println!("base={}", config_rc.borrow().base);
+        println!("official={}", crate::config::is_official(&config_rc.borrow().base));
+        println!("web_tools={} speech={}", caps.web_tools, caps.speech);
+        let mut names: Vec<&str> = reg.iter().map(|t| t.name).collect();
+        names.sort();
+        println!("tools={}", names.join(","));
+        return;
+    }
     if argv.len() >= 3 && argv[1] == "--once" {
         run_once(&cfg, &reg, &argv[2]);
         return;
     }
 
+    // The TUI owns the terminal; diagnostics (--tools/--once) run without it.
+    if !single_instance() {
+        eprintln!("dst: another instance is already running on this terminal");
+        std::process::exit(1);
+    }
+
     let mut scr = Scr::new();
+    scr.speech_ok = config_rc.borrow().capabilities().speech;
     let mut session_path: Option<std::path::PathBuf> = None;
     raw_mode(true);
 
@@ -1852,7 +2117,7 @@ fn main() {
                     start_login(&mut scr, &login_rx);
                 }
                 if out.config_wizard {
-                    config_wizard(&mut scr, &config_rc);
+                    config_menu(&mut scr, &config_rc);
                 }
                 if let Some(pick) = out.resume {
                     if let Some(n) = pick {
@@ -1862,6 +2127,13 @@ fn main() {
                     }
                 }
                 i18n::set(&config_rc.borrow().language);
+                let caps_now = config_rc.borrow().capabilities();
+                if caps_now.web_tools != caps_at_start.web_tools || caps_now.speech != caps_at_start.speech {
+                    reg = tools::registry(caps_now);
+                    reg.extend(mcp::tool_defs());
+                    scr.speech_ok = caps_now.speech;
+                    caps_at_start = caps_now;
+                }
                 cfg = api_cfg(&config_rc.borrow());
                 *shared_cfg.borrow_mut() = cfg.clone();
                 tools::set_cfg(cfg.clone());
