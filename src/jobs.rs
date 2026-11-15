@@ -1,6 +1,6 @@
 //! cron + watcher scheduling for dsh-lite (no subagents by design).
 //!
-//! Jobs live in `~/.config/dsh-lite/jobs.json`:
+//! Jobs live in `~/.dst/jobs.json`:
 //!   {"jobs":[{"kind":"cron","spec":"*/5 * * * *","prompt":"...","last":0},
 //!            {"kind":"watch","spec":"/path/to/file","prompt":"...","last":0}]}
 //!
@@ -17,8 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub type Msgs = Rc<RefCell<Vec<J>>>;
 
 fn path() -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/hanxiao".into());
-    format!("{home}/.config/dsh-lite/jobs.json")
+    crate::config::jobs_path().to_string_lossy().to_string()
 }
 
 fn load() -> Vec<(String, String, String, u64)> {

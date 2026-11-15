@@ -1,0 +1,670 @@
+//! Configuration and runtime home for `dst`.
+//!
+//! Everything the program owns at runtime lives under `~/.dst`:
+//!
+//! ```text
+//! ~/.dst/config.yml    all settings, including the API key (mode 600)
+//! ~/.dst/sessions/     resumable conversation logs
+//! ~/.dst/skills/       skill packages (SKILL.md per folder)
+//! ~/.dst/mcp.json      MCP server definitions
+//! ~/.dst/jobs.json     cron / file-watch jobs
+//! ~/.dst/cache/        transient audio and scratch files
+//! ~/.dst/logs/         voice.log and friends
+//! ~/.dst/tmp/          per-run temporary files
+//! ```
+//!
+//! ## Config dialect
+//!
+//! The file is YAML and follows the DeepSeek Harness patch dialect: a mapping
+//! whose fields are either plain settings, or `insert:` patch rows shaped
+//! `{ id, name, config, disabled }` — the same row fields DSH uses to compose
+//! plugin lists. Here a row targets one dst tool by `name`:
+//!
+//! ```yaml
+//! model: deepseek-flash
+//! effort: medium
+//! api:
+//!   base: https://api.deepseek.com/v1
+//!   key: sk-...            # kept in this same file, mode 600
+//! voice:
+//!   tts_voice: stella
+//! tui:
+//!   queued_default: true
+//!   auto_send_voice: true
+//!
+//! # DSH-style patch rows: disable a tool, or pass it config
+//! insert:
+//!   - id: speak
+//!     name: speak
+//!     disabled: true
+//!   - id: bash
+//!     name: bash
+//!     config:
+//!       timeout_s: 30
+//! ```
+
+use std::path::PathBuf;
+
+/// DSH-compatible YAML subset: mappings, sequences, scalars.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Y {
+    Null,
+    Bool(bool),
+    Num(f64),
+    Str(String),
+    Map(Vec<(String, Y)>),
+    Seq(Vec<Y>),
+}
+
+impl Y {
+    pub fn get(&self, key: &str) -> Option<&Y> {
+        match self {
+            Y::Map(kv) => kv.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Y::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Y::Bool(b) => Some(*b),
+            Y::Str(s) => match s.as_str() {
+                "true" | "yes" | "on" => Some(true),
+                "false" | "no" | "off" => Some(false),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Y::Num(n) => Some(*n),
+            _ => None,
+        }
+    }
+    pub fn as_seq(&self) -> Option<&Vec<Y>> {
+        match self {
+            Y::Seq(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+struct Line {
+    indent: usize,
+    text: String,
+}
+
+fn strip_comment(s: &str) -> String {
+    let mut out = String::new();
+    let mut quote: Option<char> = None;
+    for c in s.chars() {
+        match (quote, c) {
+            (None, '\'' | '"') => {
+                quote = Some(c);
+                out.push(c);
+            }
+            (Some(q), c) if c == q => {
+                quote = None;
+                out.push(c);
+            }
+            (None, '#') => break,
+            _ => out.push(c),
+        }
+    }
+    out.trim_end().to_string()
+}
+
+fn scalar(text: &str) -> Y {
+    let t = text.trim();
+    if t.is_empty() {
+        return Y::Null;
+    }
+    if (t.starts_with('"') && t.ends_with('"') && t.len() >= 2)
+        || (t.starts_with('\'') && t.ends_with('\'') && t.len() >= 2)
+    {
+        return Y::Str(t[1..t.len() - 1].to_string());
+    }
+    match t {
+        "true" | "yes" | "on" => return Y::Bool(true),
+        "false" | "no" | "off" => return Y::Bool(false),
+        "null" | "~" => return Y::Null,
+        _ => {}
+    }
+    if let Ok(n) = t.parse::<f64>() {
+        return Y::Num(n);
+    }
+    Y::Str(t.to_string())
+}
+
+fn split_kv(text: &str) -> Option<(String, String)> {
+    let mut quote: Option<char> = None;
+    for (i, c) in text.char_indices() {
+        match (quote, c) {
+            (None, '\'' | '"') => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            (None, ':') => {
+                let key = text[..i].trim().to_string();
+                let val = text[i + 1..].trim().to_string();
+                if key.is_empty() {
+                    return None;
+                }
+                return Some((key, val));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn parse_seq(lines: &[Line], i: &mut usize) -> Y {
+    let indent = lines[*i].indent;
+    let mut items = Vec::new();
+    while *i < lines.len() && lines[*i].indent == indent && lines[*i].text.starts_with('-') {
+        let rest = lines[*i].text[1..].trim_start().to_string();
+        *i += 1;
+        if rest.is_empty() {
+            let v = if *i < lines.len() && lines[*i].indent > indent {
+                parse_block(lines, i, lines[*i].indent)
+            } else {
+                Y::Null
+            };
+            items.push(v);
+            continue;
+        }
+        // "- key: value" starts a mapping item; following deeper lines add to it.
+        if let Some((k, v)) = split_kv(&rest) {
+            let mut map = Vec::new();
+            map.push((k, if v.is_empty() { Y::Null } else { scalar(&v) }));
+            while *i < lines.len() && lines[*i].indent > indent {
+                let child_indent = lines[*i].indent;
+                if let Some((ck, cv)) = split_kv(&lines[*i].text) {
+                    *i += 1;
+                    let val = if cv.is_empty() {
+                        if *i < lines.len() && lines[*i].indent > child_indent {
+                            parse_block(lines, i, lines[*i].indent)
+                        } else {
+                            Y::Null
+                        }
+                    } else {
+                        scalar(&cv)
+                    };
+                    map.push((ck, val));
+                } else {
+                    *i += 1;
+                }
+            }
+            items.push(Y::Map(map));
+        } else {
+            items.push(scalar(&rest));
+        }
+    }
+    Y::Seq(items)
+}
+
+fn parse_map(lines: &[Line], i: &mut usize, indent: usize) -> Y {
+    let mut map: Vec<(String, Y)> = Vec::new();
+    while *i < lines.len() {
+        let line_indent = lines[*i].indent;
+        if line_indent < indent {
+            break;
+        }
+        if line_indent > indent {
+            *i += 1;
+            continue;
+        }
+        if lines[*i].text.starts_with('-') {
+            break;
+        }
+        let (key, val) = match split_kv(&lines[*i].text) {
+            Some(kv) => kv,
+            None => {
+                *i += 1;
+                continue;
+            }
+        };
+        *i += 1;
+        if val.is_empty() {
+            let v = if *i < lines.len() && lines[*i].indent > indent {
+                parse_block(lines, i, lines[*i].indent)
+            } else {
+                Y::Null
+            };
+            map.push((key, v));
+        } else {
+            map.push((key, scalar(&val)));
+        }
+    }
+    Y::Map(map)
+}
+
+fn parse_block(lines: &[Line], i: &mut usize, indent: usize) -> Y {
+    if *i < lines.len() && lines[*i].text.starts_with('-') {
+        parse_seq(lines, i)
+    } else {
+        parse_map(lines, i, indent)
+    }
+}
+
+/// Parse the YAML subset dst accepts. Never fails: malformed lines are skipped.
+pub fn parse_yaml(text: &str) -> Y {
+    let mut lines = Vec::new();
+    for raw in text.lines() {
+        let cleaned = strip_comment(raw);
+        if cleaned.trim().is_empty() {
+            continue;
+        }
+        // Tabs are not valid YAML indentation; treat them as 2 spaces.
+        let expanded = cleaned.replace('\t', "  ");
+        let indent = expanded.len() - expanded.trim_start().len();
+        lines.push(Line {
+            indent,
+            text: expanded.trim_start().to_string(),
+        });
+    }
+    if lines.is_empty() {
+        return Y::Map(Vec::new());
+    }
+    let mut i = 0usize;
+    let indent = lines[0].indent;
+    parse_block(&lines, &mut i, indent)
+}
+
+fn yaml_quote(s: &str) -> String {
+    let needs = s.is_empty()
+        || s.chars()
+            .any(|c| matches!(c, ':' | '#' | '\'' | '"' | '\n'))
+        || s.trim() != s
+        || matches!(s, "true" | "false" | "null" | "~" | "yes" | "no" | "on" | "off");
+    if needs {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        s.to_string()
+    }
+}
+
+pub fn home() -> PathBuf {
+    let h = std::env::var("HOME").unwrap_or_else(|_| "/home/hanxiao".into());
+    PathBuf::from(h).join(".dst")
+}
+
+pub fn expand(path: &str) -> PathBuf {
+    let p = path.trim();
+    if let Some(rest) = p.strip_prefix("~/") {
+        let h = std::env::var("HOME").unwrap_or_else(|_| "/home/hanxiao".into());
+        return PathBuf::from(h).join(rest);
+    }
+    if p == "~" {
+        return home();
+    }
+    PathBuf::from(p)
+}
+
+pub fn config_path() -> PathBuf {
+    home().join("config.yml")
+}
+pub fn key_path() -> PathBuf {
+    home().join("api_key")
+}
+pub fn jobs_path() -> PathBuf {
+    home().join("jobs.json")
+}
+pub fn cache_dir() -> PathBuf {
+    home().join("cache")
+}
+pub fn log_dir() -> PathBuf {
+    home().join("logs")
+}
+pub fn tmp_dir() -> PathBuf {
+    home().join("tmp")
+}
+pub fn sessions_dir() -> PathBuf {
+    home().join("sessions")
+}
+pub fn skills_dir() -> PathBuf {
+    home().join("skills")
+}
+pub fn mcp_path() -> PathBuf {
+    home().join("mcp.json")
+}
+
+/// Sessions ordered newest-first: (path, label, modified seconds).
+pub fn list_sessions() -> Vec<(PathBuf, String, u64)> {
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(sessions_dir()) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) != Some("json") {
+                continue;
+            }
+            let label = p
+                .file_stem()
+                .and_then(|x| x.to_str())
+                .unwrap_or("session")
+                .to_string();
+            let mtime = e
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            out.push((p, label, mtime));
+        }
+    }
+    out.sort_by(|a, b| b.2.cmp(&a.2));
+    out
+}
+
+/// Create the `~/.dst` tree with private permissions on the secret file.
+fn legacy_dir() -> PathBuf {
+    let h = std::env::var("HOME").unwrap_or_else(|_| "/home/hanxiao".into());
+    PathBuf::from(h).join(".config").join("dsh-lite")
+}
+
+/// Move state from the pre-`~/.dst` layout on first run, without deleting the
+/// old files (so a rollback stays possible).
+fn migrate_legacy() {
+    let l = legacy_dir();
+    if !l.exists() {
+        return;
+    }
+    if !key_path().exists() {
+        if let Ok(k) = std::fs::read_to_string(l.join("api_key")) {
+            if !k.trim().is_empty() {
+                let _ = std::fs::write(key_path(), format!("{}\n", k.trim()));
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(key_path(), std::fs::Permissions::from_mode(0o600));
+                }
+            }
+        }
+    }
+    if !jobs_path().exists() {
+        if let Ok(j) = std::fs::read_to_string(l.join("jobs.json")) {
+            let _ = std::fs::write(jobs_path(), j);
+        }
+    }
+    if !config_path().exists() {
+        if let Ok(txt) = std::fs::read_to_string(l.join("config.json")) {
+            if let Some(v) = crate::json::parse(&txt) {
+                let mut c = Config::default();
+                if let Some(b) = v.get("base_url").and_then(|x| x.as_str()) {
+                    c.base = b.to_string();
+                }
+                if let Some(m) = v.get("model").and_then(|x| x.as_str()) {
+                    c.model = m.to_string();
+                }
+                if let Some(m) = v.get("max_tokens").and_then(|x| x.as_num()) {
+                    c.max_tokens = m as u32;
+                }
+                let _ = c.save();
+            }
+        }
+    }
+}
+
+pub fn ensure_home() {
+    let h = home();
+    for d in [h.clone(), cache_dir(), log_dir(), tmp_dir(), sessions_dir(), skills_dir()] {
+        let _ = std::fs::create_dir_all(&d);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&h, std::fs::Permissions::from_mode(0o700));
+        if let Ok(meta) = std::fs::metadata(key_path()) {
+            let mut p = meta.permissions();
+            if p.mode() & 0o077 != 0 {
+                p.set_mode(0o600);
+                let _ = std::fs::set_permissions(key_path(), p);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub model: String,
+    pub effort: String,
+    pub max_tokens: u32,
+    pub base: String,
+    pub api_key: String,
+    pub tts_voice: String,
+    pub queued_default: bool,
+    pub auto_send_voice: bool,
+    pub disabled_tools: Vec<String>,
+    pub tool_config: Vec<(String, Y)>,
+    /// True once a usable API key has been provided.
+    pub configured: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            model: "deepseek-flash".into(),
+            effort: "auto".into(),
+            max_tokens: 4096,
+            base: "https://api.deepseek.com/v1".into(),
+            api_key: String::new(),
+            tts_voice: "stella".into(),
+            queued_default: true,
+            auto_send_voice: true,
+            disabled_tools: Vec::new(),
+            tool_config: Vec::new(),
+            configured: false,
+        }
+    }
+}
+
+impl Config {
+    pub fn load() -> Config {
+        ensure_home();
+        migrate_legacy();
+        let mut cfg = Config::default();
+        // System layer first, then the user file on top (DSH composes layers
+        // in order and lets the later layer win).
+        for path in [PathBuf::from("/etc/dst/config.yml"), config_path()] {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                cfg.apply(&parse_yaml(&text));
+            }
+        }
+        // Legacy layouts are read once, then rewritten inline by a later save.
+        if cfg.api_key.is_empty() {
+            if let Ok(k) = std::fs::read_to_string(key_path()) {
+                cfg.api_key = k.trim().to_string();
+            }
+        }
+        if cfg.api_key.is_empty() {
+            if let Ok(k) = std::env::var("DEEPSEEK_API_KEY") {
+                cfg.api_key = k.trim().to_string();
+            }
+        }
+        // An explicit api.key in the config wins over the key file.
+        if cfg.api_key.is_empty() {
+            if let Ok(text) = std::fs::read_to_string(config_path()) {
+                if let Some(Y::Str(k)) = parse_yaml(&text).get("api").and_then(|a| a.get("key")) {
+                    cfg.api_key = k.trim().to_string();
+                }
+            }
+        }
+        cfg.configured = !cfg.api_key.is_empty();
+        cfg
+    }
+
+    fn apply(&mut self, doc: &Y) {
+        if let Some(v) = doc.get("model").and_then(|v| v.as_str()) {
+            self.model = v.to_string();
+        }
+        if let Some(v) = doc.get("effort").and_then(|v| v.as_str()) {
+            self.effort = v.to_string();
+        }
+        if let Some(v) = doc.get("max_tokens").and_then(|v| v.as_f64()) {
+            self.max_tokens = v as u32;
+        }
+        if let Some(api) = doc.get("api") {
+            if let Some(v) = api.get("base").and_then(|v| v.as_str()) {
+                self.base = v.to_string();
+            }
+            if let Some(v) = api.get("key").and_then(|v| v.as_str()) {
+                self.api_key = v.to_string();
+            }
+        }
+        if let Some(tui) = doc.get("tui") {
+            if let Some(v) = tui.get("queued_default").and_then(|v| v.as_bool()) {
+                self.queued_default = v;
+            }
+            if let Some(v) = tui.get("auto_send_voice").and_then(|v| v.as_bool()) {
+                self.auto_send_voice = v;
+            }
+        }
+        if let Some(voice) = doc.get("voice") {
+            if let Some(v) = voice.get("tts_voice").and_then(|v| v.as_str()) {
+                self.tts_voice = v.to_string();
+            }
+        }
+        // DSH patch dialect: insert rows of { id, name, config, disabled }.
+        if let Some(rows) = doc.get("insert").and_then(|v| v.as_seq()) {
+            for row in rows {
+                let name = row
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| row.get("id").and_then(|v| v.as_str()))
+                    .unwrap_or("");
+                if name.is_empty() {
+                    continue;
+                }
+                if row.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    self.disabled_tools.push(name.to_string());
+                }
+                if let Some(c) = row.get("config") {
+                    self.tool_config.push((name.to_string(), c.clone()));
+                }
+            }
+        }
+    }
+
+    /// The effective document written back to `~/.dst/config.yml`.
+    pub fn to_yaml(&self) -> String {
+        let mut s = String::new();
+        s.push_str("# dst configuration — syntax follows the DeepSeek Harness\n");
+        s.push_str("# patch dialect: plain keys, plus `insert:` rows { id, name, config, disabled }.\n");
+        s.push_str(&format!("model: {}\n", yaml_quote(&self.model)));
+        s.push_str(&format!("effort: {}\n", yaml_quote(&self.effort)));
+        s.push_str(&format!("max_tokens: {}\n", self.max_tokens));
+        s.push_str("api:\n");
+        s.push_str(&format!("  base: {}\n", yaml_quote(&self.base)));
+        if !self.api_key.is_empty() {
+            s.push_str(&format!("  key: {}\n", yaml_quote(&self.api_key.trim())));
+        }
+        s.push_str("voice:\n");
+        s.push_str(&format!("  tts_voice: {}\n", yaml_quote(&self.tts_voice)));
+        s.push_str("tui:\n");
+        s.push_str(&format!("  queued_default: {}\n", self.queued_default));
+        s.push_str(&format!("  auto_send_voice: {}\n", self.auto_send_voice));
+        if !self.disabled_tools.is_empty() || !self.tool_config.is_empty() {
+            s.push_str("insert:\n");
+            for t in &self.disabled_tools {
+                s.push_str(&format!("  - id: {t}\n    name: {t}\n    disabled: true\n"));
+            }
+            for (name, _c) in &self.tool_config {
+                s.push_str(&format!("  - id: {name}\n    name: {name}\n"));
+            }
+        }
+        s
+    }
+
+    /// Persist config (and the key, separately, mode 600).
+    pub fn save(&self) -> Result<(), String> {
+        ensure_home();
+        let p = config_path();
+        std::fs::write(&p, self.to_yaml()).map_err(|e| format!("{}: {e}", p.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+        }
+        // The key now lives in config.yml; remove the old side-car file.
+        let _ = std::fs::remove_file(key_path());
+        Ok(())
+    }
+
+    /// One-line summary for `/config`.
+    pub fn summary(&self) -> Vec<String> {
+        let shown = if self.api_key.is_empty() {
+            "未配置".to_string()
+        } else {
+            "已配置".to_string()
+        };
+        vec![
+            format!("model      {}", self.model),
+            format!("effort     {}", self.effort),
+            format!("base       {}", self.base),
+            format!("api key    {shown}"),
+            format!("max_tokens {}", self.max_tokens),
+            format!("tts_voice  {}", self.tts_voice),
+            format!("queued     {}   auto_send_voice {}", self.queued_default, self.auto_send_voice),
+            format!("home       {}", home().display()),
+            format!("config     {}", config_path().display()),
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_nested_and_patches() {
+        let y = parse_yaml(
+            "model: deepseek-flash\n\
+             api:\n  base: https://x/v1\n  key_file: ~/.dst/api_key\n\
+             tui:\n  queued_default: false\n\
+             insert:\n  - id: speak\n    name: speak\n    disabled: true\n",
+        );
+        assert_eq!(y.get("model").unwrap().as_str(), Some("deepseek-flash"));
+        assert_eq!(
+            y.get("api").unwrap().get("base").unwrap().as_str(),
+            Some("https://x/v1")
+        );
+        assert_eq!(
+            y.get("tui").unwrap().get("queued_default").unwrap().as_bool(),
+            Some(false)
+        );
+        let rows = y.get("insert").unwrap().as_seq().unwrap();
+        assert_eq!(rows[0].get("name").unwrap().as_str(), Some("speak"));
+        assert_eq!(rows[0].get("disabled").unwrap().as_bool(), Some(true));
+    }
+
+    #[test]
+    fn roundtrip_yaml() {
+        let mut c = Config::default();
+        c.model = "deepseek-v4".into();
+        c.disabled_tools.push("speak".into());
+        let doc = parse_yaml(&c.to_yaml());
+        assert_eq!(doc.get("model").unwrap().as_str(), Some("deepseek-v4"));
+        let rows = doc.get("insert").unwrap().as_seq().unwrap();
+        assert_eq!(rows[0].get("disabled").unwrap().as_bool(), Some(true));
+    }
+
+    #[test]
+    fn legacy_yaml_is_parseable() {
+        // The shape written by earlier dst versions must still load.
+        let y = parse_yaml(
+            "insert:\n  - id: bash\n    name: bash\n\n  - id: speak\n    name: speak\n",
+        );
+        assert_eq!(y.get("insert").unwrap().as_seq().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn comments_and_quotes() {
+        let y = parse_yaml("a: \"x # not comment\" # real comment\nb: 'y'\n");
+        assert_eq!(y.get("a").unwrap().as_str(), Some("x # not comment"));
+        assert_eq!(y.get("b").unwrap().as_str(), Some("y"));
+    }
+}

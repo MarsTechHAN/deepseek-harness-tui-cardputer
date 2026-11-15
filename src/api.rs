@@ -19,6 +19,8 @@ pub struct Cfg {
     pub key: String,
     pub model: String,
     pub max_tokens: u32,
+    /// Reasoning effort tier (`auto` = do not send the parameter).
+    pub effort: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -54,16 +56,19 @@ pub fn kill(pid: u32) {
 }
 
 fn body_json(cfg: &Cfg, messages: &J, tools: &J) -> String {
-    J::o(vec![
-        ("model", J::s(&cfg.model)),
-        ("messages", messages.clone()),
-        ("tools", tools.clone()),
-        ("stream", J::Bool(true)),
-        ("max_tokens", J::Num(cfg.max_tokens as f64)),
-        ("tool_choice", J::s("auto")),
-        ("parallel_tool_calls", J::Bool(true)),
-    ])
-    .dump()
+    let mut fields = vec![
+        ("model".to_string(), J::s(&cfg.model)),
+        ("messages".to_string(), messages.clone()),
+        ("tools".to_string(), tools.clone()),
+        ("stream".to_string(), J::Bool(true)),
+        ("max_tokens".to_string(), J::Num(cfg.max_tokens as f64)),
+        ("tool_choice".to_string(), J::s("auto")),
+        ("parallel_tool_calls".to_string(), J::Bool(true)),
+    ];
+    if cfg.effort != "auto" && !cfg.effort.is_empty() {
+        fields.push(("reasoning_effort".to_string(), J::s(&cfg.effort)));
+    }
+    J::Obj(fields).dump()
 }
 
 fn apply_line(line: &str, out: &mut StreamOut, tx: &std::sync::mpsc::Sender<ApiEv>) -> bool {
@@ -177,11 +182,18 @@ pub fn spawn_chat(cfg: &Cfg, messages: &J, tools: &J) -> Result<Chat, String> {
         let reader = BufReader::new(stdout);
         let mut out = StreamOut::default();
         let mut got_data = false;
+        // Keep the raw body: an API rejection arrives as JSON, not SSE, and
+        // "no data from API" without the reason is useless for the user.
+        let mut raw = String::new();
         for line in reader.lines() {
             let line = match line {
                 Ok(l) => l,
                 Err(_) => break,
             };
+            if !line.trim_start().starts_with("data:") && raw.len() < 600 {
+                raw.push_str(&line);
+                raw.push('\n');
+            }
             if line.trim_start().starts_with("data:") {
                 got_data = true;
             }
@@ -197,17 +209,77 @@ pub fn spawn_chat(cfg: &Cfg, messages: &J, tools: &J) -> Result<Chat, String> {
         }
         let _ = child.wait();
         if !got_data {
-            let _ = tx.send(ApiEv::Failed(if err.is_empty() {
-                "no data from API (check network / key)".into()
-            } else {
+            let body = raw.trim();
+            let msg = if !err.is_empty() {
                 err
-            }));
+            } else if !body.is_empty() {
+                // Pull out {"error":{"message":...}} when present.
+                let hint = parse(body)
+                    .and_then(|v| {
+                        v.get("error")
+                            .and_then(|e| e.get("message"))
+                            .and_then(|m| m.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .unwrap_or_else(|| body.chars().take(200).collect());
+                format!("API error: {hint}")
+            } else {
+                "no data from API (check network / key)".into()
+            };
+            let _ = tx.send(ApiEv::Failed(msg));
         } else {
             let _ = tx.send(ApiEv::Done(out));
         }
     });
 
     Ok(Chat { rx, pid })
+}
+
+/// Models the endpoint advertises, with their supported effort levels.
+pub fn list_models(cfg: &Cfg) -> Result<Vec<(String, String, Vec<String>)>, String> {
+    let url = format!("{}/models", cfg.base.trim_end_matches('/'));
+    if !url.starts_with("https://") {
+        return Err("refusing non-HTTPS endpoint".into());
+    }
+    let out = Command::new("curl")
+        .args([
+            "-sS",
+            "--max-time",
+            "20",
+            "-H",
+            &format!("Authorization: Bearer {}", cfg.key),
+            &url,
+        ])
+        .output()
+        .map_err(|e| format!("curl: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let v = parse(&text).ok_or_else(|| format!("bad JSON: {}", text.chars().take(120).collect::<String>()))?;
+    if let Some(err) = v.get("error") {
+        let m = err.get("message").and_then(|x| x.as_str()).unwrap_or("model list failed");
+        return Err(m.to_string());
+    }
+    let mut models = Vec::new();
+    if let Some(arr) = v.get("data").and_then(|d| d.as_arr()) {
+        for m in arr {
+            let id = m.get("id").and_then(|x| x.as_str()).unwrap_or("");
+            if id.is_empty() {
+                continue;
+            }
+            let name = m
+                .get("name")
+                .and_then(|x| x.as_str())
+                .unwrap_or(id)
+                .to_string();
+            let efforts = m
+                .get("effort")
+                .and_then(|e| e.get("supported_levels"))
+                .and_then(|l| l.as_arr())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+            models.push((id.to_string(), name, efforts));
+        }
+    }
+    Ok(models)
 }
 
 /// Blocking wrapper for background jobs.

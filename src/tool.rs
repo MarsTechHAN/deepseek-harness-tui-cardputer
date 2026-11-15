@@ -89,6 +89,11 @@ pub struct ToolDef {
     pub present: fn(&J) -> String,
     /// post-execute policy hook: may attach `additionalContexts`.
     pub post: Option<fn(&J, &J) -> Option<String>>,
+    /// A verbatim JSON schema for `parameters` (used by generated tools whose
+    /// schema comes from an MCP server rather than a parameter list).
+    pub schema_override: Option<String>,
+    /// Dynamic executor taking the tool name, for tools registered at runtime.
+    pub dynamic: Option<fn(&str, &J) -> Result<J, Fail>>,
 }
 
 /// One tool call as the model emitted it.
@@ -264,9 +269,15 @@ pub fn run_batch(reg: &[ToolDef], calls: &[Call], host: &mut dyn ToolHost) -> Ve
         }
         let (tx, rx) = std::sync::mpsc::channel();
         let exec = def.execute;
+        let dyn_fn = def.dynamic;
+        let tool_name = def.name;
         let args_c = args.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(exec(&args_c));
+            let r = match dyn_fn {
+                Some(f) => f(tool_name, &args_c),
+                None => exec(&args_c),
+            };
+            let _ = tx.send(r);
         });
 
         let mut settled: Option<Result<J, String>> = None;
@@ -369,6 +380,17 @@ pub fn definitions(reg: &[ToolDef]) -> J {
                 required.push(J::s(p.name));
             }
         }
+        let parameters = match &t.schema_override {
+            Some(raw) => crate::json::parse(raw).unwrap_or_else(|| {
+                J::Obj(vec![("type".to_string(), J::s("object"))])
+            }),
+            None => J::Obj(vec![
+                ("type".to_string(), J::s("object")),
+                ("properties".to_string(), J::Obj(props)),
+                ("required".to_string(), J::Arr(required)),
+                ("additionalProperties".to_string(), J::Bool(false)),
+            ]),
+        };
         arr.push(J::Obj(vec![
             ("type".to_string(), J::s("function")),
             (
@@ -376,15 +398,7 @@ pub fn definitions(reg: &[ToolDef]) -> J {
                 J::Obj(vec![
                     ("name".to_string(), J::s(t.name)),
                     ("description".to_string(), J::s(t.description)),
-                    (
-                        "parameters".to_string(),
-                        J::Obj(vec![
-                            ("type".to_string(), J::s("object")),
-                            ("properties".to_string(), J::Obj(props)),
-                            ("required".to_string(), J::Arr(required)),
-                            ("additionalProperties".to_string(), J::Bool(false)),
-                        ]),
-                    ),
+                    ("parameters".to_string(), parameters),
                 ]),
             ),
         ]));

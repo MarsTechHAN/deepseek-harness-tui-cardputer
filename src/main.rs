@@ -11,8 +11,13 @@
 //! Zero external crates: JSON is hand-rolled, HTTP goes through `curl`.
 
 mod api;
+mod cmd;
+mod config;
 mod harness;
 mod jobs;
+mod login;
+mod mcp;
+mod skills;
 mod json;
 mod tool;
 mod tools;
@@ -39,6 +44,12 @@ pub struct Scr {
     queue: Vec<String>,
     /// Ctrl-C/Ctrl-D asked the app to exit.
     quit: bool,
+    /// A turn is running (drives the busy hint).
+    busy: bool,
+    /// Tab was pressed while busy: start recording once the turn ends.
+    voice_pending: bool,
+    /// Hide typed characters (API key entry).
+    mask: bool,
     /// Submit automatically once speech fills the input.
     auto_send: bool,
     /// Incomplete UTF-8 sequence being assembled from keystrokes.
@@ -88,6 +99,9 @@ impl Scr {
             note: None,
             hdr: String::new(),
             quit: false,
+            busy: false,
+            voice_pending: false,
+            mask: false,
             auto_send: true,
             utf8_buf: Vec::new(),
             artifact: None,
@@ -283,6 +297,9 @@ impl Scr {
             live_line = format!("{} queued", self.queue.len());
         }
         // Scrolled back: say so, and how to get back.
+        if self.busy && live_line.is_empty() {
+            live_line = "Enter 排队 · Shift+Enter 立即打断 · Esc 中止".to_string();
+        }
         if self.scroll > 0 {
             let hint = format!("\u{2191}{} \u{884c} \u{00b7} End", self.scroll);
             if live_line.is_empty() {
@@ -314,7 +331,11 @@ impl Scr {
             start_i -= 1;
         }
         let shown: String = self.input[start_i..].iter().collect();
-        s.push_str(&shown);
+        if self.mask {
+            s.push_str(&"*".repeat(shown.chars().count()));
+        } else {
+            s.push_str(&shown);
+        }
         s.push_str("\x1b[K");
 
         // Cursor column = width of everything BEFORE the cursor in the window.
@@ -498,7 +519,7 @@ impl Scr {
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("/tmp/dst-voice.log")
+            .open(config::log_dir().join("voice.log"))
         {
             let _ = writeln!(f, "{msg}");
         }
@@ -627,8 +648,40 @@ impl Scr {
                 }
                 0x1b => {
                     let b1 = self.read_key();
+                    if b1 == b'\r' {
+                        // Alt+Enter / Shift+Enter fallback.
+                        if !self.input.is_empty() {
+                            let line: String = self.input.iter().collect();
+                            self.input.clear();
+                            self.cursor = 0;
+                            return Some(line);
+                        }
+                        continue;
+                    }
                     if b1 == b'[' || b1 == b'O' {
                         let b2 = self.read_key();
+                        if b2.is_ascii_digit() {
+                            // Extended key: ESC [ 1 3 ; 2 u is Shift+Enter.
+                            let mut seq = String::new();
+                            seq.push(b2 as char);
+                            loop {
+                                let c = self.read_key();
+                                seq.push(c as char);
+                                if c == b'u' || c == b'~' || c.is_ascii_alphabetic() {
+                                    break;
+                                }
+                                if seq.len() > 8 {
+                                    break;
+                                }
+                            }
+                            if seq.starts_with("13;") && !self.input.is_empty() {
+                                let line: String = self.input.iter().collect();
+                                self.input.clear();
+                                self.cursor = 0;
+                                return Some(line);
+                            }
+                            continue;
+                        }
                         match b2 {
                             b'A' => self.scroll = (self.scroll + 5).min(self.lines.len()),
                             b'B' => self.scroll = self.scroll.saturating_sub(5),
@@ -806,6 +859,17 @@ fn fit(s: &str, cols: usize) -> String {
     out
 }
 
+/// Project the persistent config onto the per-turn API client config.
+fn api_cfg(c: &config::Config) -> Cfg {
+    Cfg {
+        base: c.base.clone(),
+        key: c.api_key.clone(),
+        model: c.model.clone(),
+        max_tokens: c.max_tokens,
+        effort: c.effort.clone(),
+    }
+}
+
 fn term_size() -> (usize, usize) {
     // Probe the pty this process actually owns first (plain `stty size` reads
     // stdin), then /dev/tty. Whatever comes back is clamped to the panel:
@@ -841,42 +905,6 @@ fn raw_mode(on: bool) {
 }
 
 // ------------------------------------------------------------------ config
-
-fn read_key_file() -> Option<String> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/hanxiao".into());
-    let p = format!("{home}/.config/dsh-lite/api_key");
-    std::fs::read_to_string(p)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
-fn read_cfg() -> Cfg {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/hanxiao".into());
-    let mut base = "https://api.deepseek.com/v1".to_string();
-    let mut model = "deepseek-flash".to_string();
-    let mut max_tokens = 4096u32;
-    let p = format!("{home}/.config/dsh-lite/config.json");
-    if let Ok(s) = std::fs::read_to_string(p) {
-        if let Some(v) = json::parse(&s) {
-            if let Some(b) = v.get("base_url").and_then(|x| x.as_str()) {
-                base = b.to_string();
-            }
-            if let Some(m) = v.get("model").and_then(|x| x.as_str()) {
-                model = m.to_string();
-            }
-            if let Some(m) = v.get("max_tokens").and_then(|x| x.as_num()) {
-                max_tokens = m as u32;
-            }
-        }
-    }
-    Cfg {
-        base,
-        key: read_key_file().unwrap_or_default(),
-        model,
-        max_tokens,
-    }
-}
 
 const SYSTEM_PROMPT: &str = "\
 You are dst, a DeepSeek harness running on a handheld Cardputer Zero.
@@ -1067,11 +1095,43 @@ impl<'a> harness::Ui for TermUi<'a> {
                     self.scr.quit = true;
                     return Action::Cancel;
                 }
+                0x09 => {
+                    // Push-to-talk during a turn: honoured as soon as the
+                    // current work stops, then submitted like a normal take.
+                    if !self.scr.voice_pending {
+                        self.scr.voice_pending = true;
+                        self.scr
+                            .push("\u{1f3a4} 已排队录音（本轮结束后开始）", K_DIM);
+                        changed = true;
+                    }
+                }
                 0x1b => {
-                    // A bare Esc cancels; Esc + '[' / 'O' is an arrow key.
+                    // Bare Esc cancels; Esc+'['/'O' is an arrow key;
+                    // extended Shift/Ctrl+Enter interrupts and sends at once.
                     match self.scr.read_key_timeout() {
+                        Some(b'\r') => {
+                            self.force_now();
+                            poll_mode(true);
+                            return Action::Cancel;
+                        }
                         Some(b) if b == b'[' || b == b'O' => {
-                            let _ = self.scr.read_key_timeout();
+                            let mut seq = String::new();
+                            for _ in 0..8 {
+                                match self.scr.read_key_timeout() {
+                                    Some(c) => {
+                                        seq.push(c as char);
+                                        if c == b'u' || c == b'~' || c.is_ascii_alphabetic() {
+                                            break;
+                                        }
+                                    }
+                                    None => break,
+                                }
+                            }
+                            if seq.starts_with("13;") {
+                                self.force_now();
+                                poll_mode(true);
+                                return Action::Cancel;
+                            }
                             poll_mode(true); // read_key_timeout left the tty blocking
                         }
                         _ => return Action::Cancel,
@@ -1116,6 +1176,23 @@ impl<'a> harness::Ui for TermUi<'a> {
             self.scr.draw();
         }
         Action::Continue
+    }
+}
+
+impl<'a> TermUi<'a> {
+    /// Queue the currently typed text ahead of everything else, so it runs as
+    /// soon as the interrupted turn winds down.
+    fn force_now(&mut self) {
+        let line: String = self.scr.input.iter().collect();
+        let line = line.trim().to_string();
+        if line.is_empty() {
+            return;
+        }
+        self.scr.input.clear();
+        self.scr.cursor = 0;
+        self.scr.queue.insert(0, line.clone());
+        self.scr
+            .push(&format!("\u{26a1} 已打断，立即发送: {line}"), K_TOOL);
     }
 }
 
@@ -1214,6 +1291,339 @@ fn single_instance() -> bool {
     true
 }
 
+
+type ConfigRc = std::rc::Rc<std::cell::RefCell<config::Config>>;
+type LoginRx = std::rc::Rc<std::cell::RefCell<Option<std::sync::mpsc::Receiver<login::Submitted>>>>;
+
+/// Start the QR login server and render its code in the transcript.
+fn start_login(scr: &mut Scr, login_rx: &LoginRx) {
+    match login::start(login::DEFAULT_PORT) {
+        Ok((url, rx)) => {
+            let (qr, note) = login::qr_lines(&url);
+            scr.push(&format!("登录地址 {url}"), K_NORM);
+            if qr.is_empty() {
+                scr.push(&format!("二维码不可用（{note}），请手动打开上面的地址"), K_DIM);
+            } else {
+                for line in qr {
+                    scr.push(&line, K_NORM);
+                }
+            }
+            scr.push("用手机扫码并粘贴 API key，这里会自动完成", K_DIM);
+            *login_rx.borrow_mut() = Some(rx);
+        }
+        Err(e) => scr.push(&format!("无法启动登录服务: {e}"), K_ERR),
+    }
+}
+
+fn apply_login(c: &mut config::Config, sub: login::Submitted) -> String {
+    c.api_key = sub.key;
+    if !sub.base.is_empty() {
+        c.base = sub.base;
+    }
+    if !sub.model.is_empty() {
+        c.model = sub.model;
+    }
+    c.configured = true;
+    match c.save() {
+        Ok(()) => format!("已登录，保存到 {}", config::config_path().display()),
+        Err(e) => format!("已收到 key，但保存失败: {e}"),
+    }
+}
+
+/// First-run guide: ask DeepSeek official (QR) or a custom endpoint.
+fn onboarding(scr: &mut Scr, config_rc: &ConfigRc, login_rx: &LoginRx) {
+    if config_rc.borrow().configured {
+        return;
+    }
+    scr.push("欢迎使用 dst", K_NORM);
+    scr.push("还没有配置 API，请选择接入方式：", K_NORM);
+    scr.push("  1) DeepSeek 官方（推荐）— 手机扫码", K_TOOL);
+    scr.push("  2) 自有 / 自建 OpenAI 兼容 API", K_TOOL);
+    scr.push("输入 1 或 2 后回车（直接回车 = 1）", K_DIM);
+    let choice = match scr.edit() {
+        Some(l) => l.trim().to_string(),
+        None => return,
+    };
+    if choice == "2" {
+        scr.push("Base URL（例如 https://api.openai.com/v1）:", K_DIM);
+        let base = match scr.edit() {
+            Some(l) => l.trim().to_string(),
+            None => return,
+        };
+        scr.push("API key（输入时不回显）:", K_DIM);
+        scr.mask = true;
+        let key = match scr.edit() {
+            Some(l) => l.trim().to_string(),
+            None => return,
+        };
+        scr.mask = false;
+        scr.push("模型名（回车 = deepseek-flash）:", K_DIM);
+        let model = match scr.edit() {
+            Some(l) => l.trim().to_string(),
+            None => return,
+        };
+        {
+            let mut c = config_rc.borrow_mut();
+            if !base.is_empty() {
+                c.base = base;
+            }
+            c.api_key = key;
+            if !model.is_empty() {
+                c.model = model;
+            }
+            c.configured = !c.api_key.is_empty();
+            match c.save() {
+                Ok(()) => scr.push("已保存到 ~/.dst/config.yml", K_NORM),
+                Err(e) => scr.push(&format!("保存失败: {e}"), K_ERR),
+            }
+        }
+    } else {
+        start_login(scr, login_rx);
+        let t0 = std::time::Instant::now();
+        while t0.elapsed().as_secs() < 300 {
+            let got = {
+                let b = login_rx.borrow();
+                b.as_ref().and_then(|rx| rx.try_recv().ok())
+            };
+            if let Some(sub) = got {
+                *login_rx.borrow_mut() = None;
+                let msg = apply_login(&mut config_rc.borrow_mut(), sub);
+                scr.push(&msg, K_NORM);
+                return;
+            }
+            if let Some(k) = scr.read_key_timeout() {
+                if k == 0x1b || k == 0x03 {
+                    *login_rx.borrow_mut() = None;
+                    scr.push("已取消登录", K_DIM);
+                    return;
+                }
+            }
+        }
+        *login_rx.borrow_mut() = None;
+        scr.push("登录超时，稍后可再输入 /login", K_ERR);
+    }
+}
+
+
+// --------------------------------------------------------------- sessions
+
+fn new_session_path() -> std::path::PathBuf {
+    let stamp = std::process::Command::new("date")
+        .arg("+%Y%m%d-%H%M%S")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_else(|_| "session".into())
+        });
+    config::sessions_dir().join(format!("{stamp}.json"))
+}
+
+fn save_session(msgs: &jobs::Msgs, cfg: &config::Config, path: &std::path::Path) {
+    let doc = json::J::o(vec![
+        ("model", json::J::s(&cfg.model)),
+        ("effort", json::J::s(&cfg.effort)),
+        ("messages", json::J::Arr(msgs.borrow().clone())),
+    ]);
+    let _ = std::fs::write(path, doc.dump());
+}
+
+fn resume_session(scr: &mut Scr, msgs: &jobs::Msgs, idx: usize) -> Option<std::path::PathBuf> {
+    let sessions = config::list_sessions();
+    let (path, label, _) = sessions.get(idx)?.clone();
+    let txt = std::fs::read_to_string(&path).ok()?;
+    let v = json::parse(&txt)?;
+    let arr = v.get("messages")?.as_arr()?.clone();
+    *msgs.borrow_mut() = arr.clone();
+    scr.lines.clear();
+    scr.scroll = 0;
+    scr.splash_done = true;
+    scr.push(&format!("已恢复会话 {label}"), K_DIM);
+    for m in arr.iter().rev() {
+        if m.get("role").and_then(|r| r.as_str()) == Some("assistant") {
+            if let Some(t) = m.get("content").and_then(|c| c.as_str()) {
+                if !t.trim().is_empty() {
+                    scr.push_md(t);
+                }
+            }
+            break;
+        }
+    }
+    Some(path)
+}
+
+// ---------------------------------------------------------- config wizard
+
+/// Interactive configuration: everything is a numbered option except the API
+/// key, the only value that must be typed.
+fn config_wizard(scr: &mut Scr, config_rc: &ConfigRc) {
+    loop {
+        let (model, effort, base, kstate, voice, auto, queued) = {
+            let c = config_rc.borrow();
+            (
+                c.model.clone(),
+                c.effort.clone(),
+                c.base.clone(),
+                if c.api_key.is_empty() { "未配置".to_string() } else { "已配置".to_string() },
+                c.tts_voice.clone(),
+                c.auto_send_voice,
+                c.queued_default,
+            )
+        };
+        scr.push("配置 — 输入编号，0 返回", K_DIM);
+        scr.push(&format!(" 1) 模型       {model}"), K_TOOL);
+        scr.push(&format!(" 2) 推理强度   {effort}"), K_TOOL);
+        scr.push(&format!(" 3) 接口地址   {base}"), K_TOOL);
+        scr.push(&format!(" 4) API key    {kstate}"), K_TOOL);
+        scr.push(&format!(" 5) TTS 音色   {voice}"), K_TOOL);
+        scr.push(&format!(" 6) 语音自动发送  {}", if auto { "开" } else { "关" }), K_TOOL);
+        scr.push(&format!(" 7) 消息排队模式  {}", if queued { "排队" } else { "立即" }), K_TOOL);
+        scr.push(" 9) 保存并返回", K_TOOL);
+        let choice = match scr.edit() {
+            Some(l) => l.trim().to_string(),
+            None => return,
+        };
+        let mut changed = false;
+        match choice.as_str() {
+            "1" => {
+                let cfg = api_cfg(&config_rc.borrow());
+                match crate::api::list_models(&cfg) {
+                    Ok(models) if !models.is_empty() => {
+                        for (i, (id, name, _)) in models.iter().enumerate() {
+                            scr.push(&format!(" {}) {id}  {name}", i + 1), K_TOOL);
+                        }
+                        scr.push("输入编号或模型名（0 取消）", K_DIM);
+                        let sel = match scr.edit() {
+                            Some(l) => l.trim().to_string(),
+                            None => return,
+                        };
+                        if !sel.is_empty() && sel != "0" {
+                            if let Ok(n) = sel.parse::<usize>() {
+                                if n >= 1 && n <= models.len() {
+                                    config_rc.borrow_mut().model = models[n - 1].0.clone();
+                                    changed = true;
+                                }
+                            } else {
+                                config_rc.borrow_mut().model = sel;
+                                changed = true;
+                            }
+                        }
+                    }
+                    Ok(_) => scr.push("未取到模型列表", K_ERR),
+                    Err(e) => scr.push(&format!("模型列表不可用: {e}"), K_ERR),
+                }
+            }
+            "2" => {
+                scr.push(" 1) auto   2) low   3) high   4) max", K_TOOL);
+                let sel = match scr.edit() {
+                    Some(l) => l.trim().to_string(),
+                    None => return,
+                };
+                let v = match sel.as_str() {
+                    "1" => Some("auto"),
+                    "2" => Some("low"),
+                    "3" => Some("high"),
+                    "4" => Some("max"),
+                    _ => None,
+                };
+                if let Some(v) = v {
+                    config_rc.borrow_mut().effort = v.to_string();
+                    changed = true;
+                }
+            }
+            "3" => {
+                scr.push(" 1) DeepSeek 官方   2) 自定义（输入 URL）", K_TOOL);
+                let sel = match scr.edit() {
+                    Some(l) => l.trim().to_string(),
+                    None => return,
+                };
+                match sel.as_str() {
+                    "1" => {
+                        config_rc.borrow_mut().base = "https://api.deepseek.com/v1".into();
+                        changed = true;
+                    }
+                    "2" => {
+                        scr.push("输入 base URL（如 https://host/v1）", K_DIM);
+                        let u = match scr.edit() {
+                            Some(l) => l.trim().to_string(),
+                            None => return,
+                        };
+                        if u.starts_with("http") {
+                            config_rc.borrow_mut().base = u;
+                            changed = true;
+                        } else if !u.is_empty() {
+                            scr.push("必须是 http(s) URL", K_ERR);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            "4" => {
+                scr.push("粘贴 API key（输入不回显）", K_DIM);
+                scr.mask = true;
+                let k = match scr.edit() {
+                    Some(l) => l.trim().to_string(),
+                    None => {
+                        scr.mask = false;
+                        return;
+                    }
+                };
+                scr.mask = false;
+                if !k.is_empty() {
+                    let mut c = config_rc.borrow_mut();
+                    c.api_key = k;
+                    c.configured = true;
+                    changed = true;
+                }
+            }
+            "5" => {
+                scr.push(" 1) stella（女声）   2) tide（男声）", K_TOOL);
+                let sel = match scr.edit() {
+                    Some(l) => l.trim().to_string(),
+                    None => return,
+                };
+                match sel.as_str() {
+                    "1" => {
+                        config_rc.borrow_mut().tts_voice = "stella".into();
+                        changed = true;
+                    }
+                    "2" => {
+                        config_rc.borrow_mut().tts_voice = "tide".into();
+                        changed = true;
+                    }
+                    _ => {}
+                }
+            }
+            "6" => {
+                let mut c = config_rc.borrow_mut();
+                c.auto_send_voice = !c.auto_send_voice;
+                changed = true;
+            }
+            "7" => {
+                let mut c = config_rc.borrow_mut();
+                c.queued_default = !c.queued_default;
+                changed = true;
+            }
+            "9" | "" => {
+                match config_rc.borrow().save() {
+                    Ok(()) => scr.push("已保存到 ~/.dst/config.yml", K_NORM),
+                    Err(e) => scr.push(&format!("保存失败: {e}"), K_ERR),
+                }
+                return;
+            }
+            "0" => return,
+            _ => {}
+        }
+        if changed {
+            let _ = config_rc.borrow().save();
+        }
+    }
+}
+
 fn main() {
     // A panic must not leave the panel full of half-drawn glyphs and escape
     // sequences: restore the terminal first, then report.
@@ -1233,15 +1643,20 @@ fn main() {
         std::process::exit(1);
     }
 
-    let cfg = read_cfg();
-    if cfg.key.is_empty() {
-        eprintln!("dsh-lite: no API key at ~/.config/dsh-lite/api_key");
-        std::process::exit(1);
-    }
-
+    let config_rc: ConfigRc = std::rc::Rc::new(std::cell::RefCell::new(config::Config::load()));
+    let login_rx: LoginRx = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let mut cfg = api_cfg(&config_rc.borrow());
     tools::set_cfg(cfg.clone());
     voice::set_cfg(cfg.clone());
-    let reg = tools::registry();
+    let shared_cfg = std::rc::Rc::new(std::cell::RefCell::new(cfg.clone()));
+    // Skills first (their catalog goes into the prompt), then MCP servers
+    // (their tools are discovered over JSON-RPC at startup).
+    let skill_list = skills::load_all();
+    tools::set_skills(skill_list.clone());
+    mcp::install(mcp::start_all());
+    let mut reg = tools::registry();
+    reg.extend(mcp::tool_defs());
+    let system_prompt = format!("{}{}", SYSTEM_PROMPT, skills::catalog_prompt(&skill_list));
     let tdefs = tool::definitions(&reg);
 
     let argv: Vec<String> = std::env::args().collect();
@@ -1260,6 +1675,7 @@ fn main() {
     }
 
     let mut scr = Scr::new();
+    let mut session_path: Option<std::path::PathBuf> = None;
     raw_mode(true);
 
     for line in SPLASH {
@@ -1268,12 +1684,38 @@ fn main() {
     scr.push("  dst \u{b7} a DeepSeek harness on a Cardputer Zero", K_DIM);
     scr.push(&format!("  {} | Tab \u{957f}\u{6309}\u{5f55}\u{97f3} | /quit", cfg.model), K_DIM);
     scr.hdr = device_status();
-    let msgs: jobs::Msgs = std::rc::Rc::new(std::cell::RefCell::new(vec![harness::msg("system", SYSTEM_PROMPT)]));
+    onboarding(&mut scr, &config_rc, &login_rx);
+    cfg = api_cfg(&config_rc.borrow());
+    *shared_cfg.borrow_mut() = cfg.clone();
+    tools::set_cfg(cfg.clone());
+    voice::set_cfg(cfg.clone());
+    if !config_rc.borrow().configured {
+        scr.push("仍未配置：可随时输入 /login 或 /key <api-key>", K_ERR);
+    }
+    let msgs: jobs::Msgs = std::rc::Rc::new(std::cell::RefCell::new(vec![harness::msg("system", &system_prompt)]));
     {
-        let cfg2 = cfg.clone();
         let tdefs2 = tdefs.clone();
         let msgs2 = msgs.clone();
-        scr.on_tick = Some(Box::new(move |s: &mut Scr| jobs::poll(&cfg2, &tdefs2, &msgs2, s)));
+        let sc = shared_cfg.clone();
+        let crc = config_rc.clone();
+        let lrx = login_rx.clone();
+        scr.on_tick = Some(Box::new(move |s: &mut Scr| {
+            let c = sc.borrow().clone();
+            jobs::poll(&c, &tdefs2, &msgs2, s);
+            let got = {
+                let b = lrx.borrow();
+                b.as_ref().and_then(|rx| rx.try_recv().ok())
+            };
+            if let Some(sub) = got {
+                let msg = apply_login(&mut crc.borrow_mut(), sub);
+                *lrx.borrow_mut() = None;
+                let c = api_cfg(&crc.borrow());
+                *sc.borrow_mut() = c.clone();
+                tools::set_cfg(c.clone());
+                voice::set_cfg(c.clone());
+                s.push(&msg, K_NORM);
+            }
+        }));
     }
 
     loop {
@@ -1281,8 +1723,48 @@ fn main() {
             Some(l) => l,
             None => break,
         };
-        if line == "/quit" || line == "/exit" {
-            break;
+        // Slash commands are human commands: they run here and never become a
+        // model message (the same contract as DSH's command registry).
+        if line.starts_with('/') {
+            // Bind the borrow before the if-let: a temporary RefMut in the
+            // scrutinee would live for the whole body and make every later
+            // config access (wizard, login, save) panic.
+            let dispatched = {
+                let mut guard = config_rc.borrow_mut();
+                cmd::dispatch(&line, &mut guard)
+            };
+            if let Some(out) = dispatched {
+                scr.push(&format!("> {line}"), K_USER);
+                if out.clear {
+                    scr.lines.clear();
+                    scr.scroll = 0;
+                    scr.splash_done = true;
+                }
+                for (text, kind) in out.lines {
+                    scr.push(&text, kind);
+                }
+                if out.quit {
+                    break;
+                }
+                if out.login {
+                    start_login(&mut scr, &login_rx);
+                }
+                if out.config_wizard {
+                    config_wizard(&mut scr, &config_rc);
+                }
+                if let Some(pick) = out.resume {
+                    if let Some(n) = pick {
+                        if let Some(p) = resume_session(&mut scr, &msgs, n) {
+                            session_path = Some(p);
+                        }
+                    }
+                }
+                cfg = api_cfg(&config_rc.borrow());
+                *shared_cfg.borrow_mut() = cfg.clone();
+                tools::set_cfg(cfg.clone());
+                voice::set_cfg(cfg.clone());
+                continue;
+            }
         }
         let mut next = Some(line);
         while let Some(submit) = next {
@@ -1294,6 +1776,8 @@ fn main() {
                 scr.splash_done = true;
             }
             scr.push(&format!("> {submit}"), K_USER);
+            cfg = api_cfg(&config_rc.borrow());
+            scr.busy = true;
             poll_mode(true);
             {
                 let mut m = msgs.borrow_mut();
@@ -1306,8 +1790,25 @@ fn main() {
                 harness::run_turn(&cfg, &mut m, &reg, &submit, &mut ui);
             }
             poll_mode(false);
+            scr.busy = false;
             scr.live = None;
             scr.draw();
+            if scr.voice_pending {
+                scr.voice_pending = false;
+                scr.voice_input();
+                if scr.auto_send && !scr.input.is_empty() {
+                    let line: String = scr.input.iter().collect();
+                    scr.input.clear();
+                    scr.cursor = 0;
+                    scr.queue.insert(0, line);
+                }
+            }
+            if session_path.is_none() {
+                session_path = Some(new_session_path());
+            }
+            if let Some(p) = &session_path {
+                save_session(&msgs, &config_rc.borrow(), p);
+            }
             if scr.quit {
                 break;
             }
@@ -1322,6 +1823,9 @@ fn main() {
         }
     }
 
+    if let Some(p) = &session_path {
+        save_session(&msgs, &config_rc.borrow(), p);
+    }
     raw_mode(false);
     let _ = std::io::stdout().write_all(b"\x1b[0m\x1b[2J\x1b[H");
     println!("bye");

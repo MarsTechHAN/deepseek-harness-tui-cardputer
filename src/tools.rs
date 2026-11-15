@@ -11,14 +11,19 @@ use std::process::Command;
 
 /// API config, installed once at startup so tools can reach DeepSeek's
 /// server-side tool endpoints without every tool taking a config argument.
-static CFG: std::sync::OnceLock<crate::api::Cfg> = std::sync::OnceLock::new();
+static CFG: std::sync::Mutex<Option<crate::api::Cfg>> = std::sync::Mutex::new(None);
 
 pub fn set_cfg(c: crate::api::Cfg) {
-    let _ = CFG.set(c);
+    if let Ok(mut g) = CFG.lock() {
+        *g = Some(c);
+    }
 }
 
-fn cfg_get() -> Result<&'static crate::api::Cfg, Fail> {
-    CFG.get().ok_or_else(|| Fail::new("api config not initialised"))
+fn cfg_get() -> Result<crate::api::Cfg, Fail> {
+    CFG.lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .ok_or_else(|| Fail::new("api config not initialised"))
 }
 
 fn endpoint(path: &str) -> Result<String, Fail> {
@@ -101,6 +106,8 @@ polled with a later call.",
             concurrency_safe: false,
             timeout_ms: 65_000,
             execute: bash_exec,
+            schema_override: None,
+            dynamic: None,
             render: bash_render,
             present: |a| format!("$ {}", short(&str_arg(a, "command").unwrap_or_default(), 34)),
             post: None,
@@ -117,6 +124,8 @@ so a later edit can address them.",
             concurrency_safe: true,
             timeout_ms: 10_000,
             execute: read_exec,
+            schema_override: None,
+            dynamic: None,
             render: read_render,
             present: |a| format!("read {}", str_arg(a, "path").unwrap_or_default()),
             post: Some(read_post),
@@ -132,6 +141,8 @@ Parent directories are created as needed. Read a file before overwriting it.",
             concurrency_safe: false,
             timeout_ms: 10_000,
             execute: write_exec,
+            schema_override: None,
+            dynamic: None,
             render: write_render,
             present: |a| format!("write {}", str_arg(a, "path").unwrap_or_default()),
             post: None,
@@ -147,6 +158,8 @@ Parent directories are created as needed. Read a file before overwriting it.",
             concurrency_safe: true,
             timeout_ms: 10_000,
             execute: list_exec,
+            schema_override: None,
+            dynamic: None,
             render: list_render,
             present: |a| format!("ls {}", str_arg(a, "path").unwrap_or_else(|| ".".into())),
             post: None,
@@ -167,9 +180,30 @@ is back\u{201d}), not the steps. Never read out code, paths, or logs.",
             concurrency_safe: false,
             timeout_ms: 30_000,
             execute: speak_exec,
+            schema_override: None,
+            dynamic: None,
             render: speak_render,
             present: |a| format!("speak {}", short(&str_arg(a, "text").unwrap_or_default(), 40)),
             post: Some(speak_post),
+        },
+        ToolDef {
+            name: "skill",
+            description: "Load the instructions of a packaged skill before acting on a \
+task that matches it. The available skills and when to use them are listed in \
+the SKILLS section of your system prompt; calling this returns the full text.",
+            params: vec![Param::req(
+                "name",
+                "string",
+                "Skill name exactly as listed in the SKILLS section.",
+            )],
+            concurrency_safe: true,
+            timeout_ms: 10_000,
+            execute: skill_exec,
+            schema_override: None,
+            dynamic: None,
+            render: skill_render,
+            present: |a| format!("skill {}", short(&str_arg(a, "name").unwrap_or_default(), 30)),
+            post: None,
         },
         ToolDef {
             name: "cron",
@@ -183,6 +217,8 @@ When a job fires its prompt runs as a new turn, so keep prompts self-contained."
             concurrency_safe: false,
             timeout_ms: 10_000,
             execute: cron_exec,
+            schema_override: None,
+            dynamic: None,
             render: jobs_render,
             present: |a| format!("cron {}", str_arg(a, "action").unwrap_or_default()),
             post: None,
@@ -199,6 +235,8 @@ A job fires at most once per change and runs its prompt as a new turn.",
             concurrency_safe: false,
             timeout_ms: 10_000,
             execute: watch_exec,
+            schema_override: None,
+            dynamic: None,
             render: jobs_render,
             present: |a| format!("watch {}", str_arg(a, "action").unwrap_or_default()),
             post: None,
@@ -229,6 +267,8 @@ it is large, so prefer the summary and fetch a specific page instead.",
             concurrency_safe: true,
             timeout_ms: 65_000,
             execute: search_exec,
+            schema_override: None,
+            dynamic: None,
             render: search_render,
             present: |a| format!("search {}", short(&str_arg(a, "query").unwrap_or_default(), 34)),
             post: None,
@@ -245,6 +285,8 @@ Use it after search when a specific result needs reading.",
             concurrency_safe: true,
             timeout_ms: 65_000,
             execute: fetch_exec,
+            schema_override: None,
+            dynamic: None,
             render: fetch_render,
             present: |a| format!("fetch {}", short(&str_arg(a, "url").unwrap_or_default(), 34)),
             post: None,
@@ -265,6 +307,8 @@ page layout itself matters.",
             concurrency_safe: false,
             timeout_ms: 300_000,
             execute: ocr_exec,
+            schema_override: None,
+            dynamic: None,
             render: ocr_render,
             present: |a| format!("ocr {}", short(&str_arg(a, "path").unwrap_or_default(), 40)),
             post: None,
@@ -288,11 +332,44 @@ code, diagrams, step lists, comparisons. It stays up until the user dismisses it
             concurrency_safe: false,
             timeout_ms: 10_000,
             execute: artifact_exec,
+            schema_override: None,
+            dynamic: None,
             render: artifact_render,
             present: |a| format!("artifact {}", short(&str_arg(a, "title").unwrap_or_default(), 40)),
             post: None,
         },
     ]
+}
+
+static SKILLS: std::sync::RwLock<Option<Vec<crate::skills::Skill>>> =
+    std::sync::RwLock::new(None);
+
+/// Install the catalogs discovered at startup.
+pub fn set_skills(v: Vec<crate::skills::Skill>) {
+    if let Ok(mut g) = SKILLS.write() {
+        *g = Some(v);
+    }
+}
+
+fn skill_exec(args: &J) -> Result<J, Fail> {
+    let name = str_arg(args, "name").ok_or_else(|| Fail::new("missing 'name'"))?;
+    let guard = SKILLS
+        .read()
+        .map_err(|_| Fail::new("skills unavailable"))?;
+    let all = guard.as_ref().ok_or_else(|| Fail::new("no skills loaded"))?;
+    match crate::skills::body_for(all, &name) {
+        Some(body) => Ok(obj(vec![
+            ("name", J::s(&name)),
+            ("body", J::s(&body)),
+        ])),
+        None => Err(Fail::new(format!(
+            "unknown skill '{name}' (see the SKILLS section of the prompt)"
+        ))),
+    }
+}
+
+fn skill_render(_args: &J, v: &J) -> String {
+    v.get("body").and_then(|b| b.as_str()).unwrap_or("").to_string()
 }
 
 fn short(s: &str, n: usize) -> String {
@@ -479,8 +556,8 @@ fn list_render(_args: &J, v: &J) -> String {
 // speak -- bounded to ~10 s of speech
 // ---------------------------------------------------------------------------
 
-/// Speech budget. Volcengine `uranus_bigtts` at default rate is roughly
-/// 4.5 Chinese characters/second, or ~15 English characters/second.
+/// Speech budget. The TTS voice speaks roughly 4.5 Chinese characters per
+/// second, or ~15 English characters per second.
 const SPEECH_BUDGET_S: f64 = 9.5;
 
 fn speech_seconds(text: &str) -> f64 {
@@ -538,7 +615,7 @@ fn speak_exec(args: &J) -> Result<J, Fail> {
     if spoken.trim().is_empty() {
         return Err(Fail::new("nothing to say after trimming to the speech budget"));
     }
-    // DeepSeek TTS, implemented in Rust (no Python, no Volcengine).
+    // DeepSeek TTS, implemented in Rust (no Python helper).
     crate::voice::tts(&spoken).map_err(Fail::new)?;
     Ok(obj(vec![
         ("spoken", J::s(&spoken)),

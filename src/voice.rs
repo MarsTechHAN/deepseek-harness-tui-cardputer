@@ -1,4 +1,4 @@
-//! Voice input/output on DeepSeek's own APIs — no Python, no Volcengine.
+//! Voice input/output on DeepSeek's own APIs — pure Rust, no Python helper.
 //!
 //!   TTS: POST /v1/tools/tts   {text, voice_id, format:"pcm"}
 //!        -> 24 kHz s16 mono PCM, converted here to 48 kHz S32 stereo for
@@ -10,7 +10,7 @@
 //! playback) is done in this file. No shelling out to Python or ffmpeg.
 
 use crate::json::J;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,14 +23,18 @@ const ASR_RATE: usize = 16_000;
 /// frames written before that, which sounds like the first syllable is eaten.
 const PLAY_PAD_MS: usize = 400;
 
-static CFG: std::sync::OnceLock<crate::api::Cfg> = std::sync::OnceLock::new();
+static CFG: std::sync::Mutex<Option<crate::api::Cfg>> = std::sync::Mutex::new(None);
 
 pub fn set_cfg(c: crate::api::Cfg) {
-    let _ = CFG.set(c);
+    if let Ok(mut g) = CFG.lock() {
+        *g = Some(c);
+    }
 }
 
-fn cfg() -> Result<&'static crate::api::Cfg, String> {
-    CFG.get()
+fn cfg() -> Result<crate::api::Cfg, String> {
+    CFG.lock()
+        .ok()
+        .and_then(|g| g.clone())
         .ok_or_else(|| "api config not initialised".to_string())
 }
 
@@ -106,15 +110,16 @@ fn play_pcm24k(pcm: &[u8]) -> Result<(), String> {
         }
     }
 
-    let path = "/tmp/_dst_tts.raw";
-    std::fs::write(path, &raw).map_err(|e| format!("{path}: {e}"))?;
+    let path = crate::config::cache_dir().join("tts.raw");
+    let path = path.to_string_lossy().to_string();
+    std::fs::write(&path, &raw).map_err(|e| format!("{path}: {e}"))?;
     let status = Command::new("aplay")
         .args([
-            "-q", "-D", CARD, "-f", "S32_LE", "-r", "48000", "-c", "2", "-t", "raw", path,
+            "-q", "-D", CARD, "-f", "S32_LE", "-r", "48000", "-c", "2", "-t", "raw", path.as_str(),
         ])
         .status()
         .map_err(|e| format!("aplay: {e}"))?;
-    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(&path);
     if !status.success() {
         return Err(format!("aplay exited with {status}"));
     }
@@ -207,10 +212,11 @@ impl Recorder {
         let mono: Vec<i16> = samples.iter().step_by(MIC_RATE / ASR_RATE).cloned().collect();
         let wav = to_wav(&mono, ASR_RATE as u32);
 
-        let path = "/tmp/_dst_asr.wav";
-        std::fs::write(path, &wav).map_err(|e| format!("{path}: {e}"))?;
-        let result = upload_asr(path);
-        let _ = std::fs::remove_file(path);
+        let path = crate::config::cache_dir().join("asr.wav");
+        let path = path.to_string_lossy().to_string();
+        std::fs::write(&path, &wav).map_err(|e| format!("{path}: {e}"))?;
+        let result = upload_asr(&path);
+        let _ = std::fs::remove_file(&path);
         result
     }
 
@@ -323,9 +329,10 @@ pub fn mic_probe(secs: u32) -> Result<(f64, String), String> {
         .sqrt();
     let mono: Vec<i16> = samples.iter().step_by(MIC_RATE / ASR_RATE).cloned().collect();
     let wav = to_wav(&mono, ASR_RATE as u32);
-    let path = "/tmp/_dst_probe.wav";
-    std::fs::write(path, &wav).map_err(|e| format!("{path}: {e}"))?;
-    let text = upload_asr(path);
-    let _ = std::fs::remove_file(path);
+    let path = crate::config::cache_dir().join("probe.wav");
+    let path = path.to_string_lossy().to_string();
+    std::fs::write(&path, &wav).map_err(|e| format!("{path}: {e}"))?;
+    let text = upload_asr(&path);
+    let _ = std::fs::remove_file(&path);
     Ok((rms / 32768.0, text?))
 }
