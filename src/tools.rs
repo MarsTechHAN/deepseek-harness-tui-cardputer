@@ -556,8 +556,8 @@ fn list_render(_args: &J, v: &J) -> String {
 // speak -- bounded to ~10 s of speech
 // ---------------------------------------------------------------------------
 
-/// Speech budget. Volcengine `uranus_bigtts` at default rate is roughly
-/// 4.5 Chinese characters/second, or ~15 English characters/second.
+/// Speech budget. The TTS voice speaks roughly 4.5 Chinese characters per
+/// second, or ~15 English characters per second.
 const SPEECH_BUDGET_S: f64 = 9.5;
 
 fn speech_seconds(text: &str) -> f64 {
@@ -615,7 +615,7 @@ fn speak_exec(args: &J) -> Result<J, Fail> {
     if spoken.trim().is_empty() {
         return Err(Fail::new("nothing to say after trimming to the speech budget"));
     }
-    // DeepSeek TTS, implemented in Rust (no Python, no Volcengine).
+    // DeepSeek TTS, implemented in Rust (no Python helper).
     crate::voice::tts(&spoken).map_err(Fail::new)?;
     Ok(obj(vec![
         ("spoken", J::s(&spoken)),

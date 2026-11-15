@@ -29,8 +29,20 @@ repository.
 **Human commands** (execute locally, never sent to the model)
 - `/help`, `/model [name]` (lists models from `/v1/models`), `/effort
   [auto|low|high|max]`, `/config` (interactive wizard: options everywhere, text
-  input only for the API key and a custom base URL), `/login` (QR code for a
-  phone), `/key`, `/resume [n]`, `/clear`, `/quit`.
+  input only for the API key and a custom base URL), `/login` (full-screen QR code for a
+  phone), `/usage`, `/key`, `/resume [n]`, `/clear`, `/quit`.
+
+**Usage and context**
+- `/usage` reports cumulative totals in Claude Code's style: cache hit rate,
+  cache read, uncached input and output, each with a share bar. Totals persist in
+  `~/.dst/usage.json`.
+- A small ring (`○ ◔ ◑ ◕ ●` + percentage) on the status line shows how much of the
+  model's context window the last request used (denominator read from `/models`).
+
+**Internationalisation**
+- UI language via `language: en|zh` in the config (default `en`), switchable from
+  `/config`. Only interface text is translated; tool descriptions and the system
+  prompt stay English so model behaviour is unchanged.
 
 **Sessions**
 - Every turn is saved to `~/.dst/sessions/<timestamp>.json`; `/resume` lists and
@@ -89,6 +101,7 @@ voice:
 tui:
   queued_default: true
   auto_send_voice: true
+  language: en          # en | zh
 
 # DSH-style patch rows: disable a tool or pass it config
 insert:
