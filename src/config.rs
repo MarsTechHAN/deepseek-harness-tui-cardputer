@@ -818,6 +818,37 @@ mod tests {
     }
 
     #[test]
+    fn parses_agent_goal_compaction_context() {
+        let y = parse_yaml(
+            "agent:\n  max_steps: 20\n\
+             goal:\n  max_rounds: 5\n  max_steps: 30\n  judge: false\n\
+             compaction:\n  enabled: false\n  threshold_tokens: 128000\n  keep_messages: 3\n  max_tokens: 4096\n\
+             tools:\n  call_timeout_ms: 9000\n\
+             context:\n  time: false\n  time_refresh_secs: 0\n",
+        );
+        let mut c = Config::default();
+        c.apply(&y);
+        assert_eq!(c.max_steps, 20);
+        assert_eq!(c.goal_max_rounds, 5);
+        assert_eq!(c.goal_max_steps, 30);
+        assert!(!c.goal_judge);
+        assert!(!c.compact_enabled);
+        assert_eq!(c.compact_threshold, 128_000);
+        assert_eq!(c.compact_keep, 3);
+        assert_eq!(c.compact_max_tokens, 4_096);
+        assert_eq!(c.tool_timeout_ms, 9_000);
+        assert!(!c.context_time);
+        assert_eq!(c.context_refresh_secs, 0);
+        // And the written form loads back with the same values.
+        let doc = parse_yaml(&c.to_yaml());
+        let mut c2 = Config::default();
+        c2.apply(&doc);
+        assert_eq!(c2.max_steps, 20);
+        assert_eq!(c2.compact_threshold, 128_000);
+        assert_eq!(c2.goal_max_rounds, 5);
+    }
+
+    #[test]
     fn comments_and_quotes() {
         let y = parse_yaml("a: \"x # not comment\" # real comment\nb: 'y'\n");
         assert_eq!(y.get("a").unwrap().as_str(), Some("x # not comment"));

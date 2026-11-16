@@ -2621,4 +2621,3 @@ fn first_lines(s: &str, n: usize) -> String {
         .trim()
         .to_string()
 }
-
