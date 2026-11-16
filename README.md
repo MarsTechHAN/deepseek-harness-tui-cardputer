@@ -259,9 +259,9 @@ official or a custom OpenAI-compatible endpoint, then pick the sandbox mode.
    convert the WeChat JPEG QR into panel modules; without a framebuffer the same
    QR and live progress are shown on the phone page.
 2. **Phone page** — a LAN page with the WeChat QR, live steps, a Cancel button
-   that aborts an in-flight flow, and a manual API-key form
-   (`http://<device-ip>:8787/`). The page follows the device UI language
-   (en/zh/es/ja/de/it).
+   that aborts an in-flight flow, a QR expiry countdown, a Retry label after a
+   failure, and a manual API-key form (`http://<device-ip>:8787/`). The page
+   follows the device UI language (en/zh/es/ja/de/it).
 3. **Type directly** — menuconfig-style typing for either a DSH token or an
    OpenAI-compatible base URL + API key + model.
 
