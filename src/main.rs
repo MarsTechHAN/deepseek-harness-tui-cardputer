@@ -820,7 +820,7 @@ impl Scr {
                                 if !home.is_empty() && shown.starts_with(&home) {
                                     shown = format!("~{}", &shown[home.len()..]);
                                 }
-                                a.notice = Some(format!("saved {shown}"));
+                                a.notice = Some(i18n::tf("ui_saved", &[&shown]));
                             }
                             Err(e) => a.notice = Some(format!("save failed: {e}")),
                         }
@@ -1122,7 +1122,7 @@ impl Scr {
                                 shown = format!("~{}", &shown[home.len()..]);
                             }
                             self.menu = None;
-                            self.push(&format!("saved {id} output to {shown}"), K_DIM);
+                            self.push(&i18n::tf("ui_saved_job", &[&id, &shown]), K_DIM);
                             return;
                         }
                         Err(e) => self.push(&format!("save failed: {e}"), K_ERR),
@@ -2010,9 +2010,9 @@ impl<'a> harness::Ui for TermUi<'a> {
                 let f = FRAMES[self.spin % FRAMES.len()];
                 self.spin += 1;
                 let text = if chars > 0 {
-                    format!("{f} thinking {secs:.1}s")
+                    format!("{f} {}", i18n::tf("ui_thinking", &[&format!("{secs:.1}")]))
                 } else {
-                    format!("{f} working {secs:.1}s")
+                    format!("{f} {}", i18n::tf("ui_working", &[&format!("{secs:.1}")]))
                 };
                 self.scr.live = Some((1, text));
                 self.scr.draw();
@@ -2023,7 +2023,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                 self.scr.live = None;
                 if had_lines || chars > 0 {
                     self.scr.push(
-                        &format!("\u{25b8} thinking {secs:.1}s | {chars} chars (collapsed)"),
+                        &format!("\u{25b8} {}", i18n::tf("ui_collapsed", &[&format!("{secs:.1}"), &chars.to_string()])),
                         K_DIM,
                     );
                 }
@@ -2114,7 +2114,7 @@ impl<'a> harness::Ui for TermUi<'a> {
             Ev::CompactingDone { ok, note } => {
                 self.scr.live = None;
                 if !ok {
-                    self.scr.push(&format!("compaction failed: {note}"), K_DIM);
+                    self.scr.push(&i18n::tf("ui_compaction_failed", &[&note]), K_DIM);
                 }
             }
             Ev::Info(n) => self.scr.push(&n, K_DIM),
@@ -2202,7 +2202,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                                 self.scr.input.clear();
                                 self.scr.cursor = 0;
                                 self.scr.push(
-                                    &format!("\u{21b3} steer: {line} (next step)"),
+                                    &format!("\u{21b3} {}", i18n::tf("ui_steer", &[&line])),
                                     K_DIM,
                                 );
                                 self.steer.push(line);
@@ -2229,7 +2229,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                                     self.scr.input.clear();
                                     self.scr.cursor = 0;
                                     self.scr.push(
-                                        &format!("\u{21b3} steer: {line} (next step)"),
+                                        &format!("\u{21b3} {}", i18n::tf("ui_steer", &[&line])),
                                         K_DIM,
                                     );
                                     self.steer.push(line);
@@ -2253,7 +2253,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                         self.scr.cursor = 0;
                         self.scr.queue.push(line.clone());
                         let n = self.scr.queue.len();
-                        self.scr.push(&format!("\u{23ce} queued ({n}): {line}"), K_DIM);
+                        self.scr.push(&format!("\u{23ce} {}", i18n::tf("ui_queued", &[&n.to_string(), &line])), K_DIM);
                     }
                     changed = true;
                 }
@@ -3086,7 +3086,7 @@ fn resume_session_path(
     scr.art_on = false;
     let shown = crate::session::title();
     let shown = if shown.is_empty() { label } else { shown };
-    scr.push(&format!("resumed: {shown}"), K_DIM);
+    scr.push(&i18n::tf("ui_resumed", &[&shown]), K_DIM);
     for m in arr.iter().rev() {
         if m.get("role").and_then(|r| r.as_str()) == Some("assistant") {
             if let Some(t) = m.get("content").and_then(|c| c.as_str()) {
@@ -3308,12 +3308,12 @@ fn model_menu(scr: &mut Scr, config_rc: &ConfigRc) {
     let models = match crate::api::list_models(&cfg) {
         Ok(m) => m,
         Err(e) => {
-            scr.push(&format!("model list unavailable: {e}"), K_DIM);
+            scr.push(&i18n::tf("ui_model_list_unavailable", &[&e.to_string()]), K_DIM);
             if let Some(name) = menu_prompt(scr, i18n::t("config_prompt_model"), false) {
                 if !name.is_empty() {
                     config_rc.borrow_mut().model = name.clone();
                     let _ = config_rc.borrow().save();
-                    scr.push(&format!("model set to {name}"), K_NORM);
+                    scr.push(&i18n::tf("ui_model_set", &[&name]), K_NORM);
                 }
             }
             return;
@@ -3374,7 +3374,7 @@ fn model_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             let _ = c.save();
             drop(c);
             scr.menu = None;
-            scr.push(&format!("model set to {id}"), K_NORM);
+            scr.push(&i18n::tf("ui_model_set", &[&id]), K_NORM);
             return;
         }
     }
@@ -3429,7 +3429,7 @@ fn rewind_menu(scr: &mut Scr, msgs: &jobs::Msgs) {
                 scr.scroll = 0;
                 scr.splash_done = true;
                 scr.art_on = false;
-                scr.push(&format!("rewound to checkpoint: {}", title), K_DIM);
+                scr.push(&i18n::tf("ui_rewound", &[&title]), K_DIM);
                 for m in &messages {
                     let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("");
                     let text = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
@@ -3443,7 +3443,7 @@ fn rewind_menu(scr: &mut Scr, msgs: &jobs::Msgs) {
                     }
                 }
             } else {
-                scr.push("checkpoint file is unreadable", K_ERR);
+                scr.push(i18n::t("ui_checkpoint_unreadable"), K_ERR);
             }
             scr.draw();
             return;
@@ -3604,7 +3604,7 @@ fn tool_output_panel(scr: &mut Scr) {
                     if !home.is_empty() && shown.starts_with(&home) {
                         shown = format!("~{}", &shown[home.len()..]);
                     }
-                    scr.push(&format!("saved tool output to {shown}"), K_DIM);
+                    scr.push(&i18n::tf("ui_saved_tool", &[&shown]), K_DIM);
                 }
                 Err(e) => scr.push(&format!("save failed: {e}"), K_ERR),
             }
@@ -3935,7 +3935,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                                 config_rc.borrow_mut().base = u;
                                 let _ = config_rc.borrow().save();
                             } else if !u.is_empty() {
-                                scr.push("Must be an http(s) URL", K_ERR);
+                                scr.push(i18n::t("ui_http_only"), K_ERR);
                             }
                         }
                     }
@@ -4530,7 +4530,7 @@ user you can search the web or speak.\n",
                         if let Some((before, round)) = goal::start_round() {
                             goal_seed = Some((
                                 goal::round_prompt(&before, round),
-                                format!("\u{27f3} goal round {round}"),
+                                format!("\u{27f3} {}", i18n::tf("ui_goal_round", &[&round.to_string()])),
                             ));
                         }
                     }
@@ -4668,7 +4668,7 @@ user you can search the web or speak.\n",
                     if let Some((before, round)) = goal::start_round() {
                         goal_seed = Some((
                             goal::round_prompt(&before, round),
-                            format!("\u{27f3} goal round {round}"),
+                            format!("\u{27f3} {}", i18n::tf("ui_goal_round", &[&round.to_string()])),
                         ));
                     } else if let Some(now) = goal::current() {
                         // `start_round` also returns None at the round cap and
