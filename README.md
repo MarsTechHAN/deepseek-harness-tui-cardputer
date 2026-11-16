@@ -136,6 +136,8 @@ repository.
 - CtrlO opens a recent tool-output list; Enter shows the full result in the
   scrollable panel viewer, `s` saves it under `~/.dst/tmp/`. Ctrl+A/Ctrl+E move the cursor, Ctrl+W deletes a word;
   Home/End jump to the top/bottom of the scrollback when not editing.
+- Menus show a `current/total` position in the title when the list is longer
+  than the panel (config 1/14, help 1/15, long resume/task lists).
 - Menu right-hand text truncates with `…` instead of silently cutting words;
   `/help`, `/rewind`, `/config` and onboarding show a live description/preview
   for the highlighted row.

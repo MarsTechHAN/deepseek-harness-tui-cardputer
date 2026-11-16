@@ -652,15 +652,27 @@ impl Scr {
         let mut s = String::with_capacity(2048);
         // Full-screen panel: clear so no transcript shows through.
         s.push_str("\x1b[?25l\x1b[2J\x1b[H");
-        s.push_str("\x1b[1;36m");
-        s.push_str(&fit(&format!(" {} ", m.title), self.cols));
-        s.push_str("\x1b[0m\x1b[K\r\n");
         let preview_rows = m.preview.as_ref().map(|p| p.len()).unwrap_or(0);
         let rows = self
             .rows
             .saturating_sub(2)
             .max(1)
             .saturating_sub(preview_rows);
+        // Long lists show a scroll position on the right of the title.
+        let counter = if m.items.len() > rows {
+            format!("{}/{} ", m.sel + 1, m.items.len())
+        } else {
+            String::new()
+        };
+        let counter_w = dw(&counter);
+        s.push_str("\x1b[1;36m");
+        let title = format!(" {} ", m.title);
+        let title_room = self.cols.saturating_sub(counter_w);
+        let mut head = fit(&title, title_room);
+        head.push_str(&" ".repeat(title_room.saturating_sub(dw(&head))));
+        head.push_str(&counter);
+        s.push_str(&fit(&head, self.cols));
+        s.push_str("\x1b[0m\x1b[K\r\n");
         // Window the list around the selection (menuconfig behaviour).
         let start = if m.sel >= rows { m.sel + 1 - rows } else { 0 };
         // Labels stay left-aligned; values sit on the right edge so every row

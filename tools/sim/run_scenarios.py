@@ -728,6 +728,7 @@ def check_config_menu(screens, reqs, work):
     checks.append(("Max steps/turn" in menu, "max steps setting visible"))
     checks.append(("Auto compact" in menu or "Auto compact" in toggled or "Auto compact" in bottom,
                    "compaction setting visible"))
+    checks.append(("1/14" in menu, "config menu shows the scroll position"))
     checks.append(("Goal rounds" in menu or "Goal rounds" in bottom,
                    "goal round setting present"))
     checks.append(("Sandbox mode" in menu or "Sandbox mode" in bottom,
@@ -750,6 +751,7 @@ def check_commands(screens, reqs, work):
     checks.append(("[session]" in palette_c, "palette shows session category"))
     checks.append(("/compact" in help_ or "/clear" in help_,
                    "/help lists commands"))
+    checks.append(("/15" in help_ or "1/15" in help_, "help shows the command count position"))
     checks.append(("Enter runs" in help_ and "select" in help_,
                    "/help shows a description preview"))
     checks.append(("requests" in usage.lower() or "cache" in usage.lower(),
