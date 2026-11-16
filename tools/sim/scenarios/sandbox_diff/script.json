@@ -1,0 +1,25 @@
+{
+ "responses": [
+  {
+   "reasoning": "edit",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "d1",
+     "name": "edit_file",
+     "arguments": {
+      "path": "/tmp/dst-demo.txt",
+      "old_string": "old line",
+      "new_string": "new line"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "done",
+   "content": "Edit rejected.",
+   "finish_reason": "stop"
+  }
+ ]
+}

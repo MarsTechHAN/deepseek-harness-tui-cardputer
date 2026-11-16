@@ -385,6 +385,38 @@ fn workspace_path(path: &str) -> bool {
     norm.starts_with(&base)
 }
 
+/// Human-readable approval detail: show the meaningful fields, not raw JSON.
+fn human_detail(name: &str, args: &J) -> String {
+    let arg = |k: &str| crate::tool::str_arg(args, k).unwrap_or_default();
+    match name {
+        "bash" | "job_start" | "watcher_start" => format!("$ {}", arg("command")),
+        "edit_file" => {
+            let old = arg("old_string");
+            let new = arg("new_string");
+            let old_line = old.lines().next().unwrap_or("");
+            let new_line = new.lines().next().unwrap_or("");
+            format!(
+                "path: {}\n- {}\n+ {}",
+                arg("path"),
+                old_line.chars().take(46).collect::<String>(),
+                new_line.chars().take(46).collect::<String>()
+            )
+        }
+        "write_file" => {
+            let content = arg("content");
+            let head: Vec<&str> = content.lines().take(3).collect();
+            format!("path: {}\n{}", arg("path"), head.join("\n"))
+        }
+        "memory_write" => {
+            format!("{} memory\n{}", arg("scope"), arg("content").chars().take(160).collect::<String>())
+        }
+        _ => {
+            let dump = args.dump();
+            dump.chars().take(300).collect()
+        }
+    }
+}
+
 /// Authorise one call. `Err(reason)` becomes a failed tool result.
 pub fn authorize(
     name: &str,
@@ -397,8 +429,7 @@ pub fn authorize(
     if class == Class::Safe || settings.mode == Mode::Full {
         return Ok(());
     }
-    let pretty = args.dump();
-    let pretty: String = pretty.chars().take(400).collect();
+    let pretty = human_detail(name, args);
     match settings.mode {
         Mode::Full => Ok(()),
         Mode::Auto => {

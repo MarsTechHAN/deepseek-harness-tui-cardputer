@@ -1,0 +1,33 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "edit the demo file"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Permission required",
+    "timeout_ms": 15000
+   },
+   "snap": "popup"
+  },
+  {
+   "send": "n"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 700,
+    "timeout_ms": 15000
+   },
+   "snap": "after"
+  }
+ ]
+}

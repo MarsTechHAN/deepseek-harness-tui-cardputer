@@ -458,8 +458,10 @@ pub struct Config {
     pub tts_voice: String,
     pub queued_default: bool,
     pub auto_send_voice: bool,
-    /// UI language: en | zh (default en).
+    /// UI language: en | zh | es | ja | de | it (default en).
     pub language: String,
+    /// One-time interaction tips have been shown.
+    pub tips_shown: bool,
     pub disabled_tools: Vec<String>,
     pub tool_config: Vec<(String, Y)>,
     /// Steps (model requests) allowed in one turn. 0 = no limit.
@@ -509,6 +511,7 @@ impl Default for Config {
             queued_default: true,
             auto_send_voice: true,
             language: "en".into(),
+            tips_shown: false,
             disabled_tools: Vec::new(),
             tool_config: Vec::new(),
             max_steps: 0,
@@ -608,6 +611,9 @@ impl Config {
             }
             if let Some(v) = tui.get("language").and_then(|v| v.as_str()) {
                 self.language = v.to_string();
+            }
+            if let Some(v) = tui.get("tips_shown").and_then(|v| v.as_bool()) {
+                self.tips_shown = v;
             }
         }
         if let Some(voice) = doc.get("voice") {
@@ -719,6 +725,7 @@ impl Config {
         s.push_str(&format!("  queued_default: {}\n", self.queued_default));
         s.push_str(&format!("  auto_send_voice: {}\n", self.auto_send_voice));
         s.push_str(&format!("  language: {}\n", yaml_quote(&self.language)));
+        s.push_str(&format!("  tips_shown: {}\n", self.tips_shown));
         s.push_str("agent:\n");
         s.push_str(&format!("  max_steps: {}\n", self.max_steps));
         s.push_str("goal:\n");

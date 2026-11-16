@@ -605,9 +605,19 @@ impl Scr {
         s.push_str(&fit(&format!(" tool: {}", a.tool), self.cols));
         s.push_str("\x1b[0m\x1b[K\r\n\r\n");
         s.push_str("\x1b[0;37m");
-        for line in wrap(a.args.lines().next().unwrap_or("")) {
-            s.push_str(&fit(&format!(" {line}"), self.cols));
-            s.push_str("\x1b[0m\x1b[K\r\n");
+        let mut shown = 0usize;
+        for raw in a.args.lines() {
+            for line in wrap(raw) {
+                if shown >= 6 {
+                    break;
+                }
+                s.push_str(&fit(&format!(" {line}"), self.cols));
+                s.push_str("\x1b[0m\x1b[K\r\n");
+                shown += 1;
+            }
+            if shown >= 6 {
+                break;
+            }
         }
         s.push_str("\x1b[90m");
         s.push_str(&fit(&format!(" reason: {}", a.reason), self.cols));
@@ -1032,6 +1042,27 @@ impl Scr {
                     self.menu = None;
                     self.draw();
                     return;
+                }
+                b's' | b'S' => {
+                    let id = views[sel].id.clone();
+                    let text = crate::bg::output_of(&id, 200);
+                    let path = crate::config::tmp_dir().join(format!(
+                        "{}-output.txt",
+                        id.to_ascii_lowercase().replace(' ', "-")
+                    ));
+                    match std::fs::write(&path, &text) {
+                        Ok(()) => {
+                            let home = std::env::var("HOME").unwrap_or_default();
+                            let mut shown = path.display().to_string();
+                            if !home.is_empty() && shown.starts_with(&home) {
+                                shown = format!("~{}", &shown[home.len()..]);
+                            }
+                            self.menu = None;
+                            self.push(&format!("saved {id} output to {shown}"), K_DIM);
+                            return;
+                        }
+                        Err(e) => self.push(&format!("save failed: {e}"), K_ERR),
+                    }
                 }
                 b'x' | b'X' => {
                     let id = views[sel].id.clone();
@@ -1871,7 +1902,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                 }
                 let log_content: String = content.chars().take(6000).collect();
                 self.scr.tool_log.push((name.clone(), log_content, is_error, took));
-                let raw = format!("* {name} > {title} | {took:.1}s {}", if is_error { "x" } else { "ok" });
+                let raw = format!("* {name} | {took:.1}s {}", if is_error { "x" } else { "ok" });
                 let cols = self.scr.cols;
                 let raw: String = raw.chars().take(cols.saturating_sub(4)).collect();
                 self.scr.push(&fit(&raw, cols.saturating_sub(1)), K_TOOL);
@@ -3330,6 +3361,22 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
 }
 
 
+/// One-time, actionable key tips after the first successful configuration.
+fn maybe_show_tips(scr: &mut Scr, config_rc: &ConfigRc) {
+    let configured = config_rc.borrow().configured;
+    let shown = config_rc.borrow().tips_shown;
+    if !configured || shown {
+        return;
+    }
+    for key in ["tip1", "tip2", "tip3"] {
+        scr.push(&format!("- {}", i18n::t(key)), K_DIM);
+    }
+    scr.push(&format!("  {}", i18n::t("tip_more")), K_DIM);
+    let mut c = config_rc.borrow_mut();
+    c.tips_shown = true;
+    let _ = c.save();
+}
+
 fn main() {
     // A panic must not leave the panel full of half-drawn glyphs and escape
     // sequences: restore the terminal first, then report.
@@ -3441,6 +3488,7 @@ user you can search the web or speak.\n",
 
     scr.seed_splash(&cfg.model);
     onboarding(&mut scr, &config_rc, &login_rx);
+    maybe_show_tips(&mut scr, &config_rc);
     cfg = api_cfg(&config_rc.borrow());
     *shared_cfg.borrow_mut() = cfg.clone();
     tools::set_cfg(cfg.clone());
@@ -3478,6 +3526,7 @@ user you can search the web or speak.\n",
                 tools::set_cfg(c.clone());
                 voice::set_cfg(c.clone());
                 s.push(&msg, K_NORM);
+                maybe_show_tips(s, &crc);
             }
         }));
     }

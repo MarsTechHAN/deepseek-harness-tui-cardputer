@@ -541,6 +541,8 @@ def check_job_manager(screens, reqs, work):
     checks.append(("x kill" in listing, "kill key is advertised"))
     checks.append(("Job 1 output" in output and "running" in output,
                    "Enter opens the full task output in the panel viewer"))
+    checks.append(("saved Job 1 output to" in screens.get("saved_list", ""),
+                   "s saves the selected task output from the list"))
     checks.append(("killed" in killed, "x kills the selected task and reports it"))
     return checks
 
@@ -631,6 +633,30 @@ def check_ux2(screens, reqs, work):
     return checks
 
 
+def check_sandbox_diff(screens, reqs, work):
+    popup = screens.get("popup", "")
+    checks = []
+    checks.append(("path: /tmp/dst-demo.txt" in popup, "approval shows the target file"))
+    checks.append(("- old line" in popup and "+ new line" in popup,
+                   "approval previews the edit as -old/+new"))
+    checks.append(("system" not in popup.split("reason")[0].lower(),
+                   "approval uses a human summary instead of raw JSON"))
+    return checks
+
+
+def check_tips(screens, reqs, work):
+    tips = screens.get("tips", "")
+    cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+    checks = []
+    checks.append(("CtrlO" in tips and "Shift+Enter" in tips,
+                   "first configuration shows the key tips"))
+    checks.append(("tips_shown: true" in cfg or "tips_shown:true" in cfg,
+                   "tips are recorded as shown once"))
+    checks.append(("deepseek-flash" in cfg and "test" in cfg,
+                   "custom endpoint setup persisted the key/model"))
+    return checks
+
+
 def check_config_menu(screens, reqs, work):
     menu = screens.get("menu", "")
     bottom = screens.get("bottom", "")
@@ -701,6 +727,8 @@ def check_goal_blocked(screens, reqs, work):
 
 CHECKS = {
     "clear": check_clear,
+    "sandbox_diff": check_sandbox_diff,
+    "tips": check_tips,
     "ux": check_ux,
     "ux2": check_ux2,
     "new_tools": check_new_tools,

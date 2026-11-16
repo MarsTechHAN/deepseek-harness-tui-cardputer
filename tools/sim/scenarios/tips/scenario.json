@@ -1,0 +1,47 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "Choose how to connect",
+    "timeout_ms": 15000
+   }
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 400
+  },
+  {
+   "send": "http://127.0.0.1:1/v1"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "send": "test"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "send": "deepseek-flash"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 600,
+   "snap": "tips"
+  }
+ ]
+}

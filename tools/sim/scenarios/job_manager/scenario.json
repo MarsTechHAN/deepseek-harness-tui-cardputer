@@ -26,6 +26,19 @@
    "snap": "list"
   },
   {
+   "send": "s"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "saved_list"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 400
+  },
+  {
    "key": "Enter"
   },
   {
