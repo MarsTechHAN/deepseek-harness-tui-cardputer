@@ -2755,13 +2755,20 @@ fn rewind_menu(scr: &mut Scr, msgs: &jobs::Msgs) {
         return;
     }
     list.truncate(20);
-    let now = now_epoch();
     let mut sel = 0usize;
     loop {
-let items: Vec<MenuItem> = list.iter().enumerate().map(|(i, c)| MenuItem {
-            label: format!("{}. {}", i + 1, c.label.chars().take(42).collect::<String>()),
-            value: if c.preview.is_empty() { String::new() } else { c.preview.chars().take(18).collect() },
-        }).collect();
+        let items: Vec<MenuItem> = list
+            .iter()
+            .enumerate()
+            .map(|(i, c)| MenuItem {
+                label: format!(
+                    "{}. {}",
+                    i + 1,
+                    c.label.chars().take(44).collect::<String>()
+                ),
+                value: String::new(),
+            })
+            .collect();
         let preview = Some(crate::checkpoint::preview(&list[sel].path));
         scr.menu = Some(Menu { title: i18n::t("rewind_title").into(), items, sel,
             hint: i18n::t("rewind_hint").into(), preview });

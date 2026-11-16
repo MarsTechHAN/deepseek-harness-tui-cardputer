@@ -49,9 +49,14 @@ pub fn list() -> Vec<Checkpoint> {
         let preview = v.get("preview").and_then(|x| x.as_str()).unwrap_or("").to_string();
         let created = v.get("created").and_then(|x| x.as_num()).unwrap_or(0.0) as u64;
         let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        let label = if title.is_empty() {
-            format!("#{} {}", stem.rsplit('-').next().unwrap_or(""), preview)
-        } else { title };
+        let label = if !title.is_empty() {
+            title
+        } else if !preview.is_empty() {
+            preview.chars().take(44).collect::<String>()
+        } else {
+            "(session start)".to_string()
+        };
+        let _ = stem;
         Some((p.clone(), created, Checkpoint { path: p, label, preview }))
     }).collect();
     out.sort_by(|a, b| b.1.cmp(&a.1));
