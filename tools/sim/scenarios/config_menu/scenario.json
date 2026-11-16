@@ -13,172 +13,167 @@
    "key": "Enter"
   },
   {
-   "wait_ms": 800,
+   "wait_ms": 700,
    "snap": "menu"
   },
   {
-   "wait_ms": 500
+   "key": "Down"
+  },
+  {
+   "wait_ms": 90
   },
   {
    "key": "Down"
   },
   {
-   "wait_ms": 80
+   "wait_ms": 90
   },
   {
    "key": "Down"
   },
   {
-   "wait_ms": 80
+   "wait_ms": 90
   },
   {
    "key": "Down"
   },
   {
-   "wait_ms": 80
+   "wait_ms": 90
   },
   {
    "key": "Down"
   },
   {
-   "wait_ms": 80
+   "wait_ms": 90
   },
   {
    "key": "Down"
   },
   {
-   "wait_ms": 80
+   "wait_ms": 90
   },
   {
    "key": "Down"
   },
   {
-   "wait_ms": 80
+   "wait_ms": 90
   },
   {
    "key": "Down"
   },
   {
-   "wait_ms": 80
+   "wait_ms": 90
   },
   {
    "key": "Down"
   },
   {
-   "wait_ms": 80
+   "wait_ms": 90
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "prompt"
+  },
+  {
+   "send": "128000"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 600,
+   "snap": "toggled"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "send": "/config"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 600
   },
   {
    "key": "Down"
   },
   {
-   "wait_ms": 80
+   "wait_ms": 90
   },
   {
    "key": "Down"
   },
   {
-   "wait_ms": 80
+   "wait_ms": 90
   },
   {
    "key": "Down"
   },
   {
-   "wait_ms": 80
+   "wait_ms": 90
   },
   {
    "key": "Down"
   },
   {
-   "wait_ms": 80
+   "wait_ms": 90
   },
   {
    "key": "Down"
   },
   {
-   "wait_ms": 80
+   "wait_ms": 90
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 90
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 90
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 90
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 90
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 90
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 90
   },
   {
    "wait_ms": 300,
    "snap": "bottom"
   },
   {
-   "key": "Up"
-  },
-  {
-   "wait_ms": 80
-  },
-  {
-   "key": "Up"
-  },
-  {
-   "wait_ms": 80
-  },
-  {
-   "key": "Up"
-  },
-  {
-   "wait_ms": 80
-  },
-  {
-   "key": "Up"
-  },
-  {
-   "wait_ms": 80
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "wait_ms": 400,
-   "snap": "bottom"
-  },
-  {
-   "key": "Up"
-  },
-  {
-   "key": "Up"
-  },
-  {
-   "key": "Up"
-  },
-  {
-   "key": "Up"
+   "key": "Esc"
   }
  ]
 }

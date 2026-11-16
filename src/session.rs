@@ -149,26 +149,27 @@ pub fn preview(path: &std::path::Path) -> Vec<String> {
         .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
         .count();
     out.push(format!("turns: {user_count} user, {} messages", msgs.len()));
-    if let Some(last_user) = msgs
-        .iter()
-        .rev()
-        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
-    {
-        if let Some(t) = last_user.get("content").and_then(|c| c.as_str()) {
-            out.push(format!("last user: {}", one_line(t, 46)));
+    // Recent exchange (newest last), compact enough for the 12-row panel.
+    out.push("recent:".to_string());
+    let mut recent: Vec<(bool, String)> = Vec::new();
+    for m in msgs.iter().rev() {
+        let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        let text = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
+        if text.trim().is_empty() {
+            continue;
         }
-    }
-    if let Some(last_assistant) = msgs
-        .iter()
-        .rev()
-        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
-    {
-        if let Some(t) = last_assistant.get("content").and_then(|c| c.as_str()) {
-            if !t.trim().is_empty() {
-                out.push(format!("last reply: {}", one_line(t, 44)));
+        let is_user = role == "user";
+        if role == "user" || role == "assistant" {
+            recent.push((is_user, one_line(text, 44)));
+            if recent.len() >= 4 {
+                break;
             }
         }
     }
+    for (is_user, text) in recent.into_iter().rev() {
+        out.push(format!("  {} {}", if is_user { ">" } else { "<" }, text));
+    }
+    out.truncate(8);
     out
 }
 

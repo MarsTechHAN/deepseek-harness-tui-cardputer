@@ -126,9 +126,14 @@ repository.
 - The idle status line shows key hints; running tools report live progress on
   the status line (`bash running 1.2s`).
 - CtrlO opens a recent tool-output list; Enter shows the full result in the
-  scrollable panel viewer. Ctrl+A/Ctrl+E move the cursor, Ctrl+W deletes a word;
+  scrollable panel viewer, `s` saves it under `~/.dst/tmp/`. Ctrl+A/Ctrl+E move the cursor, Ctrl+W deletes a word;
   Home/End jump to the top/bottom of the scrollback when not editing.
 - Menu right-hand text truncates with `…` instead of silently cutting words.
+- Numeric config rows (max steps, compaction threshold, goal rounds) open an
+  edit prompt instead of only cycling fixed values.
+- Failed requests print an actionable hint (auth → `/key`, rate limit → wait or
+  `/model`, network → check Wi-Fi).
+- `/resume` previews include the recent exchange, not just a summary line.
 
 **No title/header row**: every row belongs to the transcript, status line and
 prompt; the session title appears in `/resume`, and goal state is shown as a

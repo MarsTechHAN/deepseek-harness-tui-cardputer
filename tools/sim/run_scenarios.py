@@ -618,6 +618,8 @@ def check_ux2(screens, reqs, work):
     checks = []
     checks.append(("Tool output" in log and "bash" in log,
                    "CtrlO opens the recent tool output list"))
+    checks.append(("saved tool output to" in screens.get("saved", ""),
+                   "s saves the selected tool output to a file"))
     checks.append(("beta-line" in expanded and "gamma-line" in expanded,
                    "Enter opens the full tool output in the panel"))
     checks.append(("> one two " in edited or "> one two" in edited,

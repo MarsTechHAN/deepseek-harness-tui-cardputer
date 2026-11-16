@@ -1807,7 +1807,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                 self.reset_think();
                 self.scr.live = None;
                 let raw = format!("* {name} > {title} \u{2026}");
-                let raw: String = raw.chars().take(self.scr.cols.saturating_sub(2)).collect();
+                let raw: String = raw.chars().take(self.scr.cols.saturating_sub(4)).collect();
                 self.scr.push(&fit(&raw, self.scr.cols.saturating_sub(1)), K_DIM);
                 self.tools.insert(id, (name, title, std::time::Instant::now()));
             }
@@ -1837,7 +1837,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                 self.scr.tool_log.push((name.clone(), log_content, is_error, took));
                 let raw = format!("* {name} > {title} | {took:.1}s {}", if is_error { "x" } else { "ok" });
                 let cols = self.scr.cols;
-                let raw: String = raw.chars().take(cols.saturating_sub(2)).collect();
+                let raw: String = raw.chars().take(cols.saturating_sub(4)).collect();
                 self.scr.push(&fit(&raw, cols.saturating_sub(1)), K_TOOL);
                 let preview = first_lines(&content, if is_error { 3 } else { 1 });
                 if !preview.trim().is_empty() {
@@ -2852,6 +2852,28 @@ fn tool_output_panel(scr: &mut Scr) {
             continue;
         }
         if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return; }
+        if k == b's' || k == b'S' {
+            let (name, content, _, _) = &entries[sel];
+            let path = crate::config::tmp_dir().join(format!(
+                "tool-{}-{}.txt",
+                crate::session::title().chars().take(20).collect::<String>().replace(' ', "-"),
+                name
+            ));
+            match std::fs::write(&path, content) {
+                Ok(()) => {
+                    let home = std::env::var("HOME").unwrap_or_default();
+                    let mut shown = path.display().to_string();
+                    if !home.is_empty() && shown.starts_with(&home) {
+                        shown = format!("~{}", &shown[home.len()..]);
+                    }
+                    scr.push(&format!("saved tool output to {shown}"), K_DIM);
+                }
+                Err(e) => scr.push(&format!("save failed: {e}"), K_ERR),
+            }
+            scr.menu = None;
+            scr.draw();
+            return;
+        }
         if k == 0x0d || k == 0x0a {
             let (name, content, is_error, _) = &entries[sel];
             let title = if *is_error { format!("{name} (error)") } else { format!("{name} output") };
@@ -3165,39 +3187,43 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                 let _ = config_rc.borrow().save();
             }
             8 => {
-                let mut c = config_rc.borrow_mut();
-                c.max_steps = match c.max_steps {
-                    0 => 20,
-                    20 => 50,
-                    50 => 100,
-                    _ => 0,
-                };
-                let _ = c.save();
+                if let Some(v) = menu_prompt(scr, "Max steps per turn (0 = unlimited):", false) {
+                    match v.parse::<u32>() {
+                        Ok(n) => {
+                            config_rc.borrow_mut().max_steps = n;
+                            let _ = config_rc.borrow().save();
+                        }
+                        Err(_) => scr.push("expected a whole number", K_ERR),
+                    }
+                }
             }
             9 => {
-                let mut c = config_rc.borrow_mut();
-                // off -> 512K -> 256K -> 128K -> off
-                if !c.compact_enabled {
-                    c.compact_enabled = true;
-                    c.compact_threshold = 512_000;
-                } else if c.compact_threshold > 256_000 {
-                    c.compact_threshold = 256_000;
-                } else if c.compact_threshold > 128_000 {
-                    c.compact_threshold = 128_000;
-                } else {
-                    c.compact_enabled = false;
+                if let Some(v) = menu_prompt(
+                    scr,
+                    "Compaction threshold in tokens (0 disables auto compaction):",
+                    false,
+                ) {
+                    match v.parse::<u64>() {
+                        Ok(n) => {
+                            let mut c = config_rc.borrow_mut();
+                            c.compact_threshold = n;
+                            c.compact_enabled = n > 0;
+                            let _ = c.save();
+                        }
+                        Err(_) => scr.push("expected a token count", K_ERR),
+                    }
                 }
-                let _ = c.save();
             }
             10 => {
-                let mut c = config_rc.borrow_mut();
-                c.goal_max_rounds = match c.goal_max_rounds {
-                    0 => 3,
-                    3 => 10,
-                    10 => 25,
-                    _ => 0,
-                };
-                let _ = c.save();
+                if let Some(v) = menu_prompt(scr, "Goal continuation rounds (0 = unlimited):", false) {
+                    match v.parse::<u32>() {
+                        Ok(n) => {
+                            config_rc.borrow_mut().goal_max_rounds = n;
+                            let _ = config_rc.borrow().save();
+                        }
+                        Err(_) => scr.push("expected a whole number", K_ERR),
+                    }
+                }
             }
             12 => {
                 scr.menu = None;

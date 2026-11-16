@@ -26,6 +26,19 @@
    "snap": "tool_log"
   },
   {
+   "send": "s"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "saved"
+  },
+  {
+   "key": "CtrlO"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
    "key": "Enter"
   },
   {

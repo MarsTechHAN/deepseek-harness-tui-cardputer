@@ -227,6 +227,22 @@ fn assistant_with_tools(text: &str, calls: &[ToolCall]) -> J {
     ])
 }
 
+/// Actionable next step for a failed request, shown as a dim info line.
+fn actionable_hint(message: &str) -> Option<&'static str> {
+    let m = message.to_ascii_lowercase();
+    if m.contains("401") || m.contains("403") || m.contains("unauthorized")
+        || m.contains("invalid api key") || m.contains("authentication")
+    {
+        Some("auth failed: use /key or /login to replace the API key")
+    } else if m.contains("429") || m.contains("rate limit") || m.contains("quota") {
+        Some("rate limited: wait a moment, or /model to pick a different model")
+    } else if is_transient(message) || m.contains("network") {
+        Some("network trouble: check wifi; Esc works, or /model to switch model")
+    } else {
+        None
+    }
+}
+
 /// Whether a provider error is a context-window overflow (`dsh-agent-loop`
 /// treats this as an explicit compaction trigger).
 /// Transient network/provider failures worth retrying (and switching model).
@@ -523,6 +539,9 @@ pub fn run_turn(
                 report.failed = !was_cancelled;
                 if !was_cancelled {
                     ui.on(Ev::Note(format!("request failed: {}", partial.finish)));
+                    if let Some(hint) = actionable_hint(&partial.finish) {
+                        ui.on(Ev::Info(hint.to_string()));
+                    }
                 }
                 ui.on(Ev::StepEnd(steps));
                 break;
@@ -621,4 +640,18 @@ pub fn run_turn(
     report.steps = steps;
     ui.on(Ev::TurnEnd { steps });
     report
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn actionable_hints_cover_common_failures() {
+        assert!(actionable_hint("API error: 401 unauthorized").unwrap().contains("/key"));
+        assert!(actionable_hint("429 rate limit").unwrap().contains("/model"));
+        assert!(actionable_hint("curl: connection timed out").unwrap().contains("network"));
+        assert!(actionable_hint("stream closed unexpectedly").is_some());
+        assert!(actionable_hint("bad request: invalid tool").is_none());
+    }
 }

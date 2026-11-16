@@ -66,7 +66,7 @@ const EN: &[(&str, &str)] = &[
     ("idle_hint", "Up/Down hist \u{b7} PgUp/PgDn \u{b7} CtrlO out \u{b7} /help"),
     ("help_hint", "\u{2191}\u{2193} select \u{b7} Enter run \u{b7} Esc close"),
     ("tool_log_title", "Tool output"),
-    ("tool_log_hint", "\u{2191}\u{2193} select \u{b7} Enter open \u{b7} Esc close"),
+    ("tool_log_hint", "\u{2191}\u{2193} select \u{b7} Enter open \u{b7} s save \u{b7} Esc close"),
     ("tool_log_empty", "No tool output yet"),
     ("artifact_back", "Esc back"),
     ("artifact_more", "{} more lines"),
