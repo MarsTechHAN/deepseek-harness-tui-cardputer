@@ -2526,6 +2526,10 @@ fn wechat_guide(text_cols: usize, url: &str, status: Option<String>) -> Vec<Stri
 }
 
 fn login_device_status(message: &str, phase: &str, qr_ms: u64) -> Option<String> {
+    // Scanned/confirming and exchanging messages win over the countdown.
+    if message.to_ascii_lowercase().contains("scanned") || phase == "exchanging" {
+        return login_status_text(message, phase);
+    }
     if phase == "waiting" && qr_ms > 0 {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

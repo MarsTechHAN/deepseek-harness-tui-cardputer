@@ -20,7 +20,9 @@ inspected visually, not only asserted in code.
 | Background | task list (all/running/watchers), save, full output | ok: filter titles, full-width rows |
 | Queue | CtrlQ editor, delete, pull back into prompt | ok: full-width selection |
 | Goal | pursuing / objective / paused / done badges | ok: badge and todo progress fit the right slot |
-| i18n | en, zh, es, ja, de, it menus/help/approval | ok; note: the simulator's PNG renderer garbles wide glyphs inside reverse-video rows (selected row) — text snapshots and a real terminal are correct |
+| Login | `/login` menu, direct typing prompts, WeChat QR screen | ok: three paths, numbered guide left + QR right, live scanned/finishing status, QR validity countdown, `r retry` after repeated failures |
+| Login QA | phone page states, i18n, QR scanability | ok: six-language page, countdown/expired/retry/cancel, QR decodes with jsQR (`https://open.weixin.qq.com/connect/confirm?...`), cancel aborts the flow |
+| i18n | en, zh, es, ja, de, it menus/help/approval/login pages | ok; note: the simulator's PNG renderer garbles wide glyphs inside reverse-video rows (selected row) — text snapshots and a real terminal are correct |
 
 ## Fixes made during the audit
 
@@ -29,6 +31,15 @@ inspected visually, not only asserted in code.
 - model picker right-hand value shortened to `auto/low/high/max` so it fits
 - (from earlier rounds) full-width menus, right-aligned values, ellipsised
   truncation, counters in long lists, ASCII-safe watcher/status glyphs
+
+## Verification entry points
+
+- `python3 tools/sim/run_all.py` — demo, all simulator scenarios, login page i18n,
+  login cancel, QR scanability, six-language login layout, long memory session.
+- `dst --dsh-login-test` — runs the real nine-step login against
+  `tools/sim/mock_login.py` (or the live platform with no mock env).
+- `dst --qr-ppm <jpeg> <out.ppm>` + `node tools/sim/qr_scan.js` — decodes the
+  exact panel QR image.
 
 ## Known limitations
 

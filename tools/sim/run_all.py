@@ -30,12 +30,22 @@ def run(label, cmd, quick_skip=False):
 
 def main(argv):
     quick = "--quick" in argv
-    results = [
-        run("demo (screens + mock streaming)", ["run_demo.py"]),
-        run("feature scenarios (29)", ["run_scenarios.py"]),
-        run("memory (20-turn long session)", ["check_memory.py"], quick_skip=quick),
+    try:
+        import run_scenarios as _rs
+        scenario_count = len(_rs.CHECKS)
+    except Exception:
+        scenario_count = "?"
+    checks = [
+        ("demo (screens + mock streaming)", ["run_demo.py"], False),
+        (f"feature scenarios ({scenario_count})", ["run_scenarios.py"], False),
+        ("login page i18n (en/zh/es/ja/de/it)", ["check_login_page_i18n.py"], quick),
+        ("login cancel (phone page)", ["check_login_cancel.py"], quick),
+        ("QR scanability (jsQR)", ["check_qr_scan.py"], quick),
+        ("login screen layout (6 languages)", ["render_login_i18n.py"], quick),
+        ("memory (20-turn long session)", ["check_memory.py"], quick),
     ]
-    failed = [label for label, ok in zip(["demo", "scenarios", "memory"], results) if not ok]
+    results = [(label, run(label, cmd, quick_skip=skip)) for label, cmd, skip in checks]
+    failed = [label for label, ok in results if not ok]
     print("\n" + ("ALL CHECKS PASSED" if not failed else f"FAILED: {', '.join(failed)}"))
     return 1 if failed else 0
 
