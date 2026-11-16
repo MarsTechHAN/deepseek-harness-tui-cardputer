@@ -245,9 +245,10 @@ official or a custom OpenAI-compatible endpoint, then pick the sandbox mode.
 
 ### `/login`: real DeepSeek Platform sign-in (DSH token)
 
-Full guide: [docs/LOGIN.md](docs/LOGIN.md) (English) ·
-[docs/LOGIN.zh.md](docs/LOGIN.zh.md) (中文) — includes troubleshooting, states
-and requirements.
+Full guides: [English](docs/LOGIN.md) · [中文](docs/LOGIN.zh.md) ·
+[Español](docs/LOGIN.es.md) · [日本語](docs/LOGIN.ja.md) ·
+[Deutsch](docs/LOGIN.de.md) · [Italiano](docs/LOGIN.it.md) — each includes
+states, requirements and troubleshooting.
 
 `/login` offers three paths, all saving credentials to `~/.dst/config.yml`
 (mode 600):

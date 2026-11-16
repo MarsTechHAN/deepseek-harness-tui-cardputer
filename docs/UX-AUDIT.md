@@ -40,8 +40,8 @@ inspected visually, not only asserted in code.
   `tools/sim/mock_login.py` (or the live platform with no mock env).
 - `dst --qr-ppm <jpeg> <out.ppm>` + `node tools/sim/qr_scan.js` — decodes the
   exact panel QR image.
-- `docs/LOGIN.md` / `docs/LOGIN.zh.md` — user-facing login guide with states,
-  requirements and a troubleshooting table.
+- `docs/LOGIN{,.zh,.es,.ja,.de,.it}.md` — user-facing login guides in six
+  languages with states, requirements and a troubleshooting table.
 - `tools/sim/screenshot_login_page.py` — Chrome-headless screenshot of the LAN
   page (minimum headless viewport is 500px; the CSS is responsive below that).
 
