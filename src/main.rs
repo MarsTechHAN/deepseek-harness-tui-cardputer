@@ -2957,11 +2957,7 @@ fn model_menu(scr: &mut Scr, config_rc: &ConfigRc) {
         .iter()
         .map(|(id, _name, efforts)| MenuItem {
             label: id.clone(),
-            value: if efforts.is_empty() {
-                String::new()
-            } else {
-                format!("effort {}", efforts.join("/"))
-            },
+            value: efforts.join("/"),
         })
         .collect();
     let mut sel = items
@@ -3644,6 +3640,11 @@ fn maybe_show_tips(scr: &mut Scr, config_rc: &ConfigRc) {
     if !configured || shown {
         return;
     }
+    // Tips are the first real screen: drop the splash so they start at row 0.
+    scr.lines.clear();
+    scr.scroll = 0;
+    scr.splash_done = true;
+    scr.art_on = false;
     for key in ["tip1", "tip2", "tip3"] {
         scr.push(&format!("- {}", i18n::t(key)), K_DIM);
     }

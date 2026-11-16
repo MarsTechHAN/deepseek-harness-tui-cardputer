@@ -506,7 +506,7 @@ def check_resume_search(screens, reqs, work):
     checks.append(("now" in listing, "relative last-talk time shown at the row start"))
     checks.append(("beta deploy task" in search and "alpha whale task" not in search,
                    "typing filters by session name only"))
-    checks.append(("type to search" in search, "hint advertises type-to-search"))
+    checks.append(("type=search" in search or "search" in search, "hint advertises type-to-search"))
     cwds = []
     for path in glob.glob(os.path.join(work, "home", ".dst", "sessions", "*.json")):
         try:

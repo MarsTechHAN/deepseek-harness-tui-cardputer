@@ -139,7 +139,7 @@ repository.
   scrollable panel viewer, `s` saves it under `~/.dst/tmp/`. Ctrl+A/Ctrl+E move the cursor, Ctrl+W deletes a word;
   Home/End jump to the top/bottom of the scrollback when not editing.
 - Menus show a `current/total` position in the title when the list is longer
-  than the panel (config 1/14, help 1/15, long resume/task lists).
+  than the panel (config 1/15, help 1/15, long resume/task lists).
 - Menu right-hand text truncates with `…` instead of silently cutting words;
   `/help`, `/rewind`, `/config` and onboarding show a live description/preview
   for the highlighted row.
@@ -372,6 +372,7 @@ src/jobs.rs      cron + file-watch scheduler
 src/voice.rs     TTS/ASR, resampling, WAV framing, recorder
 src/json.rs      minimal JSON
 tools/sim/       pty screen simulator + scripted mock API (host testing)
+docs/UX-AUDIT.md 12-row screen-by-screen UX audit checklist and known limits
 tools/deploy/    scp/build/install and systemd-ordering fix for the device
 ```
 
