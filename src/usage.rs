@@ -17,6 +17,9 @@ pub struct Stats {
     pub cache_miss: u64,
     /// Prompt size of the most recent request (context-pressure estimate).
     pub last_prompt: u64,
+    /// Output size of the most recent request: it is re-sent in the next
+    /// request too, so context pressure is prompt + completion.
+    pub last_completion: u64,
 }
 
 static STATS: Mutex<Stats> = Mutex::new(Stats {
@@ -26,6 +29,7 @@ static STATS: Mutex<Stats> = Mutex::new(Stats {
     cache_hit: 0,
     cache_miss: 0,
     last_prompt: 0,
+    last_completion: 0,
 });
 
 fn path() -> std::path::PathBuf {
@@ -44,6 +48,7 @@ pub fn load() {
                     cache_hit: num("cache_hit"),
                     cache_miss: num("cache_miss"),
                     last_prompt: num("last_prompt"),
+                    last_completion: num("last_completion"),
                 };
             }
         }
@@ -58,6 +63,7 @@ fn save(g: &Stats) {
         ("cache_hit", J::Num(g.cache_hit as f64)),
         ("cache_miss", J::Num(g.cache_miss as f64)),
         ("last_prompt", J::Num(g.last_prompt as f64)),
+        ("last_completion", J::Num(g.last_completion as f64)),
     ]);
     let _ = std::fs::write(path(), doc.dump());
 }
@@ -70,6 +76,7 @@ pub fn record(u: &Usage) {
         g.cache_hit += u.cache_hit;
         g.cache_miss += u.cache_miss;
         g.last_prompt = u.prompt;
+        g.last_completion = u.completion;
         save(&g);
     }
 }
@@ -82,6 +89,15 @@ pub fn record_opt(u: Option<&Usage>) {
 
 pub fn snapshot() -> Stats {
     STATS.lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+/// Tokens the *next* request will carry before it is even built: the last
+/// prompt plus the last completion (which is now part of the history).
+pub fn last_context_tokens() -> u64 {
+    STATS
+        .lock()
+        .map(|g| g.last_prompt + g.last_completion)
+        .unwrap_or(0)
 }
 
 fn bar(frac: f64, width: usize) -> String {
@@ -189,7 +205,7 @@ pub fn context_pct(window: u64) -> f64 {
     if window == 0 {
         return 0.0;
     }
-    let last = STATS.lock().map(|g| g.last_prompt).unwrap_or(0);
+    let last = last_context_tokens();
     (last as f64 / window as f64).clamp(0.0, 1.0)
 }
 

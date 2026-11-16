@@ -181,7 +181,6 @@ pub fn tool_exec(action: &str, kind: &str, spec: &str, prompt: &str) -> String {
 // ------------------------------------------------------------- scheduler
 
 fn run_prompt(cfg: &Cfg, tdefs: &J, msgs: &Msgs, scr: &mut crate::Scr, prompt: &str, tag: &str) {
-    use crate::api::ToolCall;
     scr.push(&format!("⟳ {tag}: {prompt}"), crate::K_TOOL);
     msgs.borrow_mut().push(J::o(vec![
         ("role", J::s("user")),

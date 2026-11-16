@@ -66,24 +66,29 @@ pub fn kill(pid: u32) {
     let _ = Command::new("kill").arg(pid.to_string()).output();
 }
 
-fn body_json(cfg: &Cfg, messages: &J, tools: &J) -> String {
-    let mut fields = vec![
-        ("model".to_string(), J::s(&cfg.model)),
-        ("messages".to_string(), messages.clone()),
-        ("tools".to_string(), tools.clone()),
-        ("stream".to_string(), J::Bool(true)),
-        ("max_tokens".to_string(), J::Num(cfg.max_tokens as f64)),
-        ("tool_choice".to_string(), J::s("auto")),
-        ("parallel_tool_calls".to_string(), J::Bool(true)),
-        (
-            "stream_options".to_string(),
-            J::o(vec![("include_usage", J::Bool(true))]),
-        ),
-    ];
+/// Build the request body around an already-serialised `messages` array.
+///
+/// The transcript can be hundreds of KB near the context limit; taking it as
+/// a string lets the caller serialise it once instead of deep-cloning a `J`
+/// tree per step just to dump it again (`body_json` used to do both).
+fn body_json_raw(cfg: &Cfg, messages_json: &str, tools_json: &str) -> String {
+    let mut s = String::with_capacity(messages_json.len() + tools_json.len() + 256);
+    s.push_str("{\"model\":");
+    s.push_str(&J::s(&cfg.model).dump());
+    s.push_str(",\"messages\":");
+    s.push_str(messages_json);
+    s.push_str(",\"tools\":");
+    s.push_str(tools_json);
+    s.push_str(",\"stream\":true,\"max_tokens\":");
+    s.push_str(&cfg.max_tokens.to_string());
+    s.push_str(",\"tool_choice\":\"auto\",\"parallel_tool_calls\":true");
+    s.push_str(",\"stream_options\":{\"include_usage\":true}");
     if cfg.effort != "auto" && !cfg.effort.is_empty() {
-        fields.push(("reasoning_effort".to_string(), J::s(&cfg.effort)));
+        s.push_str(",\"reasoning_effort\":");
+        s.push_str(&J::s(&cfg.effort).dump());
     }
-    J::Obj(fields).dump()
+    s.push('}');
+    s
 }
 
 fn apply_line(line: &str, out: &mut StreamOut, tx: &std::sync::mpsc::Sender<ApiEv>) -> bool {
@@ -167,9 +172,10 @@ fn apply_line(line: &str, out: &mut StreamOut, tx: &std::sync::mpsc::Sender<ApiE
     false
 }
 
-/// Start a streamed request. Returns immediately; events arrive on `rx`.
-pub fn spawn_chat(cfg: &Cfg, messages: &J, tools: &J) -> Result<Chat, String> {
-    let body = body_json(cfg, messages, tools);
+/// Start a streamed request from an already-serialised `messages` array.
+pub fn spawn_chat_json(cfg: &Cfg, messages_json: &str, tools: &J) -> Result<Chat, String> {
+    let tools_json = tools.dump();
+    let body = body_json_raw(cfg, messages_json, &tools_json);
     let url = format!("{}/chat/completions", cfg.base.trim_end_matches('/'));
     let mut child = Command::new("curl")
         .args([
@@ -258,6 +264,11 @@ pub fn spawn_chat(cfg: &Cfg, messages: &J, tools: &J) -> Result<Chat, String> {
     });
 
     Ok(Chat { rx, pid })
+}
+
+/// Convenience wrapper for callers that already hold a `J` transcript.
+pub fn spawn_chat(cfg: &Cfg, messages: &J, tools: &J) -> Result<Chat, String> {
+    spawn_chat_json(cfg, &messages.dump(), tools)
 }
 
 /// Context window (tokens) of the configured model, from `/models`.

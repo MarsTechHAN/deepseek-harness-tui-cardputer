@@ -1,0 +1,8 @@
+{"steps":[
+ {"wait_for":{"text":"dst","timeout_ms":10000}},
+ {"send":"first question"},{"key":"Enter"},
+ {"wait_stable":{"stable_ms":700,"timeout_ms":15000},"snap":"t1"},
+ {"send":"second question"},{"key":"Enter"},
+ {"wait_ms":1400,"snap":"compacting"},
+ {"wait_stable":{"stable_ms":900,"timeout_ms":20000},"snap":"t2"}
+]}

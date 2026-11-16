@@ -25,6 +25,11 @@ use crate::json::J;
 /// Bounded output: DSH's "prefer bounded outputs" convention.
 pub const MAX_OUT: usize = 6000;
 
+/// Executor deadline for a tool that does not declare its own `timeout_ms`.
+/// DSH applies a policy default (`dsh-tool-call-timeout-policy`); 60 s is well
+/// above every built-in tool and still short of a wedged turn.
+pub const DEFAULT_TIMEOUT_MS: u64 = 60_000;
+
 /// A declared tool parameter. Rules live on the parameter, not the tool
 /// description (DSH tool-design: "put parameter rules on the parameter").
 pub struct Param {
@@ -77,6 +82,9 @@ pub struct ToolDef {
     pub params: Vec<Param>,
     /// DSH `isConcurrencySafe`: may this call overlap a sibling call?
     /// Only `true` opts in; everything else runs exclusively, in model order.
+    /// dst executes batches strictly in model order on the A53, so this is
+    /// metadata for future parallel dispatch rather than a scheduler input.
+    #[allow(dead_code)]
     pub concurrency_safe: bool,
     /// DSH `timeoutMs`: cooperative deadline budget owned by the executor.
     /// Never sent to the model.
@@ -259,12 +267,17 @@ pub fn run_batch(reg: &[ToolDef], calls: &[Call], host: &mut dyn ToolHost) -> Ve
     }
 
     // ---- tools/execute, pumping the host between polls ----
+    //
+    // `tool/result` is emitted the moment a call settles, not after the whole
+    // batch: the UI has already shown `tool/call`, and a slow sibling must not
+    // delay the result of a fast one. The returned vector stays in model order.
     let mut cancelled = false;
-    let mut made: Vec<(usize, Outcome)> = Vec::new();
     for (i, def, args) in queue {
         let c = &calls[i];
         if cancelled {
-            made.push((i, err_out(c, "cancelled by user")));
+            let o = err_out(c, "cancelled by user");
+            host.call(PipeEvent::Made(o.clone()));
+            outs[i] = Some(o);
             continue;
         }
         let (tx, rx) = std::sync::mpsc::channel();
@@ -280,7 +293,17 @@ pub fn run_batch(reg: &[ToolDef], calls: &[Call], host: &mut dyn ToolHost) -> Ve
             let _ = tx.send(r);
         });
 
+        // `timeoutMs` is an executor-owned deadline (DSH `dsh-timeout`). A tool
+        // that overruns is abandoned: its worker thread is detached and any
+        // child process it owns keeps the per-tool deadline it set itself.
+        let budget = if def.timeout_ms > 0 {
+            std::time::Duration::from_millis(def.timeout_ms)
+        } else {
+            std::time::Duration::from_millis(crate::tool::DEFAULT_TIMEOUT_MS)
+        };
+        let started = std::time::Instant::now();
         let mut settled: Option<Result<J, String>> = None;
+        let mut timed_out = false;
         loop {
             match rx.recv_timeout(std::time::Duration::from_millis(15)) {
                 Ok(Ok(v)) => {
@@ -296,6 +319,10 @@ pub fn run_batch(reg: &[ToolDef], calls: &[Call], host: &mut dyn ToolHost) -> Ve
                         cancelled = true;
                         break;
                     }
+                    if started.elapsed() >= budget {
+                        timed_out = true;
+                        break;
+                    }
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     settled = Some(Err("tool worker exited".into()));
@@ -305,6 +332,10 @@ pub fn run_batch(reg: &[ToolDef], calls: &[Call], host: &mut dyn ToolHost) -> Ve
         }
 
         let outcome = match settled {
+            None if timed_out => {
+                let secs = budget.as_secs_f64();
+                err_out(c, format!("tool timed out after {secs:.1}s"))
+            }
             None => err_out(c, "cancelled by user"),
             Some(Ok(value)) => {
                 let rendered = (def.render)(&args, &value);
@@ -334,13 +365,8 @@ pub fn run_batch(reg: &[ToolDef], calls: &[Call], host: &mut dyn ToolHost) -> Ve
                 }
             }
         };
-        made.push((i, outcome));
-    }
-
-    // ---- tool/result, model order ----
-    for (i, o) in made {
-        host.call(PipeEvent::Made(o.clone()));
-        outs[i] = Some(o);
+        host.call(PipeEvent::Made(outcome.clone()));
+        outs[i] = Some(outcome);
     }
 
     outs.into_iter()
@@ -420,4 +446,85 @@ pub fn num_arg(args: &J, key: &str) -> Option<f64> {
 
 pub fn str_arg(args: &J, key: &str) -> Option<String> {
     args.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn def(name: &'static str, timeout_ms: u64, body: fn(&J) -> Result<J, Fail>) -> ToolDef {
+        ToolDef {
+            name,
+            description: "test",
+            params: vec![],
+            concurrency_safe: false,
+            timeout_ms,
+            execute: body,
+            render: |_a, v| v.dump(),
+            present: |_a| "test".into(),
+            post: None,
+            schema_override: None,
+            dynamic: None,
+        }
+    }
+
+    fn slow(_a: &J) -> Result<J, Fail> {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        Ok(J::s("late"))
+    }
+
+    fn fast(_a: &J) -> Result<J, Fail> {
+        Ok(J::s("ok"))
+    }
+
+    struct Recorder {
+        events: Vec<(bool, std::time::Instant)>,
+    }
+
+    impl ToolHost for Recorder {
+        fn call(&mut self, ev: PipeEvent) {
+            let is_call = matches!(ev, PipeEvent::Call { .. });
+            self.events.push((is_call, std::time::Instant::now()));
+        }
+        fn cancel(&mut self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn call_event_precedes_result_and_execution() {
+        let reg = vec![def("fast", 1_000, fast)];
+        let calls = vec![Call {
+            id: "1".into(),
+            name: "fast".into(),
+            raw_args: "{}".into(),
+        }];
+        let mut h = Recorder { events: Vec::new() };
+        let outs = run_batch(&reg, &calls, &mut h);
+        assert!(!outs[0].is_error);
+        // tool/call first, tool/result second (not the other way round).
+        assert_eq!(h.events.len(), 2);
+        assert!(h.events[0].0, "first event must be tool/call");
+        assert!(!h.events[1].0, "second event must be tool/result");
+        assert!(h.events[0].1 <= h.events[1].1);
+    }
+
+    #[test]
+    fn executor_deadline_marks_tool_as_timed_out() {
+        let reg = vec![def("slow", 50, slow)];
+        let calls = vec![Call {
+            id: "1".into(),
+            name: "slow".into(),
+            raw_args: "{}".into(),
+        }];
+        let mut h = Recorder { events: Vec::new() };
+        let outs = run_batch(&reg, &calls, &mut h);
+        assert!(outs[0].is_error, "timed-out tool must be an error result");
+        assert!(
+            outs[0].content.contains("timed out"),
+            "unexpected content: {}",
+            outs[0].content
+        );
+        assert_eq!(h.events.len(), 2, "call and result still both emitted");
+    }
 }

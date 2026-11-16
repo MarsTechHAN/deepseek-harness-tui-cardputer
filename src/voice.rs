@@ -321,6 +321,7 @@ fn upload_asr(path: &str) -> Result<String, String> {
 
 /// Microphone availability. Must use the format the codec actually exposes
 /// (48 kHz S32 stereo); asking for 16 kHz mono fails on this hardware.
+#[allow(dead_code)] // diagnostics helper used by --voice-selftest
 pub fn mic_ok() -> bool {
     Command::new("arecord")
         .args([

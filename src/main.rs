@@ -13,7 +13,10 @@
 mod api;
 mod art;
 mod cmd;
+mod compact;
 mod config;
+mod context;
+mod goal;
 mod harness;
 mod i18n;
 mod jobs;
@@ -28,7 +31,6 @@ mod voice;
 
 use api::Cfg;
 use harness::{Action, Ev};
-use json::J;
 use std::io::{Read, Write};
 
 // ------------------------------------------------------------------ terminal
@@ -70,6 +72,9 @@ pub struct Scr {
     qr_blit: bool,
     /// Context window size of the current model, for the ring widget.
     ctx_window: u64,
+    /// `base|model` the cached ctx_window belongs to (avoids a /models probe
+    /// on every turn just to keep the ring correct).
+    ctx_for: String,
     /// Hide typed characters (API key entry).
     mask: bool,
     /// Submit automatically once speech fills the input.
@@ -100,6 +105,12 @@ pub const K_HEAD: u8 = 8;
 /// 320 px / 6 px per cell. The TUI only ever runs on this panel, so the wrap
 /// width is fixed here rather than trusted from the pty.
 const PANEL_COLS: usize = 53;
+
+/// Retained transcript lines. The device has 512 MB and a turn can emit
+/// hundreds of tool result lines; an unbounded `Vec` was the largest avoidable
+/// allocation in a long session. Old lines are dropped from the front, which
+/// keeps scrolling-into-the-past bounded but still useful.
+const MAX_TRANSCRIPT_LINES: usize = 400;
 
 #[derive(Clone)]
 struct MenuItem {
@@ -146,6 +157,7 @@ impl Scr {
             qr: None,
             qr_blit: false,
             ctx_window: 0,
+            ctx_for: String::new(),
             mask: false,
             auto_send: true,
             utf8_buf: Vec::new(),
@@ -260,6 +272,13 @@ impl Scr {
         self.scroll = 0;
         self.splash_done = false;
         self.art_frame = 0;
+        // A new screen must not inherit transient state: leaving the thinking
+        // panel or the live line behind is what made `/clear` look half-done.
+        self.think_lines.clear();
+        self.think_active = false;
+        self.live = None;
+        self.note = None;
+        self.artifact = None;
         for l in art_frame_lines(0, self.cols) {
             self.lines.push((l, K_ART));
         }
@@ -290,6 +309,12 @@ impl Scr {
         Self::wrap_into(&mut wrapped, &shown, self.cols.min(PANEL_COLS));
         for w in wrapped {
             self.lines.push((w, kind));
+        }
+        // Keep the transcript bounded. Scrollback is measured from the end, so
+        // dropping the oldest rows does not disturb the current view.
+        if self.lines.len() > MAX_TRANSCRIPT_LINES {
+            let drop = self.lines.len() - MAX_TRANSCRIPT_LINES;
+            self.lines.drain(0..drop);
         }
         self.scroll = 0;
         self.draw();
@@ -440,6 +465,13 @@ impl Scr {
         }
         if live_line.is_empty() && !self.queue.is_empty() {
             live_line = i18n::tf("queued", &[&self.queue.len().to_string()]);
+        }
+        // An active goal is ambient state: show it when nothing more urgent is
+        // happening, so autonomous rounds are not invisible.
+        if live_line.is_empty() {
+            if let Some(b) = crate::goal::banner() {
+                live_line = b;
+            }
         }
         // Scrolled back: say so, and how to get back.
         if self.busy && live_line.is_empty() {
@@ -736,7 +768,7 @@ impl Scr {
         // Open the mic BEFORE the hold is confirmed: the codec takes a moment
         // to settle and starting late clipped the first syllable of speech.
         // The pre-roll is discarded by the arming check below.
-        let mut rec = match crate::voice::start_recording() {
+        let rec = match crate::voice::start_recording() {
             Ok(r) => r,
             Err(e) => {
                 self.push(&format!("mic: {e}"), K_ERR);
@@ -890,7 +922,17 @@ impl Scr {
                     self.cursor = 0;
                 }
                 0x1b => {
-                    let b1 = self.read_key();
+                    // A bare Esc is a real key here: it stops a clip that is
+                    // still playing after its turn was cancelled. Waiting for
+                    // a second byte (the old `read_key`) blocked the editor
+                    // until some other key was pressed.
+                    let b1 = match self.read_key_timeout() {
+                        Some(b) => b,
+                        None => {
+                            crate::voice::request_stop();
+                            continue;
+                        }
+                    };
                     if b1 == b'\r' {
                         // Alt+Enter / Shift+Enter fallback.
                         if !self.input.is_empty() {
@@ -1128,6 +1170,16 @@ fn api_cfg(c: &config::Config) -> Cfg {
     }
 }
 
+/// Refresh the context-window figure only when the endpoint or model changed.
+fn refresh_ctx_window(scr: &mut Scr, cfg: &Cfg) {
+    let key = format!("{}|{}", cfg.base, cfg.model);
+    if key == scr.ctx_for {
+        return;
+    }
+    scr.ctx_window = crate::api::context_window(cfg).unwrap_or(0);
+    scr.ctx_for = key;
+}
+
 fn term_size() -> (usize, usize) {
     // Probe the pty this process actually owns first (plain `stty size` reads
     // stdin), then /dev/tty. Whatever comes back is clamped to the panel:
@@ -1187,11 +1239,19 @@ SCREEN - this shapes every reply
 
 VOICE
 - `speak` is text-to-speech. Use it ONLY when the user explicitly asks to be
-- `speak` is text-to-speech. Use it ONLY when the user explicitly asks to be
   told aloud (e.g. \"read it to me\", \"念给我听\"). Never use it for progress,
   confirmations or status: the screen is the channel.
+- Keep every spoken message under 150 words (a CJK character counts as one
+  word). Anything longer is rejected by the tool, so summarise first.
 - The user talks to you by long-pressing Tab; the transcript is submitted
   automatically, so treat messages as spoken and reply conversationally.
+
+STYLE
+- Be concise. Answer in the fewest lines that fully answer: no preamble, no
+  restating the question, no narration of steps. Aim for <= 4 short lines
+  unless the user asks for detail.
+- When the user interrupts or cancels, stop immediately; do not retry or repeat
+  the interrupted work unless asked.
 
 RULES
 - Never claim a file changed or a command ran unless a tool result shows it.
@@ -1223,6 +1283,10 @@ impl harness::Ui for OnceUi {
                 println!("[{tag}:{name}] {}", first_lines(&content, 6));
             }
             Ev::Context(c) => println!("[context] {c}"),
+            Ev::Compacting { tokens, messages } => {
+                eprintln!("[compacting {messages} messages, {} tokens]", crate::compact::human_tokens(tokens));
+            }
+            Ev::CompactingDone { ok, note } => eprintln!("[compact {}] {note}", if ok { "ok" } else { "failed" }),
             Ev::Note(n) => eprintln!("[note] {n}"),
             _ => {}
         }
@@ -1235,7 +1299,7 @@ impl harness::Ui for OnceUi {
 fn run_once(cfg: &Cfg, reg: &[tool::ToolDef], prompt: &str) {
     let mut msgs = vec![harness::msg("system", SYSTEM_PROMPT)];
     let mut ui = OnceUi;
-    harness::run_turn(cfg, &mut msgs, reg, prompt, &mut ui);
+    harness::run_turn(cfg, &harness::RunOpts::default(), &mut msgs, reg, prompt, &mut ui);
 }
 
 // ---------------------------------------------------------------- interactive
@@ -1246,9 +1310,58 @@ fn run_once(cfg: &Cfg, reg: &[tool::ToolDef], prompt: &str) {
 struct TermUi<'a> {
     scr: &'a mut Scr,
     acc: String,
-    think: String,
+    /// Incremental reasoning line buffer: reasoning is wrapped as it arrives
+    /// instead of re-wrapping the whole accumulated text on every chunk (that
+    /// was quadratic and made the panel lag behind the stream).
+    think_cur: String,
+    think_wrapped: Vec<String>,
     tools: std::collections::HashMap<String, (String, String, std::time::Instant)>,
     spin: usize,
+}
+
+impl<'a> TermUi<'a> {
+    fn reset_think(&mut self) {
+        self.think_cur.clear();
+        self.think_wrapped.clear();
+        self.scr.think_active = false;
+        self.scr.think_lines.clear();
+    }
+
+    /// Move the line currently being wrapped into the finished-line buffer.
+    fn think_flush(&mut self) {
+        let line = self.think_cur.trim_end().to_string();
+        self.think_cur.clear();
+        if !line.trim().is_empty() {
+            self.think_wrapped.push(line);
+            if self.think_wrapped.len() > 8 {
+                let drop = self.think_wrapped.len() - 8;
+                self.think_wrapped.drain(0..drop);
+            }
+        }
+    }
+
+    /// Rebuild the visible tail from finished lines plus the line in progress.
+    /// Chunks are *not* line breaks: committing on every delta was what made
+    /// the reasoning panel show one short line per stream chunk.
+    fn think_refresh(&mut self) {
+        let mut shown: Vec<String> = self
+            .think_wrapped
+            .iter()
+            .rev()
+            .take(3)
+            .rev()
+            .map(|l| format!("  {l}"))
+            .collect();
+        if !self.think_cur.trim().is_empty() {
+            shown.push(format!("  {}", self.think_cur.trim_end()));
+        }
+        if shown.len() > 4 {
+            let drop = shown.len() - 4;
+            shown.drain(0..drop);
+        }
+        self.scr.think_lines = shown;
+        self.scr.think_active = !self.scr.think_lines.is_empty();
+    }
 }
 
 impl<'a> harness::Ui for TermUi<'a> {
@@ -1260,19 +1373,20 @@ impl<'a> harness::Ui for TermUi<'a> {
                 self.scr.draw();
             }
             Ev::ThinkingDelta(t) => {
-                self.think.push_str(&t);
-                let cols = self.scr.cols;
-                let mut wrapped: Vec<String> = Vec::new();
-                Scr::wrap_into(&mut wrapped, &self.think, cols.saturating_sub(2));
-                let tail: Vec<String> = wrapped
-                    .iter()
-                    .rev()
-                    .take(4)
-                    .rev()
-                    .map(|l| format!("  {l}"))
-                    .collect();
-                self.scr.think_lines = tail;
-                self.scr.think_active = !self.scr.think_lines.is_empty();
+                // Wrap incrementally: only the new characters are measured.
+                let wrap_cols = self.scr.cols.saturating_sub(2);
+                for ch in t.chars() {
+                    if ch == '\n' {
+                        self.think_flush();
+                        continue;
+                    }
+                    let cw = Scr::cw(ch);
+                    if !self.think_cur.is_empty() && dw(&self.think_cur) + cw > wrap_cols {
+                        self.think_flush();
+                    }
+                    self.think_cur.push(ch);
+                }
+                self.think_refresh();
                 self.scr.draw();
             }
             Ev::Thinking { secs, chars } => {
@@ -1288,19 +1402,18 @@ impl<'a> harness::Ui for TermUi<'a> {
                 self.scr.draw();
             }
             Ev::ThinkingDone { secs, chars } => {
-                self.scr.think_active = false;
-                self.scr.think_lines.clear();
-                self.think.clear();
+                let had_lines = !self.scr.think_lines.is_empty();
+                self.reset_think();
                 self.scr.live = None;
-                self.scr.push(
-                    &format!("\u{25b8} thinking {secs:.1}s | {chars} chars (collapsed)"),
-                    K_DIM,
-                );
+                if had_lines || chars > 0 {
+                    self.scr.push(
+                        &format!("\u{25b8} thinking {secs:.1}s | {chars} chars (collapsed)"),
+                        K_DIM,
+                    );
+                }
             }
             Ev::Assistant(t) => {
-                self.scr.think_active = false;
-                self.scr.think_lines.clear();
-                self.think.clear();
+                self.reset_think();
                 self.acc.clear();
                 self.scr.live = None;
                 // Results are the payload of the turn: render them as
@@ -1308,9 +1421,15 @@ impl<'a> harness::Ui for TermUi<'a> {
                 self.scr.push_md(&t);
             }
             Ev::ToolCall { id, name, title } => {
-                self.scr.think_active = false;
-                self.scr.think_lines.clear();
+                self.reset_think();
                 self.scr.live = None;
+                self.scr.push(
+                    &fit(
+                        &format!("* {name} > {title} \u{2026}"),
+                        self.scr.cols.saturating_sub(1),
+                    ),
+                    K_DIM,
+                );
                 self.tools.insert(id, (name, title, std::time::Instant::now()));
             }
             Ev::ToolResult {
@@ -1319,24 +1438,23 @@ impl<'a> harness::Ui for TermUi<'a> {
                 is_error,
                 ..
             } => {
-                // Calls are all announced before any of them settles, so the
-                // line is built from the id-keyed record, not a single slot.
+                // The pending line was drawn when the call started; this one
+                // adds the outcome and a short preview of what came back.
                 let (name, title, took) = self
                     .tools
                     .remove(&id)
                     .map(|(n, t, started)| (n, t, started.elapsed().as_secs_f32()))
                     .unwrap_or_else(|| (String::new(), String::new(), 0.0));
-                // Always one row: the tool line must never wrap, whatever the
-                // command was, or it steals space from the answer.
-                // One row, guaranteed: cap by characters first (width tables
-                // have proven unreliable across glyphs), then trim if needed.
-                let raw = format!("* {name} > {title} | {took:.1}s");
-                let line: String = raw.chars().take(44).collect();
+                let raw = format!("* {name} > {title} | {took:.1}s {}", if is_error { "x" } else { "ok" });
                 let cols = self.scr.cols;
-                self.scr.push(&fit(&line, cols.saturating_sub(1)), K_TOOL);
-                if is_error {
-                    self.scr
-                        .push(&format!("  \u{21b3} {}", first_lines(&content, 4)), K_ERR);
+                self.scr.push(&fit(&raw, cols.saturating_sub(1)), K_TOOL);
+                let preview = first_lines(&content, if is_error { 3 } else { 1 });
+                if !preview.trim().is_empty() {
+                    let kind = if is_error { K_ERR } else { K_RES };
+                    self.scr.push(
+                        &fit(&format!("  \u{21b3} {preview}"), cols.saturating_sub(1)),
+                        kind,
+                    );
                 }
             }
             Ev::Artifact { title, body } => {
@@ -1357,6 +1475,23 @@ impl<'a> harness::Ui for TermUi<'a> {
                 self.scr.draw();
             }
             Ev::Context(c) => self.scr.push(&format!("\u{ff0b} {c}"), K_DIM),
+            Ev::Compacting { tokens, messages } => {
+                self.reset_think();
+                self.scr.live = Some((
+                    1,
+                    format!(
+                        "compacting {messages} messages ({} tokens)",
+                        crate::compact::human_tokens(tokens)
+                    ),
+                ));
+                self.scr.draw();
+            }
+            Ev::CompactingDone { ok, note } => {
+                self.scr.live = None;
+                if !ok {
+                    self.scr.push(&format!("compaction failed: {note}"), K_DIM);
+                }
+            }
             Ev::Note(n) => self.scr.push(&n, K_ERR),
             _ => {}
         }
@@ -1391,10 +1526,12 @@ impl<'a> harness::Ui for TermUi<'a> {
                     }
                 }
                 0x1b => {
-                    // Bare Esc cancels; Esc+'['/'O' is an arrow key;
-                    // extended Shift/Ctrl+Enter interrupts and sends at once.
+                    // Esc cancels the turn, including a `speak` clip that is
+                    // still playing: the clip is a side effect of the turn, so
+                    // the interrupt has to reach the speaker too.
                     match self.scr.read_key_timeout() {
                         Some(b'\r') => {
+                            crate::voice::request_stop();
                             self.force_now();
                             poll_mode(true);
                             return Action::Cancel;
@@ -1413,13 +1550,17 @@ impl<'a> harness::Ui for TermUi<'a> {
                                 }
                             }
                             if seq.starts_with("13;") {
+                                crate::voice::request_stop();
                                 self.force_now();
                                 poll_mode(true);
                                 return Action::Cancel;
                             }
                             poll_mode(true); // read_key_timeout left the tty blocking
                         }
-                        _ => return Action::Cancel,
+                        _ => {
+                            crate::voice::request_stop();
+                            return Action::Cancel;
+                        }
                     }
                 }
                 0x0d | 0x0a => {
@@ -1830,7 +1971,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
     let mut sel = 0usize;
     loop {
         let c = config_rc.borrow();
-        let (model, effort, base, kstate, voice, auto, queued, lang, caps) = (
+        let (model, effort, base, kstate, voice, auto, queued, lang, steps, compact, goalr, caps) = (
             c.model.clone(),
             c.effort.clone(),
             c.base.clone(),
@@ -1839,6 +1980,17 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             c.auto_send_voice,
             c.queued_default,
             c.language.clone(),
+            if c.max_steps == 0 { "unlimited".to_string() } else { c.max_steps.to_string() },
+            if c.compact_enabled {
+                format!("on @ {}", crate::compact::human_tokens(c.compact_threshold))
+            } else {
+                "off".to_string()
+            },
+            if c.goal_max_rounds == 0 {
+                "unlimited".to_string()
+            } else {
+                c.goal_max_rounds.to_string()
+            },
             c.capabilities(),
         );
         drop(c);
@@ -1857,6 +2009,9 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                 value: if queued { i18n::t("queued_mode").into() } else { i18n::t("immediate_mode").into() },
             },
             MenuItem { label: i18n::t("menu_language").into(), value: lang },
+            MenuItem { label: i18n::t("menu_steps").into(), value: steps },
+            MenuItem { label: i18n::t("menu_compact").into(), value: compact },
+            MenuItem { label: i18n::t("menu_goalrounds").into(), value: goalr },
             MenuItem { label: i18n::t("menu_save").into(), value: String::new() },
         ];
         let hint = if caps.web_tools && caps.speech {
@@ -2033,6 +2188,41 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                 i18n::set(&config_rc.borrow().language);
                 let _ = config_rc.borrow().save();
             }
+            8 => {
+                let mut c = config_rc.borrow_mut();
+                c.max_steps = match c.max_steps {
+                    0 => 20,
+                    20 => 50,
+                    50 => 100,
+                    _ => 0,
+                };
+                let _ = c.save();
+            }
+            9 => {
+                let mut c = config_rc.borrow_mut();
+                // off -> 512K -> 256K -> 128K -> off
+                if !c.compact_enabled {
+                    c.compact_enabled = true;
+                    c.compact_threshold = 512_000;
+                } else if c.compact_threshold > 256_000 {
+                    c.compact_threshold = 256_000;
+                } else if c.compact_threshold > 128_000 {
+                    c.compact_threshold = 128_000;
+                } else {
+                    c.compact_enabled = false;
+                }
+                let _ = c.save();
+            }
+            10 => {
+                let mut c = config_rc.borrow_mut();
+                c.goal_max_rounds = match c.goal_max_rounds {
+                    0 => 3,
+                    3 => 10,
+                    10 => 25,
+                    _ => 0,
+                };
+                let _ = c.save();
+            }
             _ => {
                 let _ = config_rc.borrow().save();
                 scr.menu = None;
@@ -2072,9 +2262,15 @@ fn main() {
     tools::set_skills(skill_list.clone());
     mcp::install(mcp::start_all());
     let mut reg = tools::registry(config_rc.borrow().capabilities());
+    reg.extend(goal::tool_defs());
     reg.extend(mcp::tool_defs());
     let mut caps_at_start = config_rc.borrow().capabilities();
-    let mut system_prompt = format!("{}{}", SYSTEM_PROMPT, skills::catalog_prompt(&skill_list));
+    let mut system_prompt = format!(
+        "{}{}\n\nGOALS\n{}\n",
+        SYSTEM_PROMPT,
+        skills::catalog_prompt(&skill_list),
+        goal::guidance()
+    );
     if !caps_at_start.web_tools {
         system_prompt.push_str(
             "\nCAPABILITIES\nThe configured endpoint is a third-party OpenAI-compatible API. search, fetch, ocr and speech tools are not registered because they only exist on DeepSeek's official API. Use bash/read_file/write_file instead, and do not tell the \
@@ -2144,6 +2340,7 @@ user you can search the web or speak.\n",
     *shared_cfg.borrow_mut() = cfg.clone();
     tools::set_cfg(cfg.clone());
     voice::set_cfg(cfg.clone());
+    refresh_ctx_window(&mut scr, &cfg);
     if !config_rc.borrow().configured {
         scr.push(i18n::t("unconfigured"), K_ERR);
     }
@@ -2174,14 +2371,28 @@ user you can search the web or speak.\n",
         }));
     }
 
+    let mut turn_no = 0u32;
+    // A pending automatic goal round: (model prompt, one-line transcript label).
+    let mut goal_seed: Option<(String, String)> = None;
+    // A queued line pulled out of the busy-time queue so the outer loop can
+    // dispatch it as a command if it starts with `/` (a queued `/clear` must
+    // not be sent to the model as chat).
+    let mut pending_line: Option<String> = None;
     loop {
-        let line = match scr.edit() {
-            Some(l) => l,
-            None => break,
+        let (line, label) = match goal_seed.take() {
+            Some((prompt, label)) => (prompt, Some(label)),
+            None => match pending_line.take() {
+                Some(q) => (q, None),
+                None => match scr.edit() {
+                    Some(l) => (l, None),
+                    None => break,
+                },
+            },
         };
         // Slash commands are human commands: they run here and never become a
         // model message (the same contract as DSH's command registry).
-        if line.starts_with('/') {
+        if label.is_none() && line.starts_with('/') {
+            let goal_before = goal::current();
             // Bind the borrow before the if-let: a temporary RefMut in the
             // scrutinee would live for the whole body and make every later
             // config access (wizard, login, save) panic.
@@ -2200,6 +2411,44 @@ user you can search the web or speak.\n",
                 if out.quit {
                     break;
                 }
+                if out.compact {
+                    // Manual /compact: DSH's `compactNow` bypasses the pressure
+                    // threshold and keeps no verbatim tail.
+                    let mut manual = {
+                        let c = config_rc.borrow();
+                        crate::compact::Settings::from_config(&c)
+                    };
+                    manual.threshold_tokens = 0;
+                    manual.retain_ratio = 0.0;
+                    cfg = api_cfg(&config_rc.borrow());
+                    refresh_ctx_window(&mut scr, &cfg);
+                    let defs = tool::definitions(&reg);
+                    let window = scr.ctx_window;
+                    let result = {
+                        let mut m = msgs.borrow_mut();
+                        let mut ui = TermUi {
+                            scr: &mut scr,
+                            acc: String::new(),
+                            think_cur: String::new(),
+                            think_wrapped: Vec::new(),
+                            tools: std::collections::HashMap::new(),
+                            spin: 0,
+                        };
+                        crate::compact::compact(&cfg, &manual, &mut m, window, &defs, &mut ui)
+                    };
+                    match result {
+                        Ok(r) => scr.push(
+                            &format!(
+                                "compacted: {} -> {} tokens ({} messages)",
+                                crate::compact::human_tokens(r.before_tokens),
+                                crate::compact::human_tokens(r.after_tokens),
+                                r.dropped_messages
+                            ),
+                            K_DIM,
+                        ),
+                        Err(e) => scr.push(&format!("compaction failed: {e}"), K_ERR),
+                    }
+                }
                 if out.login {
                     start_login(&mut scr, &login_rx);
                 }
@@ -2217,6 +2466,7 @@ user you can search the web or speak.\n",
                 let caps_now = config_rc.borrow().capabilities();
                 if caps_now.web_tools != caps_at_start.web_tools || caps_now.speech != caps_at_start.speech {
                     reg = tools::registry(caps_now);
+                    reg.extend(goal::tool_defs());
                     reg.extend(mcp::tool_defs());
                     scr.speech_ok = caps_now.speech;
                     caps_at_start = caps_now;
@@ -2225,11 +2475,32 @@ user you can search the web or speak.\n",
                 *shared_cfg.borrow_mut() = cfg.clone();
                 tools::set_cfg(cfg.clone());
                 voice::set_cfg(cfg.clone());
+                // `/goal <objective>`, `/goal resume`, `/goal edit` re-arm the
+                // driver: start the next automatic round right away.
+                if let Some(after) = goal::current() {
+                    let changed = match &goal_before {
+                        None => true,
+                        Some(b) => {
+                            b.id != after.id
+                                || b.armed != after.armed
+                                || b.revision != after.revision
+                        }
+                    };
+                    if changed && after.is_active() {
+                        if let Some((before, round)) = goal::start_round() {
+                            goal_seed = Some((
+                                goal::round_prompt(&before, round),
+                                format!("\u{27f3} goal round {round}"),
+                            ));
+                        }
+                    }
+                }
                 continue;
             }
         }
-        let mut next = Some(line);
-        while let Some(submit) = next {
+        let mut next: Option<(String, Option<String>)> = Some((line, label));
+        let mut last_report: Option<harness::TurnReport> = None;
+        while let Some((submit, label)) = next {
             // The splash is for the idle screen only: once the user starts
             // working, give the whole transcript area to the conversation.
             if !scr.splash_done {
@@ -2238,8 +2509,21 @@ user you can search the web or speak.\n",
                 scr.splash_done = true;
                 scr.art_on = false;
             }
-            scr.push(&format!("> {submit}"), K_USER);
+            match &label {
+                Some(l) => scr.push(l, K_TOOL),
+                None => scr.push(&format!("> {submit}"), K_USER),
+            }
+            turn_no += 1;
             cfg = api_cfg(&config_rc.borrow());
+            refresh_ctx_window(&mut scr, &cfg);
+            let mut opts = harness::RunOpts::from_config(&config_rc.borrow(), scr.ctx_window);
+            opts.turn = turn_no;
+            if label.is_some() {
+                // Goal rounds use their own step budget (0 = unlimited).
+                opts.max_steps = config_rc.borrow().goal_max_steps;
+            }
+            let in_goal_round = label.is_some();
+            goal::set_in_round(in_goal_round);
             scr.busy = true;
             poll_mode(true);
             {
@@ -2247,12 +2531,14 @@ user you can search the web or speak.\n",
                 let mut ui = TermUi {
                     scr: &mut scr,
                     acc: String::new(),
-                    think: String::new(),
+                    think_cur: String::new(),
+                    think_wrapped: Vec::new(),
                     tools: std::collections::HashMap::new(),
                     spin: 0,
                 };
-                harness::run_turn(&cfg, &mut m, &reg, &submit, &mut ui);
+                last_report = Some(harness::run_turn(&cfg, &opts, &mut m, &reg, &submit, &mut ui));
             }
+            goal::set_in_round(false);
             poll_mode(false);
             scr.busy = false;
             scr.live = None;
@@ -2276,16 +2562,47 @@ user you can search the web or speak.\n",
             if scr.quit {
                 break;
             }
-            next = if scr.queue.is_empty() {
-                None
-            } else {
-                Some(scr.queue.remove(0))
+            next = match scr.queue.first() {
+                None => None,
+                Some(q) if q.starts_with('/') => {
+                    pending_line = Some(scr.queue.remove(0));
+                    None
+                }
+                Some(_) => Some((scr.queue.remove(0), None)),
             };
+            if pending_line.is_some() {
+                break;
+            }
         }
         if scr.quit {
             break;
         }
+        // ---- goal round driver (DSH `dsh-goal-round-driver`) ----
+        // Esc stops the autonomous run: an interrupted round disarms the goal
+        // instead of retrying it; `/goal resume` re-arms.
+        if last_report.as_ref().map(|r| r.cancelled).unwrap_or(false) {
+            if goal::current().map(|g| g.is_active()).unwrap_or(false) {
+                goal::set_armed(false);
+                scr.push(
+                    "goal disarmed after interrupt; /goal resume to continue",
+                    K_DIM,
+                );
+            }
+        }
+        if scr.queue.is_empty() {
+            if let Some(goal) = goal::current() {
+                if goal.is_active() {
+                    if let Some((before, round)) = goal::start_round() {
+                        goal_seed = Some((
+                            goal::round_prompt(&before, round),
+                            format!("\u{27f3} goal round {round}"),
+                        ));
+                    }
+                }
+            }
+        }
     }
+
 
     if let Some(p) = &session_path {
         save_session(&msgs, &config_rc.borrow(), p);
@@ -2295,13 +2612,6 @@ user you can search the web or speak.\n",
     println!("bye");
 }
 
-fn short(s: &str, n: usize) -> String {
-    let mut out: String = s.chars().take(n).collect();
-    if s.chars().count() > n {
-        out.push('…');
-    }
-    out.replace('\n', " ")
-}
 
 fn first_lines(s: &str, n: usize) -> String {
     s.lines()
@@ -2311,3 +2621,4 @@ fn first_lines(s: &str, n: usize) -> String {
         .trim()
         .to_string()
 }
+

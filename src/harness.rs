@@ -27,13 +27,58 @@ use crate::tool::{self, Call, PipeEvent, ToolDef};
 use std::sync::mpsc::TryRecvError;
 use std::time::Instant;
 
-/// Bound on steps per turn, so a looping model cannot wedge the device.
-const MAX_STEPS: u32 = 12;
+/// Everything that bounds one turn. `0` means "no limit" throughout: the user
+/// asked for the old hard-coded step cap to be removed, with an opt-in config
+/// key instead.
+#[derive(Clone)]
+pub struct RunOpts {
+    pub max_steps: u32,
+    pub compact: crate::compact::Settings,
+    pub context_time: bool,
+    /// Minimum seconds between clock readings (DSH default 600).
+    pub context_refresh_secs: u64,
+    /// 1-based turn number used by the clock-context text.
+    pub turn: u32,
+    /// Context window of the configured model, 0 when unknown.
+    pub window: u64,
+}
 
-/// Bound on retained history. `SOFT` triggers compaction; `KEEP` is how many
-/// trailing messages survive it.
-const HISTORY_SOFT: usize = 45;
-const HISTORY_KEEP: usize = 28;
+impl Default for RunOpts {
+    fn default() -> Self {
+        RunOpts {
+            max_steps: 0,
+            compact: crate::compact::Settings::from_config(&crate::config::Config::default()),
+            context_time: true,
+            context_refresh_secs: 600,
+            turn: 1,
+            window: 0,
+        }
+    }
+}
+
+impl RunOpts {
+    pub fn from_config(c: &crate::config::Config, window: u64) -> RunOpts {
+        RunOpts {
+            max_steps: c.max_steps,
+            compact: crate::compact::Settings::from_config(c),
+            context_time: c.context_time,
+            context_refresh_secs: c.context_refresh_secs,
+            turn: 1,
+            window,
+        }
+    }
+}
+
+/// What one turn did. The goal driver needs to know whether the turn ended by
+/// itself (so the goal can be judged) or was interrupted/failed.
+#[derive(Default)]
+pub struct TurnReport {
+    #[allow(dead_code)]
+    pub steps: u32,
+    pub cancelled: bool,
+    pub failed: bool,
+    pub text: String,
+}
 
 /// What the UI wants done with the running turn.
 #[derive(PartialEq, Eq)]
@@ -42,6 +87,7 @@ pub enum Action {
     Cancel,
 }
 
+#[allow(dead_code)] // events carry step numbers for future front ends
 pub enum Ev {
     TurnStart,
     StepStart(u32),
@@ -70,6 +116,10 @@ pub enum Ev {
     },
     /// `additionalContexts` injected as a user message after the batch.
     Context(String),
+    /// Automatic context compaction started for this many tokens.
+    Compacting { tokens: u64, messages: usize },
+    /// Compaction finished; `ok=false` means the history was left untouched.
+    CompactingDone { ok: bool, note: String },
     /// The agent asked to take over the screen with a composed panel.
     Artifact { title: String, body: String },
     /// Harness-level notice (limit reached, failure, compaction).
@@ -132,46 +182,64 @@ fn assistant_with_tools(text: &str, calls: &[ToolCall]) -> J {
     ])
 }
 
-/// `agent/pre-step`: bound the retained history before the request is derived.
-/// Cuts only at a user-message boundary so a `tool_calls` message is never
-/// separated from its `tool` results.
-fn pre_step(msgs: &mut Vec<J>, ui: &mut dyn Ui) {
-    if msgs.len() <= HISTORY_SOFT {
-        return;
+/// Whether a provider error is a context-window overflow (`dsh-agent-loop`
+/// treats this as an explicit compaction trigger).
+fn is_context_overflow(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("context length")
+        || m.contains("context window")
+        || m.contains("context_length_exceeded")
+        || m.contains("maximum context")
+        || m.contains("too many tokens")
+        || (m.contains("prompt") && m.contains("too long"))
+        || (m.contains("exceed") && m.contains("token"))
+}
+
+/// Verbatim DSH `dsh-repeat-tool-reminder` text (first threshold and later
+/// thresholds differ; both are reproduced).
+fn repeat_reminder(name: &str, args: &str, count: u32) -> String {
+    if count <= 3 {
+        "You are repeating the exact same tool call with identical arguments. Carefully analyze the previous result before calling again: if the task is not complete, try a different approach or different arguments instead of repeating the call."
+            .to_string()
+    } else {
+        let shown: String = args.chars().take(500).collect();
+        let extra = args.chars().count().saturating_sub(500);
+        let args_text = if extra > 0 {
+            format!("{shown}\u{2026} (+{extra} more chars)")
+        } else {
+            shown
+        };
+        format!(
+            "Repeated tool call detected:\n- tool: {name}\n- consecutive_calls: {count}\n- arguments: {args_text}\nThe repeated calls are not making progress. Do not call this tool with these exact arguments again. Inspect the latest result and choose a different action, different arguments, or finish the task if enough evidence has been gathered."
+        )
     }
-    let tail_start = msgs.len().saturating_sub(HISTORY_KEEP);
-    let mut cut = tail_start;
-    while cut < msgs.len() {
-        let is_user = msgs[cut]
-            .get("role")
-            .and_then(|r| r.as_str())
-            .map(|r| r == "user")
-            .unwrap_or(false);
-        if is_user {
-            break;
+}
+
+/// Serialise the transcript directly to JSON. Avoids the deep clone of the
+/// whole message tree that `J::Arr(msgs.clone()).dump()` used to make on every
+/// step (the context can be hundreds of KB near the limit).
+fn serialize_msgs(msgs: &[J]) -> String {
+    let mut s = String::with_capacity(msgs.len() * 192);
+    s.push('[');
+    for (i, m) in msgs.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
         }
-        cut += 1;
+        s.push_str(&m.dump());
     }
-    if cut <= 1 || cut >= msgs.len() {
-        return;
-    }
-    let dropped = cut - 1;
-    msgs.drain(1..cut);
-    ui.on(Ev::Note(format!(
-        "compacted: dropped {dropped} earlier messages ({} kept)",
-        msgs.len()
-    )));
+    s.push(']');
+    s
 }
 
 /// One streamed request. Drains the API channel while pumping the UI, so the
 /// user can keep typing and can cancel with Esc.
 fn stream_once(
     cfg: &Cfg,
-    snapshot: &J,
+    messages_json: &str,
     defs: &J,
     ui: &mut dyn Ui,
 ) -> Result<StreamOut, (StreamOut, bool)> {
-    let chat = match api::spawn_chat(cfg, snapshot, defs) {
+    let chat = match api::spawn_chat_json(cfg, messages_json, defs) {
         Ok(c) => c,
         Err(e) => {
             let mut o = StreamOut::default();
@@ -281,42 +349,82 @@ fn stream_once(
 /// Run one turn: `input` is the claimed user message.
 pub fn run_turn(
     cfg: &Cfg,
+    opts: &RunOpts,
     msgs: &mut Vec<J>,
     reg: &[ToolDef],
     input: &str,
     ui: &mut dyn Ui,
-) {
+) -> TurnReport {
     ui.on(Ev::TurnStart);
     msgs.push(msg("user", input));
 
     let defs = tool::definitions(reg);
     let mut steps = 0u32;
+    let mut report = TurnReport::default();
+    // DSH `dsh-repeat-tool-reminder`: identical consecutive calls are a loop,
+    // not progress. Counted per turn, reset by any different call.
+    let mut repeat_sig = String::new();
+    let mut repeat_count = 0u32;
 
     loop {
-        if steps >= MAX_STEPS {
+        // `max_steps == 0` is unlimited (the old hard-coded cap of 12 is gone;
+        // a looping model is instead bounded by Esc, the goal driver, or the
+        // user's own config).
+        if opts.max_steps > 0 && steps >= opts.max_steps {
             ui.on(Ev::Note(format!(
-                "step limit reached ({MAX_STEPS}); stopping this turn"
+                "step limit reached ({}); stopping this turn",
+                opts.max_steps
             )));
             break;
         }
 
-        pre_step(msgs, ui);
+        // agent/pre-step: keep the request it is about to send inside the
+        // context window. This is token based (see compact.rs), not the old
+        // message-count heuristic.
+        crate::compact::maybe_compact(cfg, &opts.compact, msgs, opts.window, &defs, ui);
+
+        // additionalContexts: ambient state is refreshed per request and is
+        // rate-limited like DSH's `dsh-time-context`.
+        if opts.context_time {
+            crate::context::inject_time(
+                msgs,
+                opts.context_refresh_secs,
+                opts.turn,
+                steps + 1,
+            );
+        }
 
         steps += 1;
         ui.on(Ev::StepStart(steps));
 
-        let snapshot = J::Arr(msgs.clone());
+        let snapshot = serialize_msgs(msgs);
         let out = match stream_once(cfg, &snapshot, &defs, ui) {
             Ok(o) => {
                 crate::usage::record_opt(o.usage.as_ref());
                 o
             }
             Err((partial, was_cancelled)) => {
+                // DSH's `context-overflow` trigger: a provider-confirmed
+                // overflow bypasses the pressure threshold and forces one
+                // compaction, then retries the same request once.
+                if !was_cancelled && is_context_overflow(&partial.finish) && opts.compact.enabled {
+                    ui.on(Ev::Note(
+                        "context overflow reported by the provider; forcing compaction".into(),
+                    ));
+                    let mut forced = opts.compact.clone();
+                    forced.threshold_tokens = 0;
+                    if crate::compact::compact(cfg, &forced, msgs, opts.window, &defs, ui).is_ok() {
+                        steps = steps.saturating_sub(1);
+                        continue;
+                    }
+                }
                 let text = partial.text.trim().to_string();
                 if !text.is_empty() {
                     ui.on(Ev::Assistant(text.clone()));
                     msgs.push(msg("assistant", &text));
                 }
+                report.cancelled = was_cancelled;
+                report.failed = !was_cancelled;
                 if !was_cancelled {
                     ui.on(Ev::Note(format!("request failed: {}", partial.finish)));
                 }
@@ -327,6 +435,7 @@ pub fn run_turn(
 
         let text = out.text.trim().to_string();
         if !text.is_empty() {
+            report.text = text.clone();
             ui.on(Ev::Assistant(text.clone()));
         }
 
@@ -383,6 +492,21 @@ pub fn run_turn(
                 }
             }
         }
+        // Identical-call detection (DSH thresholds 3/5/8; the first two are
+        // enough on a 512 MB device).
+        if let Some(first) = calls.first() {
+            let sig = format!("{}|{}", first.name, first.raw_args);
+            if sig == repeat_sig {
+                repeat_count += 1;
+            } else {
+                repeat_sig = sig;
+                repeat_count = 1;
+            }
+            if repeat_count == 3 || repeat_count == 5 {
+                contexts.push(repeat_reminder(&first.name, &first.raw_args, repeat_count));
+            }
+        }
+
         for c in contexts {
             ui.on(Ev::Context(c.clone()));
             msgs.push(msg("user", &c));
@@ -391,20 +515,10 @@ pub fn run_turn(
         ui.on(Ev::StepEnd(steps));
     }
 
+    // The ambient time message is not conversation: drop it so a restored
+    // session starts with the real transcript.
+    crate::context::strip_time(msgs);
+    report.steps = steps;
     ui.on(Ev::TurnEnd { steps });
-}
-
-/// A UI that ignores everything: used by background jobs and `--once`-style
-/// callers that have nothing to draw.
-struct NullUi;
-impl Ui for NullUi {
-    fn on(&mut self, _ev: Ev) {}
-    fn pump(&mut self) -> Action {
-        Action::Continue
-    }
-}
-
-pub fn run_prompt(cfg: &Cfg, msgs: &mut Vec<J>, reg: &[ToolDef], input: &str) {
-    let mut ui = NullUi;
-    run_turn(cfg, msgs, reg, input, &mut ui);
+    report
 }

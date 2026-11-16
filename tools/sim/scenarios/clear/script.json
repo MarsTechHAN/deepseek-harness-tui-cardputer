@@ -1,0 +1,3 @@
+{"responses":[
+ {"reasoning":"The user says hello. The reasoning text must disappear when /clear resets the screen.","reasoning_chunk_chars":8,"content":"Hello from the mock API.","finish_reason":"stop"}
+]}

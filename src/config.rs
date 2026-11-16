@@ -300,6 +300,7 @@ pub fn home() -> PathBuf {
     PathBuf::from(h).join(".dst")
 }
 
+#[allow(dead_code)] // kept for config paths that are expanded on demand
 pub fn expand(path: &str) -> PathBuf {
     let p = path.trim();
     if let Some(rest) = p.strip_prefix("~/") {
@@ -457,6 +458,30 @@ pub struct Config {
     pub language: String,
     pub disabled_tools: Vec<String>,
     pub tool_config: Vec<(String, Y)>,
+    /// Steps (model requests) allowed in one turn. 0 = no limit.
+    pub max_steps: u32,
+    /// Continuation rounds a goal may run. 0 = no limit.
+    pub goal_max_rounds: u32,
+    /// Steps allowed in one goal round. 0 = no limit.
+    pub goal_max_steps: u32,
+    /// Ask the model to judge goal completion after each round.
+    pub goal_judge: bool,
+    /// Automatic context compaction.
+    pub compact_enabled: bool,
+    /// Compact once the estimated context reaches this many tokens.
+    pub compact_threshold: u64,
+    /// Compaction reserves the trailing messages (aligned to a user turn).
+    pub compact_keep: usize,
+    /// Model used for summarisation; empty = the session model.
+    pub compact_model: String,
+    /// Output budget of the summarisation call.
+    pub compact_max_tokens: u32,
+    /// Executor deadline for tools that do not declare their own. 0 = built-in.
+    pub tool_timeout_ms: u64,
+    /// Inject the current date/time into the step context.
+    pub context_time: bool,
+    /// Minimum seconds between two injected clock readings (0 = every step).
+    pub context_refresh_secs: u64,
     /// True once a usable API key has been provided.
     pub configured: bool,
 }
@@ -475,6 +500,18 @@ impl Default for Config {
             language: "en".into(),
             disabled_tools: Vec::new(),
             tool_config: Vec::new(),
+            max_steps: 0,
+            goal_max_rounds: 256,
+            goal_max_steps: 0,
+            goal_judge: true,
+            compact_enabled: true,
+            compact_threshold: 512_000,
+            compact_keep: 2,
+            compact_model: String::new(),
+            compact_max_tokens: 8_192,
+            tool_timeout_ms: crate::tool::DEFAULT_TIMEOUT_MS,
+            context_time: true,
+            context_refresh_secs: crate::context::DEFAULT_REFRESH_SECS,
             configured: false,
         }
     }
@@ -558,6 +595,52 @@ impl Config {
                 self.tts_voice = v.to_string();
             }
         }
+        if let Some(agent) = doc.get("agent") {
+            if let Some(v) = agent.get("max_steps").and_then(|v| v.as_f64()) {
+                self.max_steps = v.max(0.0) as u32;
+            }
+        }
+        if let Some(goal) = doc.get("goal") {
+            if let Some(v) = goal.get("max_rounds").and_then(|v| v.as_f64()) {
+                self.goal_max_rounds = v.max(0.0) as u32;
+            }
+            if let Some(v) = goal.get("max_steps").and_then(|v| v.as_f64()) {
+                self.goal_max_steps = v.max(0.0) as u32;
+            }
+            if let Some(v) = goal.get("judge").and_then(|v| v.as_bool()) {
+                self.goal_judge = v;
+            }
+        }
+        if let Some(c) = doc.get("compaction") {
+            if let Some(v) = c.get("enabled").and_then(|v| v.as_bool()) {
+                self.compact_enabled = v;
+            }
+            if let Some(v) = c.get("threshold_tokens").and_then(|v| v.as_f64()) {
+                self.compact_threshold = v.max(0.0) as u64;
+            }
+            if let Some(v) = c.get("keep_messages").and_then(|v| v.as_f64()) {
+                self.compact_keep = v.max(0.0) as usize;
+            }
+            if let Some(v) = c.get("model").and_then(|v| v.as_str()) {
+                self.compact_model = v.to_string();
+            }
+            if let Some(v) = c.get("max_tokens").and_then(|v| v.as_f64()) {
+                self.compact_max_tokens = v.max(0.0) as u32;
+            }
+        }
+        if let Some(tools) = doc.get("tools") {
+            if let Some(v) = tools.get("call_timeout_ms").and_then(|v| v.as_f64()) {
+                self.tool_timeout_ms = v.max(0.0) as u64;
+            }
+        }
+        if let Some(ctx) = doc.get("context") {
+            if let Some(v) = ctx.get("time").and_then(|v| v.as_bool()) {
+                self.context_time = v;
+            }
+            if let Some(v) = ctx.get("time_refresh_secs").and_then(|v| v.as_f64()) {
+                self.context_refresh_secs = v.max(0.0) as u64;
+            }
+        }
         // DSH patch dialect: insert rows of { id, name, config, disabled }.
         if let Some(rows) = doc.get("insert").and_then(|v| v.as_seq()) {
             for row in rows {
@@ -598,6 +681,25 @@ impl Config {
         s.push_str(&format!("  queued_default: {}\n", self.queued_default));
         s.push_str(&format!("  auto_send_voice: {}\n", self.auto_send_voice));
         s.push_str(&format!("  language: {}\n", yaml_quote(&self.language)));
+        s.push_str("agent:\n");
+        s.push_str(&format!("  max_steps: {}\n", self.max_steps));
+        s.push_str("goal:\n");
+        s.push_str(&format!("  max_rounds: {}\n", self.goal_max_rounds));
+        s.push_str(&format!("  max_steps: {}\n", self.goal_max_steps));
+        s.push_str(&format!("  judge: {}\n", self.goal_judge));
+        s.push_str("compaction:\n");
+        s.push_str(&format!("  enabled: {}\n", self.compact_enabled));
+        s.push_str(&format!("  threshold_tokens: {}\n", self.compact_threshold));
+        s.push_str(&format!("  keep_messages: {}\n", self.compact_keep));
+        s.push_str(&format!("  max_tokens: {}\n", self.compact_max_tokens));
+        if !self.compact_model.is_empty() {
+            s.push_str(&format!("  model: {}\n", yaml_quote(&self.compact_model)));
+        }
+        s.push_str("tools:\n");
+        s.push_str(&format!("  call_timeout_ms: {}\n", self.tool_timeout_ms));
+        s.push_str("context:\n");
+        s.push_str(&format!("  time: {}\n", self.context_time));
+        s.push_str(&format!("  time_refresh_secs: {}\n", self.context_refresh_secs));
         if !self.disabled_tools.is_empty() || !self.tool_config.is_empty() {
             s.push_str("insert:\n");
             for t in &self.disabled_tools {
@@ -642,6 +744,26 @@ impl Config {
             format!(
                 "queued     {}   auto_send_voice {}   language {}",
                 self.queued_default, self.auto_send_voice, self.language
+            ),
+            format!(
+                "max_steps  {}",
+                if self.max_steps == 0 { "unlimited".to_string() } else { self.max_steps.to_string() }
+            ),
+            format!(
+                "goal       rounds {}   steps/round {}   judge {}",
+                if self.goal_max_rounds == 0 { "unlimited".to_string() } else { self.goal_max_rounds.to_string() },
+                if self.goal_max_steps == 0 { "unlimited".to_string() } else { self.goal_max_steps.to_string() },
+                self.goal_judge
+            ),
+            format!(
+                "compact    {}   threshold {} tokens   keep {}",
+                if self.compact_enabled { "on" } else { "off" },
+                crate::compact::human_tokens(self.compact_threshold),
+                self.compact_keep
+            ),
+            format!(
+                "tool call  timeout {}ms   time-context {}",
+                self.tool_timeout_ms, self.context_time
             ),
             format!("home       {}", home().display()),
             format!("config     {}", config_path().display()),

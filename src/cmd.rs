@@ -51,6 +51,16 @@ pub const COMMANDS: &[Command] = &[
         input_hint: None,
     },
     Command {
+        name: "compact",
+        description: "summarise older history now (same method as automatic compaction)",
+        input_hint: None,
+    },
+    Command {
+        name: "goal",
+        description: "show or manage the session goal (long-running objective)",
+        input_hint: Some("[<objective>|edit <objective>|pause|resume|clear]"),
+    },
+    Command {
         name: "resume",
         description: "list or resume a previous session",
         input_hint: Some("[n]"),
@@ -115,6 +125,8 @@ pub struct Outcome {
     pub config_wizard: bool,
     /// Resume flow: `Some(None)` lists sessions, `Some(Some(n))` picks one.
     pub resume: Option<Option<usize>>,
+    /// Run the manual compaction flow (main owns the transcript).
+    pub compact: bool,
 }
 
 impl Outcome {
@@ -126,6 +138,7 @@ impl Outcome {
             login: false,
             config_wizard: false,
             resume: None,
+            compact: false,
         }
     }
     fn many(lines: Vec<(String, u8)>) -> Outcome {
@@ -136,6 +149,7 @@ impl Outcome {
             login: false,
             config_wizard: false,
             resume: None,
+            compact: false,
         }
     }
 }
@@ -316,6 +330,64 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 }
             }
         }
+        "compact" => Outcome {
+            lines: vec![("compacting older history...".to_string(), KIND_DIM)],
+            quit: false,
+            clear: false,
+            login: false,
+            config_wizard: false,
+            resume: None,
+            compact: true,
+        },
+        "goal" => {
+            let lower = arg.to_ascii_lowercase();
+            let result = if arg.is_empty() {
+                Ok(crate::goal::status_lines())
+            } else if lower == "clear" {
+                match crate::goal::clear() {
+                    Ok(()) => Ok(vec!["Goal cleared.".to_string()]),
+                    Err(e) => Err(e),
+                }
+            } else if lower == "pause" {
+                let g = crate::goal::load().ok_or("no goal is currently set".to_string());
+                g.and_then(|g| crate::goal::pause(&g.id, g.revision))
+                    .map(|g| {
+                        let mut l = vec!["Goal paused".to_string()];
+                        l.extend(crate::goal::status_lines().into_iter().skip(1));
+                        let _ = g;
+                        l
+                    })
+            } else if lower == "resume" {
+                let g = crate::goal::load().ok_or("no goal is currently set".to_string());
+                g.and_then(|g| crate::goal::resume(&g.id, g.revision))
+                    .map(|_| {
+                        let mut l = vec!["Goal resumed".to_string()];
+                        l.extend(crate::goal::status_lines().into_iter().skip(1));
+                        l
+                    })
+            } else if lower == "edit" {
+                Err("Goal editing requires a replacement objective.\nUsage: /goal [<objective>|clear|edit <objective>|pause|resume]".to_string())
+            } else if lower.starts_with("edit ") || lower.starts_with("edit\t") {
+                let objective = arg[4..].trim().to_string();
+                let g = crate::goal::load().ok_or("no goal is currently set".to_string());
+                g.and_then(|g| crate::goal::edit(&g.id, g.revision, Some(&objective), None))
+                    .map(|_| {
+                        let mut l = vec!["Goal updated".to_string()];
+                        l.extend(crate::goal::status_lines().into_iter().skip(1));
+                        l
+                    })
+            } else {
+                crate::goal::create(arg, None).map(|_| {
+                    let mut l = vec!["Goal created".to_string()];
+                    l.extend(crate::goal::status_lines().into_iter().skip(1));
+                    l
+                })
+            };
+            match result {
+                Ok(lines) => Outcome::many(lines.into_iter().map(|l| (l, KIND_NORMAL)).collect()),
+                Err(e) => Outcome::many(vec![(e, KIND_ERR)]),
+            }
+        }
         "clear" => Outcome {
             lines: Vec::new(),
             quit: false,
@@ -323,6 +395,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             login: false,
             config_wizard: false,
             resume: None,
+            compact: false,
         },
         "quit" | "exit" | "q" => Outcome {
             lines: Vec::new(),
@@ -331,6 +404,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             login: false,
             config_wizard: false,
             resume: None,
+            compact: false,
         },
         "" => usage("/"),
         other => Outcome::many(vec![

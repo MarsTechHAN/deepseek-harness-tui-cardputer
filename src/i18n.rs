@@ -30,6 +30,7 @@ pub fn lang() -> Lang {
     LANG.read().map(|g| *g).unwrap_or(Lang::En)
 }
 
+#[allow(dead_code)] // exposed for callers that persist the language code
 pub fn code() -> &'static str {
     match lang() {
         Lang::En => "en",
@@ -104,6 +105,8 @@ const EN: &[(&str, &str)] = &[
     ("cmd_resume", "list or resume a previous session"),
     ("cmd_config", "interactive configuration menu"),
     ("cmd_clear", "clear the transcript"),
+    ("cmd_compact", "summarise older history now"),
+    ("cmd_goal", "show or manage the session goal"),
     ("cmd_quit", "exit dst"),
     ("menu_title", "dst configuration"),
     ("menu_model", "Model"),
@@ -114,6 +117,9 @@ const EN: &[(&str, &str)] = &[
     ("menu_autosend", "Auto-send voice"),
     ("menu_queue", "Queue while running"),
     ("menu_language", "Language"),
+    ("menu_steps", "Max steps/turn"),
+    ("menu_compact", "Auto compact"),
+    ("menu_goalrounds", "Goal rounds"),
     ("menu_save", "Save & exit"),
     ("menu_hint", "\u{2191}\u{2193} move \u{b7} Enter change \u{b7} Esc exit"),
     ("menu_hint_gated", "third-party API: search/fetch/ocr/voice unavailable \u{b7} \u{2191}\u{2193} Enter Esc"),
@@ -192,6 +198,8 @@ const ZH: &[(&str, &str)] = &[
     ("cmd_resume", "列出或恢复历史会话"),
     ("cmd_config", "打开配置菜单"),
     ("cmd_clear", "清空对话记录"),
+    ("cmd_compact", "立即压缩较早的上下文"),
+    ("cmd_goal", "查看/管理目标（长任务）"),
     ("cmd_quit", "退出 dst"),
     ("menu_title", "dst 配置"),
     ("menu_model", "模型"),
@@ -202,6 +210,9 @@ const ZH: &[(&str, &str)] = &[
     ("menu_autosend", "语音自动发送"),
     ("menu_queue", "运行时排队"),
     ("menu_language", "语言"),
+    ("menu_steps", "每轮最大步数"),
+    ("menu_compact", "自动压缩"),
+    ("menu_goalrounds", "目标轮数"),
     ("menu_save", "保存并退出"),
     ("menu_hint", "\u{2191}\u{2193} 移动 \u{b7} Enter 修改 \u{b7} Esc 退出"),
     ("menu_hint_gated", "第三方 API：search/fetch/ocr/语音不可用 \u{b7} \u{2191}\u{2193} Enter Esc"),

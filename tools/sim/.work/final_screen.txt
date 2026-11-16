@@ -1,0 +1,12 @@
+ dst
+  ↳ .work/
+▸ thinking 3.1s | 82 chars (collapsed)
+listdir('.') returned
+- mockapi.py
+- screensim.py
+- rundemo.py
+- README.md
+
+中文测试:宽字符单元格渲染正常.
+
+>                                              ○ 0.3%

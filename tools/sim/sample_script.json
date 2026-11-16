@@ -1,0 +1,64 @@
+{
+  "description": "Mock API responses for sample_scenario.json. Request 1 = hello turn (reasoning + content), request 2 = tool call turn (list_dir), request 3 = follow-up reply after the tool result. Reasoning is streamed as delta.reasoning_content, content as delta.content, and tool arguments are split across delta.tool_calls chunks, exactly like the real streaming API.",
+  "auto_tool": true,
+  "responses": [
+    {
+      "initial_delay_ms": 150,
+      "reasoning": "The user says hello. This is the dst TUI on a 53x12 panel, so answer briefly. The reply should show that streaming thinking and content both arrived from the mock API.",
+      "reasoning_chunk_chars": 11,
+      "reasoning_delay_ms": 120,
+      "content": "Hi! I'm dst, running on the Cardputer panel.\n\n- reply streamed from mock_api.py\n- thinking was shown live, then collapsed\n- screen is 53 x 12 cells\n\nAsk me to list files to see a tool call.",
+      "content_chunk_chars": 8,
+      "content_delay_ms": 80,
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 214,
+        "completion_tokens": 71,
+        "prompt_cache_hit_tokens": 180,
+        "prompt_cache_miss_tokens": 34,
+        "total_tokens": 285
+      }
+    },
+    {
+      "initial_delay_ms": 120,
+      "reasoning": "I should list the working directory to demonstrate a tool round trip on the device.",
+      "reasoning_chunk_chars": 12,
+      "reasoning_delay_ms": 80,
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_mock_list_1",
+          "name": "list_dir",
+          "arguments": {"path": "."},
+          "tool_chunk_chars": 6,
+          "tool_delay_ms": 45
+        }
+      ],
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 262,
+        "completion_tokens": 31,
+        "prompt_cache_hit_tokens": 224,
+        "prompt_cache_miss_tokens": 38,
+        "total_tokens": 293
+      }
+    },
+    {
+      "initial_delay_ms": 2500,
+      "reasoning": "The list_dir result is back. Summarise it in a few short lines that fit the panel.",
+      "reasoning_chunk_chars": 12,
+      "reasoning_delay_ms": 60,
+      "content": "### list_dir('.') returned\n- mock_api.py\n- screen_sim.py\n- run_demo.py\n- README.md\n\n中文测试：宽字符单元格渲染正常。",
+      "content_chunk_chars": 6,
+      "content_delay_ms": 90,
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 348,
+        "completion_tokens": 88,
+        "prompt_cache_hit_tokens": 300,
+        "prompt_cache_miss_tokens": 48,
+        "total_tokens": 436
+      }
+    }
+  ]
+}

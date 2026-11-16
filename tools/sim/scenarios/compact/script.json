@@ -1,0 +1,19 @@
+{
+ "responses": [
+  {
+   "reasoning": "first",
+   "content": "First answer. The display is a 320x170 ST7789 panel driven by panel-mipi-dbi-spi, and fbterm renders a 53 column by 12 row grid on top of it. Memory is 512 MB, so the TUI keeps its transcript bounded and serialises messages instead of deep-cloning the whole JSON tree on every request. Tool calls appear before execution: the harness emits tool/call first, runs the body, then emits tool/result, and the transcript shows both lines with a duration. Compaction is token based and follows the DeepSeek Harness algorithm.",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "compacting",
+   "content": "## Primary Request and Intent\n- Test compaction.\n\n## Current Work\n- First turn answered.\n\n## Next Step\n- Continue.",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "second",
+   "content": "Second answer after the checkpoint.",
+   "finish_reason": "stop"
+  }
+ ]
+}

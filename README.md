@@ -25,19 +25,27 @@ repository.
 **Terminal UI**
 - Markdown-aware rendering (headings, bullets, numbered lists, dimmed code
   blocks), word-aware wrapping at the real 53-cell width, UTF-8 input.
-- Live "thinking" indicator that collapses to one dim line; one-row tool calls
-  with durations.
+- Live **reasoning panel**: the model's thinking text streams into the space
+  above the prompt and collapses to one dim line when the answer starts.
+- Tool calls are shown when they *start* (before execution), then settle into a
+  one-row card with duration and a one-line result preview (`tool/call` before
+  `tool/result`, as in DSH).
 - Full-screen **artifacts**: the model can take over the display with a panel it
   composes (tables, code, checklists); `Esc` dismisses, `PgUp`/`PgDn` scroll.
-- Runtime control: `Esc` aborts the running turn; typing while busy is
-  **queued** by default and **Shift+Enter** interrupts and sends immediately;
-  push-to-talk (`Tab`) during a turn is queued too.
+- Runtime control: `Esc` aborts the running turn (including a `speak` clip that
+  is still playing); typing while busy is **queued** by default and
+  **Shift+Enter** interrupts and sends immediately; push-to-talk (`Tab`) during
+  a turn is queued too. A queued `/command` is dispatched as a command when the
+  turn ends, never sent to the model.
 
 **Human commands** (execute locally, never sent to the model)
 - `/help`, `/model [name]` (lists models from `/v1/models`), `/effort
   [auto|low|high|max]`, `/config` (interactive wizard: options everywhere, text
   input only for the API key and a custom base URL), `/login` (full-screen QR code for a
-  phone), `/usage`, `/key`, `/resume [n]`, `/clear`, `/quit`.
+  phone), `/usage`, `/key`, `/resume [n]`, `/compact`, `/goal`, `/clear`, `/quit`.
+- `/goal <objective>` starts a long-running goal; `/goal` shows it, and
+  `/goal edit|pause|resume|clear` manages it. `/compact` summarises older
+  history immediately with the same method automatic compaction uses.
 
 **Usage and context**
 - `/usage` reports cumulative totals in Claude Code's style: cache hit rate,
@@ -45,6 +53,48 @@ repository.
   `~/.dst/usage.json`.
 - A small ring (`○ ◔ ◑ ◕ ●` + percentage) on the status line shows how much of the
   model's context window the last request used (denominator read from `/models`).
+
+**Goals** (`src/goal.rs`, ported from DSH `dsh-goal` + `dsh-goal-round-driver`)
+- A goal is a persisted objective that keeps the session working across
+  automatic continuation rounds. The model judges progress itself through
+  `get_goal` / `create_goal` / `update_goal`: it marks the goal `complete` only
+  when the objective is achieved, and `blocked` only when one concrete
+  condition has persisted for at least 3 rounds.
+- Between rounds the driver injects DSH's `<goal_round>` prompt verbatim; the
+  status line shows `◎ goal <round>/<cap> <objective>`. `Esc` disarms the goal,
+  `/goal resume` re-arms it. After a restart an active goal is disarmed until
+  the user resumes it (same activation rule as DSH).
+- Round cap: `goal.max_rounds` (DSH default 256; `0` = unlimited). Per-round step cap:
+  `goal.max_steps` (`0` = unlimited). Stopping a goal is always possible with
+  `/goal pause` or `/goal clear`.
+
+**Context management** (`src/compact.rs`, ported from DSH `dsh-compaction-basic`)
+- Automatic compaction runs at `agent/pre-step`, i.e. before the next request is
+  built, once request pressure reaches the budget:
+  `threshold = min(window × 0.8, window − reserved_output − 64K headroom, compact_threshold)`
+  (default absolute cap **512K tokens**, `compaction.threshold_tokens`).
+- The algorithm is DSH's: prune oversized old tool-result middles first
+  (model-free), keep the newest tail worth 16% of the message budget on a
+  user-message boundary, then make **one** streamed summary call that replays
+  the conversation's own system prompt and shadowed messages and appends DSH's
+  compaction instruction as the final user message (prefix-cache friendly).
+  The result is framed as `This is an automatically generated checkpoint…` +
+  `<compacted-summary>…</compacted-summary>` in one user message; a summary
+  that is not smaller than the region it replaces is rejected.
+- A provider-reported context overflow bypasses the threshold and forces one
+  compaction, then retries the request once.
+- Manual `/compact` skips the threshold and keeps no verbatim tail.
+- The ring in the corner shows context pressure, and `/usage` reports usage.
+
+**In-progress context injection** (`src/context.rs`, ported from DSH `dsh-time-context`)
+- Before each request the harness may append an attributed clock reading
+  (DSH verbatim format: `Time sampled while preparing turn N, step M: …`,
+  browser/process time zone, elapsed time). Rate-limited by
+  `context.time_refresh_secs` (default 600 s; `0` = every step).
+- Repeated identical tool calls inject DSH's `repeat-tool-reminder` text after
+  the third and fifth repetition, so the model sees that it is looping.
+- Tool results can attach `additionalContexts`; they are injected as a
+  `user/message` after the batch's tool results, exactly as DSH orders it.
 
 **Internationalisation**
 - UI language via `language: en|zh` in the config (default `en`), switchable from
@@ -87,7 +137,17 @@ repository.
   TTS is only used when the user explicitly asks to be told aloud.
 
 **Tools**: `bash`, `read_file`, `write_file`, `list_dir`, `search`, `fetch`,
-`ocr`, `speak`, `skill`, `artifact`, `cron`, `watch`, plus any MCP tools.
+`ocr`, `speak`, `skill`, `artifact`, `cron`, `watch`, `get_goal`, `create_goal`,
+`update_goal`, plus any MCP tools.
+
+**Timeouts and limits**
+- Every tool declares an executor deadline (`ToolDef.timeout_ms`; 60 s default
+  for tools that omit one). A call that overruns settles as
+  `tool timed out after Ns` without freezing the prompt; `Esc` still works
+  while a tool runs.
+- There is **no step limit by default** (a turn may use as many model steps as
+  it needs, as in DSH). `agent.max_steps` opts into a cap; `0` = unlimited.
+  Goal rounds use `goal.max_steps` the same way.
 
 ## Home layout (`~/.dst`)
 
@@ -125,6 +185,23 @@ tui:
   queued_default: true
   auto_send_voice: true
   language: en          # en | zh
+agent:
+  max_steps: 0          # 0 = unlimited (default)
+goal:
+  max_rounds: 256       # DSH default; 0 = unlimited
+  max_steps: 0          # steps per goal round; 0 = unlimited
+  judge: true           # model self-judges via update_goal complete/blocked
+compaction:
+  enabled: true
+  threshold_tokens: 512000   # absolute pressure cap; window ratio/headroom still clamp it
+  keep_messages: 2           # minimum trailing messages kept verbatim (token tail is authoritative)
+  max_tokens: 8192           # output budget of the summary call
+  # model: deepseek-flash    # optional separate summariser model
+tools:
+  call_timeout_ms: 60000
+context:
+  time: true
+  time_refresh_secs: 600     # 0 = inject the clock on every step
 
 # DSH-style patch rows: disable a tool or pass it config
 insert:
@@ -159,9 +236,33 @@ Release profile: `opt-level="z"`, LTO, `panic=abort`, `strip`.
 Non-interactive entry points:
 
 ```sh
-dst --once "<prompt>"            # one turn, prints events
-dst --voice-selftest [seconds]   # record, report RMS and transcript
+dst --once "<prompt>"                    # one turn, prints events
+dst --tools                              # effective tool set + capability decision
+dst --call <name> '<json args>'          # run one tool exactly as the model would
+dst --voice-selftest [seconds]           # record, report RMS and transcript
 ```
+
+## Testing without the device (`tools/sim`)
+
+The TUI is a pure ANSI terminal program, so it can run under a pty on a
+development machine. `tools/sim` contains a screen simulator and a scripted
+OpenAI-compatible mock server; no network or API key is involved.
+
+```sh
+cargo build                       # host binary
+
+cd tools/sim
+python3 run_demo.py               # splash / thinking / tool call / reply + PNG contact sheet
+python3 run_scenarios.py          # /clear, /goal round driver, automatic compaction checks
+```
+
+`run_demo.py` writes snapshots and a contact sheet under `screenshots/`;
+`run_scenarios.py` asserts on captured screens *and* on the request log (e.g.
+that a `<goal_round>` prompt was sent, or that a checkpoint message reached the
+next request). Both scripts bind the mock API to 127.0.0.1 only.
+
+Unit tests (host, no network): `cargo test` — harness/tool pipeline, compaction
+budgets, goal state machine, context formatting, config round-trip.
 
 HTTPS is enforced: non-TLS endpoints are refused.
 
@@ -170,18 +271,40 @@ HTTPS is enforced: non-TLS endpoints are refused.
 ```
 src/main.rs      TUI: framebuffer terminal, input, panels, wizard, resume
 src/harness.rs   turn/step driver (DSH agent-loop port)
-src/tool.rs      tool contracts + execution pipeline
+src/tool.rs      tool contracts + execution pipeline (timeouts, call/result)
 src/tools.rs     built-in tool registry
+src/compact.rs   automatic/manual context compaction (DSH compaction-basic port)
+src/context.rs   in-progress context injection (clock, repeat-call reminder)
+src/goal.rs      goals: state machine, tools, round driver prompt (DSH goal port)
 src/api.rs       streaming chat client over a curl subprocess
 src/config.rs    ~/.dst home, DSH-dialect YAML config
-src/cmd.rs       human commands (/model, /config, /resume, ...)
+src/cmd.rs       human commands (/model, /compact, /goal, /resume, ...)
 src/login.rs     QR login HTTP server + QR rendering
 src/skills.rs    skill catalog and loader
 src/mcp.rs       MCP stdio client
 src/jobs.rs      cron + file-watch scheduler
 src/voice.rs     TTS/ASR, resampling, WAV framing, recorder
 src/json.rs      minimal JSON
+tools/sim/       pty screen simulator + scripted mock API (host testing)
+tools/deploy/    scp/build/install and systemd-ordering fix for the device
 ```
+
+## Deploying to the device
+
+The device boots `cpzterm.service`, which runs `fbterm` + `dst` on the panel.
+`tools/deploy/deploy.sh` copies `src/`, builds on the device with
+`CARGO_BUILD_JOBS=1` (512 MB is not enough for parallel LTO), installs
+`/usr/local/bin/dst`, and restarts the service:
+
+```sh
+tools/deploy/deploy.sh hanxiao@192.168.88.234
+```
+
+`tools/deploy/fix-cpzterm-order.sh` repairs an early-boot ordering cycle: the
+base unit must not declare `Before=sysinit.target` (that combined with the
+keymap unit deadlocks boot with `Resource deadlock avoided`). Run it on the
+device once; it removes the ordering edge, reloads systemd and verifies with
+`systemd-analyze verify`.
 
 ## Notes
 

@@ -2,6 +2,7 @@
 //! Tone-mapped to `█ ▓ ░` so it reads on an 8-colour framebuffer terminal;
 //! cropped to keep the spout base and the whole belly.
 
+#[allow(dead_code)] // documented sprite geometry; frames are cropped in code
 pub const SPRITE_ROWS: usize = 18;
 pub const ART_WIDTH: usize = 40;
 pub const ART_ROWS: usize = 9;
