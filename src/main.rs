@@ -17,6 +17,7 @@ mod checkpoint;
 mod cmd;
 mod compact;
 mod config;
+mod dsh_login;
 mod context;
 mod goal;
 mod harness;
@@ -1741,6 +1742,7 @@ fn api_cfg(c: &config::Config) -> Cfg {
     Cfg {
         base: c.base.clone(),
         key: c.api_key.clone(),
+        token: c.dsh_token.clone(),
         model: c.model.clone(),
         max_tokens: c.max_tokens,
         effort: c.effort.clone(),
@@ -2364,7 +2366,6 @@ fn single_instance() -> bool {
 
 
 type ConfigRc = std::rc::Rc<std::cell::RefCell<config::Config>>;
-type LoginRx = std::rc::Rc<std::cell::RefCell<Option<std::sync::mpsc::Receiver<login::Submitted>>>>;
 
 /// Start the QR login server and render its code in the transcript.
 /// The QR is 13 rows tall; inside tmux the status bar costs one row, so hide it
@@ -2399,83 +2400,340 @@ fn close_qr(scr: &mut Scr) {
     scr.draw();
 }
 
-fn start_login(scr: &mut Scr, login_rx: &LoginRx) {
-    match login::start(login::DEFAULT_PORT) {
-        Ok((url, rx)) => {
-            let (qr, note) = login::qr_lines(&url);
-            scr.push(&i18n::tf("login_url", &[&url]), K_NORM);
-            if qr.is_empty() {
-                scr.push(&i18n::tf("login_no_qr", &[&note]), K_DIM);
-                scr.push(i18n::t("login_phone"), K_DIM);
-            } else {
-                let (r, c) = term_size();
-                scr.rows = r;
-                scr.cols = c;
-                // Two columns: QR on the left (painted as real pixels), guide
-                // text on the right, which is also what keeps the code crisp.
-                const QR_PX: usize = 168;
-                let left_cols = QR_PX / 6 + 2;
-                let mut guide: Vec<String> = Vec::new();
-                guide.push(format!("扫码登录 DeepSeek"));
-                guide.push(String::new());
-                guide.push(format!("地址"));
-                let url_txt = url.clone();
-                let width = c.saturating_sub(left_cols);
-                let mut chunk = String::new();
-                for ch in url_txt.chars() {
-                    if chunk.chars().count() + 1 > width {
-                        guide.push(chunk.clone());
-                        chunk.clear();
-                    }
-                    chunk.push(ch);
-                }
-                if !chunk.is_empty() {
-                    guide.push(chunk);
-                }
-                guide.push(String::new());
-                guide.push("· 手机扫码".to_string());
-                guide.push("· 打开页面并粘贴 key".to_string());
-                guide.push("· 本机自动完成".to_string());
-                guide.push(String::new());
-                guide.push("Esc 取消".to_string());
-                let mut lines: Vec<String> = Vec::new();
-                for g in guide.iter().take(scr.rows) {
-                    lines.push(format!("{}{}", " ".repeat(left_cols), g));
-                }
-                scr.qr = Some(lines);
-                scr.draw();
-                if login::draw_qr_fb(&url, Some((0, 0, QR_PX, 170))).is_ok() {
-                    scr.qr_blit = true;
-                } else {
-                    // Fallback: terminal-drawn QR across the full width.
-                    let widest = qr.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-                    let pad = c.saturating_sub(widest) / 2;
-                    scr.qr = Some(
-                        qr.iter()
-                            .map(|l| format!("{}{}", " ".repeat(pad), l))
-                            .collect(),
-                    );
-                    scr.draw();
-                }
+enum LoginResult {
+    Token(String),
+    Key(login::Submitted),
+}
+
+/// Draw a QR login page (page URL) into the panel; returns whether the QR was
+/// painted straight into the framebuffer.
+fn show_page_qr(scr: &mut Scr, url: &str) -> bool {
+    let (qr, note) = login::qr_lines(url);
+    scr.push(&i18n::tf("login_url", &[url]), K_NORM);
+    scr.push(i18n::t("login_web_started"), K_DIM);
+    scr.push(i18n::t("login_web_choose"), K_DIM);
+    scr.push(i18n::t("login_phone"), K_DIM);
+    if qr.is_empty() {
+        scr.push(&i18n::tf("login_no_qr", &[&note]), K_DIM);
+        return false;
+    }
+    let (r, c) = term_size();
+    scr.rows = r;
+    scr.cols = c;
+    const QR_PX: usize = 164;
+    let left_cols = QR_PX / 6 + 2;
+    let width = c.saturating_sub(left_cols).max(6);
+    let mut guide: Vec<String> = Vec::new();
+    for key in ["login_web_started", "login_web_choose", "login_phone"] {
+        let text = i18n::t(key).to_string();
+        let mut chunk = String::new();
+        for ch in text.chars() {
+            if chunk.chars().count() + 1 > width {
+                guide.push(chunk.clone());
+                chunk.clear();
             }
-            *login_rx.borrow_mut() = Some(rx);
+            chunk.push(ch);
         }
-        Err(e) => scr.push(&format!("无法启动登录服务: {e}"), K_ERR),
+        if !chunk.is_empty() {
+            guide.push(chunk);
+        }
+    }
+    guide.push(String::new());
+    guide.push(i18n::t("artifact_back").to_string());
+    let lines: Vec<String> = guide
+        .iter()
+        .take(scr.rows)
+        .map(|g| format!("{}{}", " ".repeat(left_cols), g))
+        .collect();
+    scr.qr = Some(lines);
+    scr.draw();
+    if login::draw_qr_fb(url, Some((0, 0, QR_PX, 170))).is_ok() {
+        scr.qr_blit = true;
+        true
+    } else {
+        false
     }
 }
 
-fn apply_login(c: &mut config::Config, sub: login::Submitted) -> String {
-    c.api_key = sub.key;
-    if !sub.base.is_empty() {
-        c.base = sub.base;
+fn login_pick(scr: &mut Scr) -> Option<u8> {
+    let items = vec![
+        MenuItem { label: i18n::t("login_opt_wechat").into(), value: String::new() },
+        MenuItem { label: i18n::t("login_opt_web").into(), value: String::new() },
+        MenuItem { label: i18n::t("login_opt_type").into(), value: String::new() },
+    ];
+    let mut sel = 0usize;
+    loop {
+        scr.menu = Some(Menu {
+            title: i18n::t("login_menu_title").into(),
+            items: items.clone(),
+            sel,
+            hint: i18n::t("menu_hint").into(),
+            preview: None,
+        });
+        scr.draw();
+        let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
+        if k == 0x1b {
+            match scr.read_key_timeout() {
+                Some(b'[') => match scr.read_key_timeout() {
+                    Some(b'A') => sel = sel.saturating_sub(1),
+                    Some(b'B') => sel = (sel + 1).min(items.len() - 1),
+                    _ => {}
+                },
+                _ => { scr.menu = None; scr.draw(); return None; }
+            }
+            continue;
+        }
+        if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return None; }
+        if k == 0x0d || k == 0x0a {
+            scr.menu = None;
+            scr.draw();
+            return Some(sel as u8);
+        }
     }
-    if !sub.model.is_empty() {
-        c.model = sub.model;
+}
+
+fn push_wrapped(guide: &mut Vec<String>, text: &str, width: usize) {
+    let mut chunk = String::new();
+    for ch in text.chars() {
+        if chunk.chars().count() + 1 > width {
+            guide.push(chunk.clone());
+            chunk.clear();
+        }
+        chunk.push(ch);
     }
-    c.configured = true;
-    match c.save() {
-        Ok(()) => i18n::tf("login_done", &[&config::config_path().display().to_string()]),
-        Err(e) => format!("已收到 key，但保存失败: {e}"),
+    if !chunk.is_empty() {
+        guide.push(chunk);
+    }
+}
+
+fn login_wechat_device(scr: &mut Scr, port: u16) -> Result<String, String> {
+    let session = login::start(port)?;
+    let port = session.port;
+    login::start_wechat(&session.shared, port);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    let mut shown = false;
+    while std::time::Instant::now() < deadline {
+        let (qr_version, qr, err, token, message) = {
+            let st = session.shared.lock().unwrap();
+            (st.qr_version, st.qr.clone(), st.error.clone(), st.token.clone(), st.message.clone())
+        };
+        if let Some(e) = err {
+            close_qr(scr);
+            return Err(e);
+        }
+        if let Some(t) = token {
+            close_qr(scr);
+            return Ok(t);
+        }
+        if !shown && qr_version > 0 && !qr.is_empty() {
+            let matrix = crate::dsh_login::qr_matrix_from_jpeg(&qr);
+            let (r, c) = term_size();
+            scr.rows = r;
+            scr.cols = c;
+            // QR on the right (164px), a compact numbered guide on the left.
+            const QR_PX: usize = 164;
+            let text_cols = c.saturating_sub(QR_PX / 6 + 1).max(10);
+            let mut guide: Vec<String> = Vec::new();
+            push_wrapped(&mut guide, i18n::t("login_wechat_title"), text_cols);
+            guide.push("-".repeat(text_cols.min(23)));
+            push_wrapped(&mut guide, i18n::t("login_qr_step1"), text_cols);
+            push_wrapped(&mut guide, i18n::t("login_qr_step2"), text_cols);
+            push_wrapped(&mut guide, i18n::t("login_qr_step3"), text_cols);
+            guide.push(String::new());
+            let page_label = i18n::tf("login_wechat_page", &[""]).trim_end().to_string();
+            push_wrapped(&mut guide, &page_label, text_cols);
+            push_wrapped(&mut guide, session.url.trim_end_matches('/'), text_cols);
+            guide.push(String::new());
+            push_wrapped(&mut guide, i18n::t("artifact_back"), text_cols);
+            scr.qr = Some(guide);
+            scr.draw();
+            let blit = matrix
+                .as_ref()
+                .map(|m| login::draw_matrix_fb(m, Some((156, 0, 164, 170))).is_ok())
+                .unwrap_or(false);
+            scr.qr_blit = blit;
+            if !blit {
+                let mut lines = vec![i18n::t("login_wechat_title").to_string()];
+                lines.push("-".repeat(23));
+                lines.push(i18n::t("login_qr_step1").to_string());
+                lines.push(i18n::t("login_qr_step2").to_string());
+                lines.push(i18n::t("login_qr_step3").to_string());
+                lines.push(String::new());
+                let page_label = i18n::tf("login_wechat_page", &[""]).trim_end().to_string();
+                push_wrapped(&mut lines, &page_label, c);
+                push_wrapped(&mut lines, session.url.trim_end_matches('/'), c);
+                lines.push(String::new());
+                lines.push(i18n::t("artifact_back").to_string());
+                scr.qr = Some(lines);
+                scr.draw();
+            }
+            shown = true;
+        }
+        let _ = message;
+        if let Some(k) = scr.read_key_timeout() {
+            if k == 0x1b || k == 0x03 {
+                close_qr(scr);
+                return Err(i18n::t("login_cancel").into());
+            }
+        }
+    }
+    close_qr(scr);
+    Err(i18n::t("onboard_timeout").into())
+}
+
+fn login_web(scr: &mut Scr, port: u16) -> Result<LoginResult, String> {
+    let session = login::start(port)?;
+    show_page_qr(scr, &session.url);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    loop {
+        if std::time::Instant::now() > deadline {
+            close_qr(scr);
+            return Err(i18n::t("onboard_timeout").into());
+        }
+        if let Ok(sub) = session.rx.try_recv() {
+            close_qr(scr);
+            return Ok(LoginResult::Key(sub));
+        }
+        if let Some(token) = session.shared.lock().unwrap().token.clone() {
+            close_qr(scr);
+            return Ok(LoginResult::Token(token));
+        }
+        if let Some(k) = scr.read_key_timeout() {
+            if k == 0x1b || k == 0x03 {
+                close_qr(scr);
+                return Err(i18n::t("login_cancel").into());
+            }
+        }
+    }
+}
+
+fn login_type(scr: &mut Scr) -> Option<LoginResult> {
+    let items = vec![
+        MenuItem { label: i18n::t("login_opt_wechat").into(), value: String::new() },
+        MenuItem { label: i18n::t("onboard_key").into(), value: String::new() },
+    ];
+    // Direct typing offers the two credential types instead of the QR paths.
+    let items = vec![
+        MenuItem { label: i18n::t("login_token_prompt").trim_end_matches(':').into(), value: String::new() },
+        MenuItem { label: i18n::t("onboard_key").trim_end_matches(':').into(), value: String::new() },
+    ];
+    let mut sel = 0usize;
+    loop {
+        scr.menu = Some(Menu {
+            title: i18n::t("login_opt_type").into(),
+            items: items.clone(),
+            sel,
+            hint: i18n::t("menu_hint").into(),
+            preview: None,
+        });
+        scr.draw();
+        let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
+        if k == 0x1b {
+            match scr.read_key_timeout() {
+                Some(b'[') => match scr.read_key_timeout() {
+                    Some(b'A') => sel = sel.saturating_sub(1),
+                    Some(b'B') => sel = (sel + 1).min(items.len() - 1),
+                    _ => {}
+                },
+                _ => { scr.menu = None; scr.draw(); return None; }
+            }
+            continue;
+        }
+        if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return None; }
+        if k == 0x0d || k == 0x0a {
+            scr.menu = None;
+            scr.draw();
+            break;
+        }
+    }
+    if sel == 0 {
+        let token = menu_prompt(scr, i18n::t("login_token_prompt"), true)?;
+        if token.trim().is_empty() {
+            return None;
+        }
+        Some(LoginResult::Token(token.trim().to_string()))
+    } else {
+        let base = menu_prompt(scr, i18n::t("onboard_base"), false).unwrap_or_default();
+        let key = menu_prompt(scr, i18n::t("onboard_key"), true)?;
+        let model = menu_prompt(scr, i18n::t("onboard_model"), false).unwrap_or_default();
+        Some(LoginResult::Key(login::Submitted {
+            key: key.trim().to_string(),
+            base: if base.trim().is_empty() {
+                "https://api.deepseek.com/v1".into()
+            } else {
+                base.trim().to_string()
+            },
+            model: model.trim().to_string(),
+        }))
+    }
+}
+
+fn apply_login_result(scr: &mut Scr, config_rc: &ConfigRc, result: LoginResult) -> bool {
+    {
+        let mut c = config_rc.borrow_mut();
+        match result {
+            LoginResult::Token(token) => {
+                c.dsh_token = token;
+                c.api_key.clear();
+                c.base = "https://api.deepseek.com/v1".into();
+            }
+            LoginResult::Key(sub) => {
+                c.api_key = sub.key;
+                c.dsh_token.clear();
+                if !sub.base.is_empty() {
+                    c.base = sub.base;
+                }
+                if !sub.model.is_empty() {
+                    c.model = sub.model;
+                }
+            }
+        }
+        c.configured = true;
+        match c.save() {
+            Ok(()) => {
+                let home = std::env::var("HOME").unwrap_or_default();
+                let full = config::config_path().display().to_string();
+                let path = if !home.is_empty() && full.starts_with(&home) {
+                    format!("~{}", &full[home.len()..])
+                } else {
+                    full
+                };
+                scr.push(&i18n::tf("login_ready", &[&path]), K_NORM);
+                true
+            }
+            Err(e) => {
+                scr.push(&format!("保存失败: {e}"), K_ERR);
+                false
+            }
+        }
+    }
+}
+
+/// The `/login` and onboarding login entry point: WeChat QR on the device,
+/// phone page, or direct typing. Returns true when credentials were saved.
+fn start_login(scr: &mut Scr, config_rc: &ConfigRc) -> bool {
+    let choice = match login_pick(scr) {
+        Some(c) => c,
+        None => {
+            scr.push(i18n::t("login_cancel"), K_DIM);
+            return false;
+        }
+    };
+    let port = login::DEFAULT_PORT;
+    let result = match choice {
+        0 => login_wechat_device(scr, port).map(LoginResult::Token),
+        1 => login_web(scr, port),
+        _ => match login_type(scr) {
+            Some(r) => Ok(r),
+            None => Err(i18n::t("login_cancel").to_string()),
+        },
+    };
+    match result {
+        Ok(r) => apply_login_result(scr, config_rc, r),
+        Err(e) => {
+            scr.push(&i18n::tf("login_fail", &[&e]), K_ERR);
+            false
+        }
     }
 }
 
@@ -2532,7 +2790,7 @@ fn onboarding_sandbox(scr: &mut Scr, config_rc: &ConfigRc) {
 }
 
 /// First-run guide: ask DeepSeek official (QR) or a custom endpoint.
-fn onboarding(scr: &mut Scr, config_rc: &ConfigRc, login_rx: &LoginRx) {
+fn onboarding(scr: &mut Scr, config_rc: &ConfigRc) {
     if config_rc.borrow().configured {
         return;
     }
@@ -2634,30 +2892,11 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc, login_rx: &LoginRx) {
         }
         onboarding_sandbox(scr, config_rc);
     } else {
-        start_login(scr, login_rx);
-        let t0 = std::time::Instant::now();
-        while t0.elapsed().as_secs() < 300 {
-            let got = {
-                let b = login_rx.borrow();
-                b.as_ref().and_then(|rx| rx.try_recv().ok())
-            };
-            if let Some(sub) = got {
-                *login_rx.borrow_mut() = None;
-                let msg = apply_login(&mut config_rc.borrow_mut(), sub);
-                scr.push(&msg, K_NORM);
-                onboarding_sandbox(scr, config_rc);
-                return;
-            }
-            if let Some(k) = scr.read_key_timeout() {
-                if k == 0x1b || k == 0x03 {
-                    *login_rx.borrow_mut() = None;
-                    scr.push(i18n::t("onboard_cancelled"), K_DIM);
-                    return;
-                }
-            }
+        if start_login(scr, config_rc) {
+            onboarding_sandbox(scr, config_rc);
+        } else {
+            scr.push(i18n::t("onboard_cancelled"), K_DIM);
         }
-        *login_rx.borrow_mut() = None;
-        scr.push(i18n::t("onboard_timeout"), K_ERR);
     }
 }
 
@@ -3082,35 +3321,69 @@ fn rewind_menu(scr: &mut Scr, msgs: &jobs::Msgs) {
 }
 
 /// Skills and MCP inspection menu.
-fn extensions_menu(scr: &mut Scr) {
-    let skills = crate::skills::load_all();
-    let servers = crate::mcp::server_summary();
-    let mut items: Vec<MenuItem> = Vec::new();
-    let mut details: Vec<Vec<String>> = Vec::new();
+fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
     let home = std::env::var("HOME").unwrap_or_default();
     let shorten = |p: String| {
-        if !home.is_empty() && p.starts_with(&home) { format!("~{}", &p[home.len()..]) } else { p }
+        if !home.is_empty() && p.starts_with(&home) {
+            format!("~{}", &p[home.len()..])
+        } else {
+            p
+        }
     };
-    for sk in &skills {
-        items.push(MenuItem { label: format!("skill  {}", sk.name), value: String::new() });
-        details.push(vec![format!("skill: {}", sk.name), format!("path: {}", shorten(sk.dir.display().to_string())), String::new(),
-                          sk.description.clone()]);
-    }
-    for (server, tools) in &servers {
-        items.push(MenuItem { label: format!("mcp    {}", server), value: format!("{} tools", tools.len()) });
-        let mut d = vec![format!("MCP server: {server}"), format!("tools: {}", tools.len()), String::new()];
-        d.extend(tools.iter().map(|t| format!("- {t}")));
-        details.push(d);
-    }
-    if items.is_empty() {
-        scr.push("no skills or MCP servers configured", K_DIM);
-        return;
-    }
     let mut sel = 0usize;
     let mut preview: Option<Vec<String>> = None;
     loop {
-        scr.menu = Some(Menu { title: i18n::t("ext_title").into(), items: items.clone(), sel,
-            hint: i18n::t("ext_hint").into(), preview: preview.clone() });
+        let skills = crate::skills::load_meta();
+        let disabled = config_rc.borrow().disabled_skills.clone();
+        let servers = crate::mcp::server_summary();
+        let mut items: Vec<MenuItem> = Vec::new();
+        let mut details: Vec<Vec<String>> = Vec::new();
+        // Some(name) = skill row (x toggles); None = MCP row (inspect only).
+        let mut kinds: Vec<Option<String>> = Vec::new();
+        for sk in &skills {
+            let off = disabled.iter().any(|d| d == &sk.name);
+            let label = if off {
+                format!("skill  {} {}", sk.name, i18n::t("ext_disabled"))
+            } else {
+                format!("skill  {}", sk.name)
+            };
+            items.push(MenuItem { label, value: String::new() });
+            details.push(vec![
+                format!("skill: {}", sk.name),
+                format!("path: {}", shorten(sk.dir.display().to_string())),
+                format!(
+                    "status: {}",
+                    if off { i18n::t("ext_disabled") } else { "enabled" }
+                ),
+                String::new(),
+                sk.description.clone(),
+            ]);
+            kinds.push(Some(sk.name.clone()));
+        }
+        for (server, tools) in &servers {
+            items.push(MenuItem {
+                label: format!("mcp    {}", server),
+                value: format!("{} tools", tools.len()),
+            });
+            let mut d = vec![format!("MCP server: {server}"), format!("tools: {}", tools.len()), String::new()];
+            d.extend(tools.iter().map(|t| format!("- {t}")));
+            details.push(d);
+            kinds.push(None);
+        }
+        if items.is_empty() {
+            scr.push("no skills or MCP servers configured", K_DIM);
+            return;
+        }
+        if sel >= items.len() {
+            sel = items.len() - 1;
+        }
+        scr.menu = Some(Menu {
+            title: i18n::t("ext_title").into(),
+            items: items.clone(),
+            sel,
+            hint: i18n::t("ext_hint").into(),
+            preview: preview.clone(),
+        });
         scr.draw();
         let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
         if k == 0x1b {
@@ -3125,6 +3398,20 @@ fn extensions_menu(scr: &mut Scr) {
             continue;
         }
         if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return; }
+        if k == b'x' || k == b'X' {
+            if let Some(name) = &kinds[sel] {
+                let mut c = config_rc.borrow_mut();
+                if let Some(pos) = c.disabled_skills.iter().position(|d| d == name) {
+                    c.disabled_skills.remove(pos);
+                } else {
+                    c.disabled_skills.push(name.clone());
+                }
+                let _ = c.save();
+                drop(c);
+                preview = None;
+            }
+            continue;
+        }
         if k == 0x0d || k == 0x0a {
             preview = Some(details[sel].clone());
         }
@@ -3611,7 +3898,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             13 => {
                 scr.menu = None;
                 scr.draw();
-                extensions_menu(scr);
+                extensions_menu(scr, config_rc);
             }
             11 => {
                 let mut c = config_rc.borrow_mut();
@@ -3668,8 +3955,114 @@ fn main() {
         eprintln!("dst: internal error: {info}");
     }));
 
+    // Host/device debug entry points for the real DSH login flow.
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.iter().any(|a| a == "--dsh-login-test") {
+        let port = 7788u16;
+        let result = dsh_login::run(port, &mut |ev| match ev {
+            dsh_login::Event::Phase(p) => eprintln!("phase: {p}"),
+            dsh_login::Event::Message(m) => eprintln!("msg: {m}"),
+            dsh_login::Event::Step(s) => eprintln!("step: {s}"),
+            dsh_login::Event::WebToken(_) => eprintln!("step: web token received"),
+            dsh_login::Event::Qr(bytes) => {
+                eprintln!("qr: {} bytes", bytes.len());
+                match dsh_login::qr_matrix_from_jpeg(&bytes) {
+                    Ok(m) => eprintln!("qr matrix: {}x{}", m.len(), m.len()),
+                    Err(e) => eprintln!("qr matrix: {e}"),
+                }
+            }
+        });
+        match result {
+            Ok(token) => {
+                println!("TOKEN {}", dsh_login::mask(&token));
+                match dsh_login::verify_token(&token) {
+                    Ok(reply) => println!("VERIFY OK {reply}"),
+                    Err(e) => println!("VERIFY FAILED {e}"),
+                }
+            }
+            Err(e) => {
+                println!("LOGIN FAILED {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    if argv.get(1).map(|s| s.as_str()) == Some("--login-server-test") {
+        let port: u16 = argv.get(2).and_then(|p| p.parse().ok()).unwrap_or(8899);
+        match login::start(port) {
+            Ok(session) => {
+                println!("URL {}", session.url);
+                let t0 = std::time::Instant::now();
+                loop {
+                    if let Ok(sub) = session.rx.try_recv() {
+                        println!("MANUAL {} {}", sub.base, dsh_login::mask(&sub.key));
+                        return;
+                    }
+                    let (token, err, phase) = {
+                        let st = session.shared.lock().unwrap();
+                        (st.token.clone(), st.error.clone(), st.phase.clone())
+                    };
+                    if let Some(t) = token {
+                        println!("DONE {} phase={phase}", dsh_login::mask(&t));
+                        return;
+                    }
+                    if let Some(e) = err {
+                        println!("FAILED {e}");
+                        std::process::exit(1);
+                    }
+                    if t0.elapsed().as_secs() > 120 {
+                        println!("TIMEOUT");
+                        std::process::exit(1);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+            }
+            Err(e) => {
+                println!("SERVER FAILED {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if argv.get(1).map(|s| s.as_str()) == Some("--qr-ppm") {
+        let (src, dst) = (argv.get(2), argv.get(3));
+        if let (Some(src), Some(dst)) = (src, dst) {
+            match std::fs::read(src) {
+                Ok(bytes) => match dsh_login::qr_matrix_from_jpeg(&bytes) {
+                    Ok(m) => match login::matrix_ppm(&m, Some((156, 0, 164, 170))) {
+                        Ok(ppm) => {
+                            let _ = std::fs::write(dst, ppm);
+                            println!("PPM {}x{}", m.len(), m.len());
+                        }
+                        Err(e) => println!("PPM FAILED {e}"),
+                    },
+                    Err(e) => println!("PPM FAILED {e}"),
+                },
+                Err(e) => println!("PPM FAILED read: {e}"),
+            }
+        } else {
+            println!("usage: dst --qr-ppm <qr.jpg> <out.ppm>");
+        }
+        return;
+    }
+    if argv.get(1).map(|s| s.as_str()) == Some("--qr-matrix") {
+        match argv.get(2) {
+            Some(path) => match std::fs::read(path) {
+                Ok(bytes) => match dsh_login::qr_matrix_from_jpeg(&bytes) {
+                    Ok(m) => {
+                        println!("MATRIX {}x{}", m.len(), m.first().map(|r| r.len()).unwrap_or(0));
+                        for row in m.iter().take(3) {
+                            println!("{row}");
+                        }
+                    }
+                    Err(e) => println!("MATRIX FAILED {e}"),
+                },
+                Err(e) => println!("MATRIX FAILED read: {e}"),
+            },
+            None => println!("usage: dst --qr-matrix <qr.jpg>"),
+        }
+        return;
+    }
     let config_rc: ConfigRc = std::rc::Rc::new(std::cell::RefCell::new(config::Config::load()));
-    let login_rx: LoginRx = std::rc::Rc::new(std::cell::RefCell::new(None));
     i18n::set(&config_rc.borrow().language);
     let mut cfg = api_cfg(&config_rc.borrow());
     tools::set_cfg(cfg.clone());
@@ -3772,7 +4165,7 @@ user you can search the web or speak.\n",
     raw_mode(true);
 
     scr.seed_splash(&cfg.model);
-    onboarding(&mut scr, &config_rc, &login_rx);
+    onboarding(&mut scr, &config_rc);
     maybe_show_tips(&mut scr, &config_rc);
     cfg = api_cfg(&config_rc.borrow());
     *shared_cfg.borrow_mut() = cfg.clone();
@@ -3788,7 +4181,6 @@ user you can search the web or speak.\n",
         let msgs2 = msgs.clone();
         let sc = shared_cfg.clone();
         let crc = config_rc.clone();
-        let lrx = login_rx.clone();
         scr.on_tick = Some(Box::new(move |s: &mut Scr| {
             let c = sc.borrow().clone();
             jobs::poll(&c, &tdefs2, &msgs2, s);
@@ -3824,21 +4216,6 @@ user you can search the web or speak.\n",
                     ));
                 }
                 s.last_watch_trigger = Some(std::time::Instant::now());
-            }
-            let got = {
-                let b = lrx.borrow();
-                b.as_ref().and_then(|rx| rx.try_recv().ok())
-            };
-            if let Some(sub) = got {
-                let msg = apply_login(&mut crc.borrow_mut(), sub);
-                *lrx.borrow_mut() = None;
-                close_qr(s);
-                let c = api_cfg(&crc.borrow());
-                *sc.borrow_mut() = c.clone();
-                tools::set_cfg(c.clone());
-                voice::set_cfg(c.clone());
-                s.push(&msg, K_NORM);
-                maybe_show_tips(s, &crc);
             }
         }));
     }
@@ -3930,7 +4307,14 @@ user you can search the web or speak.\n",
                     }
                 }
                 if out.login {
-                    start_login(&mut scr, &login_rx);
+                    if start_login(&mut scr, &config_rc) {
+                        cfg = api_cfg(&config_rc.borrow());
+                        *shared_cfg.borrow_mut() = cfg.clone();
+                        tools::set_cfg(cfg.clone());
+                        voice::set_cfg(cfg.clone());
+                        refresh_ctx_window(&mut scr, &cfg);
+                        maybe_show_tips(&mut scr, &config_rc);
+                    }
                 }
                 if out.config_wizard {
                     config_menu(&mut scr, &config_rc);
@@ -3947,7 +4331,7 @@ user you can search the web or speak.\n",
                     rewind_menu(&mut scr, &msgs);
                 }
                 if out.extensions_menu {
-                    extensions_menu(&mut scr);
+                    extensions_menu(&mut scr, &config_rc);
                 }
                 if out.resume_menu {
                     if let Some(path) = resume_menu(&mut scr) {

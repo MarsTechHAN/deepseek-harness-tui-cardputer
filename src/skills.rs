@@ -64,8 +64,8 @@ fn frontmatter(text: &str) -> (Vec<(String, String)>, String) {
     }
 }
 
-/// Scan `~/.dst/skills` (and `/etc/dst/skills`) for packages.
-pub fn load_all() -> Vec<Skill> {
+/// Scan every skill package, including disabled ones (extensions menu).
+pub fn load_meta() -> Vec<Skill> {
     let mut out = Vec::new();
     for root in [
         PathBuf::from("/etc/dst/skills"),
@@ -112,6 +112,16 @@ pub fn load_all() -> Vec<Skill> {
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
+}
+
+/// Enabled skills: everything except names listed in `skills.disabled`.
+pub fn load_all() -> Vec<Skill> {
+    let disabled = crate::config::Config::load().disabled_skills;
+    let mut all = load_meta();
+    if !disabled.is_empty() {
+        all.retain(|sk| !disabled.iter().any(|d| d == &sk.name));
+    }
+    all
 }
 
 /// The catalog block appended to the system prompt: name + when to use it.

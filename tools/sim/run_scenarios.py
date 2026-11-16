@@ -93,7 +93,32 @@ def read_screens(out_dir):
     return screens
 
 
-def run_scenario(name, binary, timeout=90):
+def start_mock_login(work, env):
+    """Start the nine-step DSH login mock; returns (proc, cleanup)."""
+    port_file = os.path.join(work, "mock-login-port")
+    log_file = os.path.join(work, "mock-login.jsonl")
+    if os.path.exists(port_file):
+        os.remove(port_file)
+    script = os.path.join(ROOT, "tools", "sim", "mock_login.py") if os.path.exists(os.path.join(ROOT, "tools", "sim", "mock_login.py")) else os.path.join(os.path.dirname(os.path.abspath(__file__)), "mock_login.py")
+    proc = subprocess.Popen([sys.executable, script, "--port-file", port_file],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            env=dict(env, MOCK_LOGIN_LOG=log_file), cwd=ROOT)
+    for _ in range(60):
+        if os.path.exists(port_file) and open(port_file).read().strip():
+            break
+        time.sleep(0.1)
+    port = open(port_file).read().strip()
+    env.update({
+        "DST_LOGIN_PLATFORM": f"http://127.0.0.1:{port}",
+        "DST_LOGIN_WECHAT": f"http://127.0.0.1:{port}",
+        "DST_LOGIN_WECHAT_LP": f"http://127.0.0.1:{port}",
+        "DST_LOGIN_API": f"http://127.0.0.1:{port}",
+        "MOCK_LOGIN_LOG": log_file,
+    })
+    return proc, log_file
+
+
+def run_scenario(name, binary, timeout=120):
     base = os.path.join(SCEN_DIR, name)
     scenario = os.path.join(base, "scenario.json")
     script = os.path.join(base, "script.json")
@@ -129,6 +154,12 @@ def run_scenario(name, binary, timeout=90):
         shutil.copytree(overlay, home, dirs_exist_ok=True)
     log_path = os.path.join(work, "requests.jsonl")
     env = dict(os.environ)
+    env.update({str(k): str(v) for k, v in (doc.get("env") or {}).items()})
+    want_mock_login = bool(doc.get("mock_login")) or os.path.exists(os.path.join(base, "mock_login"))
+    login_mock = None
+    login_log = None
+    if want_mock_login:
+        login_mock, login_log = start_mock_login(work, env)
 
     proc, url, _state = start_mock(0, script, log_path, env)
     try:
@@ -153,6 +184,12 @@ def run_scenario(name, binary, timeout=90):
                 raise AssertionError(f"simulator failed: {r.stderr[-800:]}")
     finally:
         stop_mock(proc)
+        if login_mock is not None:
+            login_mock.terminate()
+            try:
+                login_mock.wait(timeout=3)
+            except Exception:
+                login_mock.kill()
 
     screens = {}
     for _path, phase_out, _cwd in scenario_paths:
@@ -721,6 +758,85 @@ def check_queue_edit(screens, reqs, work):
     return checks
 
 
+def check_extensions_toggle(screens, reqs, work):
+    menu = screens.get("menu", "")
+    disabled = screens.get("disabled", "")
+    cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+    checks = []
+    checks.append(("demo-skill" in menu and "x toggle" in menu,
+                   "extensions lists skills with the toggle hint"))
+    checks.append(("(disabled)" in disabled, "x marks the skill disabled"))
+    checks.append(("disabled:" in cfg and "demo-skill" in cfg,
+                   "disabled skill persisted in config.yml"))
+    return checks
+
+
+def check_login_menu(screens, reqs, work):
+    menu = screens.get("menu", "")
+    types = screens.get("type_menu", "")
+    web = screens.get("web", "")
+    checks = []
+    checks.append(("Sign in to DeepSeek" in menu and "WeChat QR" in menu and "phone page" in menu,
+                   "login menu offers WeChat / page / typing"))
+    checks.append(("Type the credentials" in types, "direct-typing entry opens"))
+    checks.append(("http://" in web and ("Open this page" in web or "page" in web.lower()),
+                   "phone-page option shows the LAN page URL"))
+    return checks
+
+
+def check_login_type_token(screens, reqs, work):
+    done = screens.get("done", "")
+    cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+    checks = []
+    checks.append(("Logged in" in done, "typing a DSH token completes login"))
+    checks.append(("dsh_token:" in cfg, "DSH token persisted to config.yml"))
+    checks.append(("api.deepseek.com" in cfg, "official API base selected for the DSH token"))
+    return checks
+
+
+def check_login_wechat(screens, reqs, work):
+    done = screens.get("done", "")
+    cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+    log = read_file(os.path.join(work, "mock-login.jsonl"))
+    checks = []
+    checks.append(("Logged in" in done, "WeChat QR flow completes end-to-end"))
+    checks.append(("dsh_token:" in cfg, "DSH token persisted"))
+    for frag in ["/connect/qrconnect", "/connect/l/qrconnect", "/auth-api/v0/dsh/auth_exchange"]:
+        checks.append((frag in log, f"protocol hit {frag}"))
+    return checks
+
+
+LOGIN_I18N_EXPECT = {'en': ['Sign in to DeepSeek', 'WeChat QR', 'phone page', 'Type the credentials', 'Paste DSH token', 'Base URL', 'API key', 'Model name', 'Open this page', '1 Scan with WeChat', 'Logged in'], 'zh': ['登录 DeepSeek', '本机显示微信二维码', '用手机网页配置', '直接输入凭据', '粘贴 DSH token', 'Base URL', 'API key', '模型名', '在手机上打开这个网页', '1 微信扫码', '已登录'], 'es': ['Iniciar sesión en DeepSeek', 'QR de WeChat', 'Configurar desde el teléfono', 'Escribir las credenciales', 'Pega el token DSH', 'Base URL', 'API key', 'Modelo', 'Abre esta página', '1 Escanea con WeChat', 'Sesión iniciada'], 'ja': ['DeepSeek にログイン', 'この画面に WeChat QR', 'スマホのページで設定', '認証情報を直接入力', 'DSH トークンを貼り付け', 'Base URL', 'API キー', 'モデル名', 'スマホでこのページを開く', '1 WeChat でスキャン', 'ログイン済み'], 'de': ['Bei DeepSeek anmelden', 'WeChat-QR auf diesem Bildschirm', 'Am Handy konfigurieren', 'Zugangsdaten direkt eingeben', 'DSH-Token einfügen', 'Base-URL', 'API-Key', 'Modell', 'Diese Seite am Handy öffnen', '1 Mit WeChat scannen', 'Eingeloggt'], 'it': ['Accedi a DeepSeek', 'QR WeChat su questo schermo', 'Configura dal telefono', 'Digita le credenziali', 'Incolla il token DSH', 'Base URL', 'API key', 'Modello', 'Apri questa pagina sul telefono', '1 Scansiona con WeChat', 'Accesso effettuato']}
+
+def make_login_i18n_check(lang):
+    def check(screens, reqs, work):
+        exp = LOGIN_I18N_EXPECT[lang]
+        all_screens = "\n".join(screens.values())
+        menu = screens.get("menu", "")
+        type_menu = screens.get("type", "")
+        token_prompt = screens.get("token_prompt", "")
+        base_prompt = screens.get("base_prompt", "")
+        key_prompt = screens.get("key_prompt", "")
+        model_prompt = screens.get("model_prompt", "")
+        web = screens.get("web", "")
+        wechat = screens.get("wechat", "")
+        done = screens.get("done", "")
+        cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+        checks = []
+        checks.append((exp[0] in menu and exp[1] in menu and exp[2] in menu,
+                       f"{lang}: login menu translated"))
+        checks.append((exp[3] in type_menu, f"{lang}: typing menu translated"))
+        checks.append((exp[4] in token_prompt, f"{lang}: DSH token prompt translated"))
+        checks.append((exp[5] in base_prompt and exp[6] in key_prompt and exp[7] in model_prompt,
+                       f"{lang}: base/key/model prompts translated"))
+        checks.append((exp[8] in web, f"{lang}: phone-page guide translated"))
+        checks.append((exp[9] in wechat, f"{lang}: WeChat QR guide translated"))
+        checks.append((exp[10] in done, f"{lang}: login success translated"))
+        checks.append(("dsh_token:" in cfg, f"{lang}: DSH token persisted"))
+        return checks
+    return check
+
+
 def check_config_menu(screens, reqs, work):
     menu = screens.get("menu", "")
     bottom = screens.get("bottom", "")
@@ -802,6 +918,10 @@ def check_goal_blocked(screens, reqs, work):
 
 CHECKS = {
     "clear": check_clear,
+    "login_menu": check_login_menu,
+    "login_type_token": check_login_type_token,
+    "login_wechat": check_login_wechat,
+    "extensions_toggle": check_extensions_toggle,
     "queue_edit": check_queue_edit,
     "sandbox_es": check_sandbox_es,
     "history_persist": check_history_persist,
@@ -841,6 +961,9 @@ CHECKS = {
     "goal_complete": check_goal_complete,
     "config_menu": check_config_menu,
 }
+
+for _lang_ in LOGIN_I18N_EXPECT:
+    CHECKS[f"login_i18n_{_lang_}"] = make_login_i18n_check(_lang_)
 
 
 def main(argv):

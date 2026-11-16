@@ -1,0 +1,73 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/login"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Sign in to DeepSeek",
+    "timeout_ms": 10000
+   },
+   "snap": "menu"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "type_menu"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "send": "/login"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Sign in to DeepSeek",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Open this page",
+    "timeout_ms": 15000
+   },
+   "snap": "web"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 300
+  }
+ ]
+}

@@ -455,6 +455,9 @@ pub struct Config {
     pub max_tokens: u32,
     pub base: String,
     pub api_key: String,
+    /// DSH account token from the real DeepSeek Platform login flow.
+    /// Sent as `x-dsh-auth-token` instead of the API key.
+    pub dsh_token: String,
     /// Transient-failure retries per request.
     pub api_retries: u32,
     /// Fallback models tried in order on transient failures.
@@ -492,6 +495,8 @@ pub struct Config {
     pub context_time: bool,
     /// Minimum seconds between two injected clock readings (0 = every step).
     pub context_refresh_secs: u64,
+    /// Skill packages disabled from the catalog and skill tool.
+    pub disabled_skills: Vec<String>,
     /// Tool permission mode: auto | strict | full.
     pub sandbox_mode: String,
     /// Optional judge model for auto mode (empty = session model).
@@ -509,6 +514,7 @@ impl Default for Config {
             max_tokens: 4096,
             base: "https://api.deepseek.com/v1".into(),
             api_key: String::new(),
+            dsh_token: String::new(),
             api_retries: 2,
             api_fallbacks: Vec::new(),
             tts_voice: "stella".into(),
@@ -530,6 +536,7 @@ impl Default for Config {
             tool_timeout_ms: crate::tool::DEFAULT_TIMEOUT_MS,
             context_time: true,
             context_refresh_secs: crate::context::DEFAULT_REFRESH_SECS,
+            disabled_skills: Vec::new(),
             sandbox_mode: "auto".into(),
             sandbox_judge_model: String::new(),
             sandbox_judge_max_tokens: 48,
@@ -578,7 +585,7 @@ impl Config {
                 }
             }
         }
-        cfg.configured = !cfg.api_key.is_empty();
+        cfg.configured = !cfg.api_key.is_empty() || !cfg.dsh_token.is_empty();
         cfg
     }
 
@@ -598,6 +605,9 @@ impl Config {
             }
             if let Some(v) = api.get("key").and_then(|v| v.as_str()) {
                 self.api_key = v.to_string();
+            }
+            if let Some(v) = api.get("dsh_token").and_then(|v| v.as_str()) {
+                self.dsh_token = v.to_string();
             }
             if let Some(v) = api.get("retries").and_then(|v| v.as_f64()) {
                 self.api_retries = v.max(0.0) as u32;
@@ -663,6 +673,14 @@ impl Config {
                 self.tool_timeout_ms = v.max(0.0) as u64;
             }
         }
+        if let Some(sk) = doc.get("skills") {
+            if let Some(seq) = sk.get("disabled").and_then(|v| v.as_seq()) {
+                self.disabled_skills = seq
+                    .iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect();
+            }
+        }
         if let Some(sb) = doc.get("sandbox") {
             if let Some(v) = sb.get("mode").and_then(|v| v.as_str()) {
                 self.sandbox_mode = v.to_string();
@@ -720,6 +738,9 @@ impl Config {
             }
         }
         s.push_str(&format!("  retries: {}\n", self.api_retries));
+        if !self.dsh_token.is_empty() {
+            s.push_str(&format!("  dsh_token: {}\n", yaml_quote(&self.dsh_token.trim())));
+        }
         if !self.api_key.is_empty() {
             s.push_str(&format!("  key: {}\n", yaml_quote(&self.api_key.trim())));
         }
@@ -746,6 +767,12 @@ impl Config {
         }
         s.push_str("tools:\n");
         s.push_str(&format!("  call_timeout_ms: {}\n", self.tool_timeout_ms));
+        if !self.disabled_skills.is_empty() {
+            s.push_str("skills:\n  disabled:\n");
+            for name in &self.disabled_skills {
+                s.push_str(&format!("    - {}\n", yaml_quote(name)));
+            }
+        }
         s.push_str("sandbox:\n");
         s.push_str(&format!("  mode: {}\n", yaml_quote(&self.sandbox_mode)));
         if !self.sandbox_judge_model.is_empty() {

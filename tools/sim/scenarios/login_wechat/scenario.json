@@ -1,0 +1,33 @@
+{
+ "mock_login": true,
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/login"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Sign in to DeepSeek",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Logged in",
+    "timeout_ms": 40000
+   },
+   "snap": "done"
+  }
+ ]
+}

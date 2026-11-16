@@ -1,0 +1,53 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/login"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Sign in to DeepSeek",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "send": "dshtesttoken0123456789abcdef"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Logged in",
+    "timeout_ms": 10000
+   },
+   "snap": "done"
+  }
+ ]
+}

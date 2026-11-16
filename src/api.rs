@@ -17,6 +17,8 @@ use std::sync::mpsc::{channel, Receiver};
 pub struct Cfg {
     pub base: String,
     pub key: String,
+    /// DSH account token (preferred over `key` when non-empty).
+    pub token: String,
     pub model: String,
     pub max_tokens: u32,
     /// Reasoning effort tier (`auto` = do not send the parameter).
@@ -59,6 +61,16 @@ pub enum ApiEv {
 pub struct Chat {
     pub rx: Receiver<ApiEv>,
     pub pid: u32,
+}
+
+/// Auth header for the configured endpoint: a DSH token takes precedence over
+/// an API key and uses the `x-dsh-auth-token` header (no Bearer).
+pub fn auth_header(cfg: &Cfg) -> String {
+    if !cfg.token.trim().is_empty() {
+        format!("x-dsh-auth-token: {}", cfg.token.trim())
+    } else {
+        format!("Authorization: Bearer {}", cfg.key)
+    }
 }
 
 /// Ask curl to stop; the reader thread then sees EOF and settles the stream.
@@ -184,7 +196,7 @@ pub fn spawn_chat_json(cfg: &Cfg, messages_json: &str, tools: &J) -> Result<Chat
             "--max-time",
             "300",
             "-H",
-            &format!("Authorization: Bearer {}", cfg.key),
+            &auth_header(cfg),
             "-H",
             "Content-Type: application/json",
             "-H",
@@ -290,7 +302,7 @@ pub fn context_window(cfg: &Cfg) -> Option<u64> {
             "--max-time",
             "15",
             "-H",
-            &format!("Authorization: Bearer {}", cfg.key),
+            &auth_header(cfg),
             &url,
         ])
         .output()
@@ -320,7 +332,7 @@ pub fn list_models(cfg: &Cfg) -> Result<Vec<(String, String, Vec<String>)>, Stri
             "--max-time",
             "20",
             "-H",
-            &format!("Authorization: Bearer {}", cfg.key),
+            &auth_header(cfg),
             &url,
         ])
         .output()

@@ -1,0 +1,225 @@
+{
+ "mock_login": true,
+ "phases": [
+  [
+   {
+    "wait_for": {
+     "text": "dst",
+     "timeout_ms": 10000
+    }
+   },
+   {
+    "send": "/login"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_for": {
+     "text": "Sign in to DeepSeek",
+     "timeout_ms": 12000
+    },
+    "snap": "menu"
+   },
+   {
+    "key": "Esc"
+   },
+   {
+    "wait_ms": 200
+   }
+  ],
+  [
+   {
+    "wait_for": {
+     "text": "dst",
+     "timeout_ms": 10000
+    }
+   },
+   {
+    "send": "/login"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_for": {
+     "text": "Sign in to DeepSeek",
+     "timeout_ms": 12000
+    }
+   },
+   {
+    "key": "Down"
+   },
+   {
+    "key": "Down"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_ms": 300,
+    "snap": "type"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_ms": 300,
+    "snap": "token_prompt"
+   },
+   {
+    "key": "Esc"
+   },
+   {
+    "wait_ms": 200
+   }
+  ],
+  [
+   {
+    "wait_for": {
+     "text": "dst",
+     "timeout_ms": 10000
+    }
+   },
+   {
+    "send": "/login"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_for": {
+     "text": "Sign in to DeepSeek",
+     "timeout_ms": 12000
+    }
+   },
+   {
+    "key": "Down"
+   },
+   {
+    "key": "Down"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_ms": 300
+   },
+   {
+    "key": "Down"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_ms": 400,
+    "snap": "base_prompt"
+   },
+   {
+    "send": "https://api.deepseek.com/v1"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_ms": 400,
+    "snap": "key_prompt"
+   },
+   {
+    "send": "sk-test-123"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_ms": 400,
+    "snap": "model_prompt"
+   },
+   {
+    "send": "deepseek-flash"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_ms": 500
+   }
+  ],
+  [
+   {
+    "wait_for": {
+     "text": "dst",
+     "timeout_ms": 10000
+    }
+   },
+   {
+    "send": "/login"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_for": {
+     "text": "Sign in to DeepSeek",
+     "timeout_ms": 12000
+    }
+   },
+   {
+    "key": "Down"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_for": {
+     "text": "Open this page",
+     "timeout_ms": 15000
+    },
+    "snap": "web"
+   },
+   {
+    "key": "Esc"
+   },
+   {
+    "wait_ms": 300
+   }
+  ],
+  [
+   {
+    "wait_for": {
+     "text": "dst",
+     "timeout_ms": 10000
+    }
+   },
+   {
+    "send": "/login"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_for": {
+     "text": "Sign in to DeepSeek",
+     "timeout_ms": 12000
+    }
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_for": {
+     "text": "1 Scan with WeChat",
+     "timeout_ms": 30000
+    },
+    "snap": "wechat"
+   },
+   {
+    "wait_for": {
+     "text": "Logged in",
+     "timeout_ms": 40000
+    },
+    "snap": "done"
+   }
+  ]
+ ]
+}

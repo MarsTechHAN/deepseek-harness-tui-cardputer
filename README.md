@@ -41,8 +41,8 @@ repository.
 **Human commands** (execute locally, never sent to the model)
 - `/help`, `/model [name]` (lists models from `/v1/models`), `/effort
   [auto|low|high|max]`, `/config` (interactive wizard: options everywhere, text
-  input only for the API key and a custom base URL), `/login` (full-screen QR code for a
-  phone), `/usage`, `/key`, `/resume` (menu picker), `/rename <title>`,
+  input only for the API key and a custom base URL), `/login` (real DeepSeek
+  Platform sign-in; see below), `/usage`, `/key`, `/resume` (menu picker), `/rename <title>`,
   `/compact`, `/goal`, `/clear`, `/quit`.
 - `/goal <objective>` starts a long-running goal; `/goal` shows it, and
   `/goal edit|pause|resume|clear` manages it. `/compact` summarises older
@@ -240,7 +240,29 @@ configured; Esc keeps `auto`, and `/config` changes it later.
 ```
 
 The first launch with no configuration shows a short guide: choose DeepSeek
-official (QR login from a phone) or a custom OpenAI-compatible endpoint.
+official or a custom OpenAI-compatible endpoint, then pick the sandbox mode.
+
+### `/login`: real DeepSeek Platform sign-in (DSH token)
+
+`/login` offers three paths, all saving credentials to `~/.dst/config.yml`
+(mode 600):
+
+1. **WeChat QR on this screen** — dst runs the same nine-step flow as the DSH
+   desktop client (WeChat QR from `open.weixin.qq.com`, callback nonce, web
+   session token, PKCE `auth_init`/`auth_approve`/`auth_exchange`) and shows the
+   real WeChat QR on the panel: a numbered text guide on the left, QR on the
+   right. The DSH token is stored under `api.dsh_token` and sent to the model
+   API as `x-dsh-auth-token` (no Bearer). Requires `python3` + Pillow only to
+   convert the WeChat JPEG QR into panel modules; without a framebuffer the same
+   QR and live progress are shown on the phone page.
+2. **Phone page** — a LAN page with the WeChat QR, live steps, and a manual
+   API-key form (`http://<device-ip>:8787/`). The page is bilingual EN/中文 for
+   the phone.
+3. **Type directly** — menuconfig-style typing for either a DSH token or an
+   OpenAI-compatible base URL + API key + model.
+
+Model requests and voice/OCR pick the auth header automatically: DSH token →
+`x-dsh-auth-token`, API key → `Authorization: Bearer`.
 
 ## Configuration (`~/.dst/config.yml`)
 
@@ -307,7 +329,8 @@ Release profile: `opt-level="z"`, LTO, `panic=abort`, `strip`.
 |---|---|---|
 | `curl` | curl | all HTTP |
 | `arecord`, `aplay` | alsa-utils | ASR capture, TTS playback |
-| `qrencode` | qrencode | optional; the QR code for `/login` (falls back to printing the URL) |
+| `qrencode` | qrencode | optional; QR for the phone-page URL (falls back to printing the URL) |
+| `python3` + Pillow | Python 3 + Pillow | optional; converts the WeChat JPEG QR to panel modules (falls back to the phone page) |
 
 Non-interactive entry points:
 
@@ -365,7 +388,8 @@ src/bg.rs        background jobs + line watchers (job_*/watcher_* tools)
 src/api.rs       streaming chat client over a curl subprocess
 src/config.rs    ~/.dst home, DSH-dialect YAML config
 src/cmd.rs       human commands (/model, /compact, /goal, /resume, ...)
-src/login.rs     QR login HTTP server + QR rendering
+src/dsh_login.rs real DSH/WeChat nine-step login (curl + std crypto)
+src/login.rs     login HTTP page (WeChat QR + API key) and QR rendering
 src/skills.rs    skill catalog and loader
 src/mcp.rs       MCP stdio client
 src/jobs.rs      cron + file-watch scheduler
@@ -373,6 +397,9 @@ src/voice.rs     TTS/ASR, resampling, WAV framing, recorder
 src/json.rs      minimal JSON
 tools/sim/       pty screen simulator + scripted mock API (host testing)
 docs/UX-AUDIT.md 12-row screen-by-screen UX audit checklist and known limits
+tools/sim/mock_login.py  mock of the nine-step DSH login chain (host tests)
+tools/sim/qr_scan.js     jsQR decoder for the panel QR image
+tools/sim/check_qr_scan.py  renders the panel QR and proves it decodes
 tools/deploy/    scp/build/install and systemd-ordering fix for the device
 ```
 
