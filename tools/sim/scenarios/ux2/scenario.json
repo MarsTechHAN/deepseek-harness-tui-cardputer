@@ -1,0 +1,68 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "run tool"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 700,
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "key": "CtrlO"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "tool_log"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "expanded"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "send": "one two three"
+  },
+  {
+   "key": "CtrlW"
+  },
+  {
+   "wait_ms": 200,
+   "snap": "edited"
+  },
+  {
+   "key": "CtrlU"
+  },
+  {
+   "key": "PgUp"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "key": "End"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "bottom"
+  }
+ ]
+}

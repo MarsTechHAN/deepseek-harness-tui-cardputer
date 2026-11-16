@@ -597,7 +597,7 @@ def check_ux(screens, reqs, work):
     help_menu = screens.get("help_menu", "")
     paged = screens.get("paged", "")
     checks = []
-    checks.append(("PgUp" in after and "history" in after,
+    checks.append(("PgUp" in after and "hist" in after,
                    "idle status line shows the key hints"))
     checks.append(("> hello history" in history,
                    "Up on an empty prompt recalls the previous input"))
@@ -607,6 +607,24 @@ def check_ux(screens, reqs, work):
                    "/help is a navigable menu with run hint"))
     checks.append(("\u2191" in paged and "End" in paged,
                    "PgUp scrolls back with a scroll indicator"))
+    return checks
+
+
+def check_ux2(screens, reqs, work):
+    log = screens.get("tool_log", "")
+    expanded = screens.get("expanded", "")
+    edited = screens.get("edited", "")
+    bottom = screens.get("bottom", "")
+    checks = []
+    checks.append(("Tool output" in log and "bash" in log,
+                   "CtrlO opens the recent tool output list"))
+    checks.append(("beta-line" in expanded and "gamma-line" in expanded,
+                   "Enter opens the full tool output in the panel"))
+    checks.append(("> one two " in edited or "> one two" in edited,
+                   "CtrlW deletes the word before the cursor"))
+    checks.append(("lines \u00b7 End" not in bottom,
+                   "End returns to the bottom after paging up"))
+    checks.append(("hist" in bottom, "idle hint returns after scrolling back"))
     return checks
 
 
@@ -680,6 +698,7 @@ def check_goal_blocked(screens, reqs, work):
 CHECKS = {
     "clear": check_clear,
     "ux": check_ux,
+    "ux2": check_ux2,
     "new_tools": check_new_tools,
     "rewind": check_rewind,
     "steering": check_steering,

@@ -99,6 +99,8 @@ pub struct Scr {
     auto_label: Option<String>,
     /// Last bare-Esc instant, for the double-Esc rewind gesture.
     last_esc: Option<std::time::Instant>,
+    /// Recent tool outputs (name, content, is_error, seconds), for CtrlO.
+    tool_log: Vec<(String, String, bool, f32)>,
     /// Submitted input history (newest last), for ↑/↓ recall.
     history: Vec<String>,
     /// Position while browsing history; None = editing fresh input.
@@ -193,6 +195,7 @@ impl Scr {
             auto_queue: Vec::new(),
             auto_label: None,
             last_esc: None,
+            tool_log: Vec::new(),
             history: Vec::new(),
             hist_pos: None,
             hist_draft: String::new(),
@@ -689,9 +692,13 @@ impl Scr {
         }
         let hidden = a.body.len().saturating_sub(a.scroll + body_rows);
         let footer = if hidden > 0 {
-            format!(" Esc 返回 | 还有 {} 行", hidden)
+            format!(
+                " {} | {}",
+                i18n::t("artifact_back"),
+                i18n::tf("artifact_more", &[&hidden.to_string()])
+            )
         } else {
-            " Esc 返回".to_string()
+            format!(" {}", i18n::t("artifact_back"))
         };
         s.push_str("\x1b[90m");
         s.push_str(&fit(&footer, self.cols));
@@ -1124,6 +1131,24 @@ impl Scr {
             match b {
                 0x03 => return None,                       // Ctrl-C
                 0x04 => return None,                       // Ctrl-D
+                0x0f => {
+                    // Ctrl-O: recent tool output viewer.
+                    tool_output_panel(self);
+                    continue;
+                }
+                0x01 => self.cursor = 0,                   // Ctrl-A
+                0x05 => self.cursor = self.input.len(),    // Ctrl-E
+                0x17 => {
+                    // Ctrl-W: delete the word before the cursor.
+                    while self.cursor > 0 && self.input[self.cursor - 1].is_whitespace() {
+                        self.cursor -= 1;
+                        self.input.remove(self.cursor);
+                    }
+                    while self.cursor > 0 && !self.input[self.cursor - 1].is_whitespace() {
+                        self.cursor -= 1;
+                        self.input.remove(self.cursor);
+                    }
+                }
                 0x0d | 0x0a => {
                     // Enter on an open palette: run a no-argument command, or
                     // complete a command that expects input.
@@ -1270,8 +1295,20 @@ impl Scr {
                             }
                             b'C' => self.cursor = (self.cursor + 1).min(self.input.len()),
                             b'D' => self.cursor = self.cursor.saturating_sub(1),
-                            b'H' => self.cursor = 0,
-                            b'F' => self.cursor = self.input.len(),
+                            b'H' => {
+                                if self.input.is_empty() && self.scroll > 0 {
+                                    self.scroll = self.lines.len();
+                                } else {
+                                    self.cursor = 0;
+                                }
+                            }
+                            b'F' => {
+                                if self.input.is_empty() && self.scroll > 0 {
+                                    self.scroll = 0;
+                                } else {
+                                    self.cursor = self.input.len();
+                                }
+                            }
                             b'5' | b'6' => {
                                 let _ = self.read_key();
                                 let page = self.rows.saturating_sub(3).max(5);
@@ -1769,13 +1806,9 @@ impl<'a> harness::Ui for TermUi<'a> {
             Ev::ToolCall { id, name, title } => {
                 self.reset_think();
                 self.scr.live = None;
-                self.scr.push(
-                    &fit(
-                        &format!("* {name} > {title} \u{2026}"),
-                        self.scr.cols.saturating_sub(1),
-                    ),
-                    K_DIM,
-                );
+                let raw = format!("* {name} > {title} \u{2026}");
+                let raw: String = raw.chars().take(self.scr.cols.saturating_sub(2)).collect();
+                self.scr.push(&fit(&raw, self.scr.cols.saturating_sub(1)), K_DIM);
                 self.tools.insert(id, (name, title, std::time::Instant::now()));
             }
             Ev::ToolTick { name, secs } => {
@@ -1796,8 +1829,15 @@ impl<'a> harness::Ui for TermUi<'a> {
                     .remove(&id)
                     .map(|(n, t, started)| (n, t, started.elapsed().as_secs_f32()))
                     .unwrap_or_else(|| (String::new(), String::new(), 0.0));
+                // Keep the full result for the CtrlO output viewer.
+                if self.scr.tool_log.len() >= 20 {
+                    self.scr.tool_log.remove(0);
+                }
+                let log_content: String = content.chars().take(6000).collect();
+                self.scr.tool_log.push((name.clone(), log_content, is_error, took));
                 let raw = format!("* {name} > {title} | {took:.1}s {}", if is_error { "x" } else { "ok" });
                 let cols = self.scr.cols;
+                let raw: String = raw.chars().take(cols.saturating_sub(2)).collect();
                 self.scr.push(&fit(&raw, cols.saturating_sub(1)), K_TOOL);
                 let preview = first_lines(&content, if is_error { 3 } else { 1 });
                 if !preview.trim().is_empty() {
@@ -2767,6 +2807,65 @@ fn extensions_menu(scr: &mut Scr) {
         if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return; }
         if k == 0x0d || k == 0x0a {
             preview = Some(details[sel].clone());
+        }
+    }
+}
+
+/// CtrlO: browse recent tool output and open the full text in the panel viewer.
+fn tool_output_panel(scr: &mut Scr) {
+    if scr.tool_log.is_empty() {
+        scr.push(i18n::t("tool_log_empty"), K_DIM);
+        return;
+    }
+    let entries: Vec<(String, String, bool, f32)> = scr.tool_log.iter().rev().cloned().collect();
+    let mut sel = 0usize;
+    loop {
+        let items: Vec<MenuItem> = entries
+            .iter()
+            .map(|(name, content, is_error, secs)| MenuItem {
+                label: format!("{name}  {secs:.1}s"),
+                value: if *is_error {
+                    format!("error  {}", first_line_short(content, 18))
+                } else {
+                    first_line_short(content, 24)
+                },
+            })
+            .collect();
+        scr.menu = Some(Menu {
+            title: i18n::t("tool_log_title").into(),
+            items,
+            sel,
+            hint: i18n::t("tool_log_hint").into(),
+            preview: None,
+        });
+        scr.draw();
+        let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
+        if k == 0x1b {
+            match scr.read_key_timeout() {
+                Some(b'[') => match scr.read_key_timeout() {
+                    Some(b'A') => sel = sel.saturating_sub(1),
+                    Some(b'B') => sel = (sel + 1).min(entries.len() - 1),
+                    _ => {}
+                },
+                _ => { scr.menu = None; scr.draw(); return; }
+            }
+            continue;
+        }
+        if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return; }
+        if k == 0x0d || k == 0x0a {
+            let (name, content, is_error, _) = &entries[sel];
+            let title = if *is_error { format!("{name} (error)") } else { format!("{name} output") };
+            let mut body = Vec::new();
+            for line in content.lines() {
+                let mut wrapped = Vec::new();
+                Scr::wrap_into(&mut wrapped, line, scr.cols);
+                if wrapped.is_empty() { body.push(String::new()); }
+                body.extend(wrapped);
+            }
+            scr.menu = None;
+            scr.artifact = Some(Artifact { title, body, scroll: 0 });
+            scr.draw();
+            return;
         }
     }
 }

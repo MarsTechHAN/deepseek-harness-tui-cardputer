@@ -1,0 +1,1 @@
+{"responses": [{"reasoning": "tool", "content": "", "tool_calls": [{"id": "x1", "name": "bash", "arguments": {"command": "printf 'alpha-line\\nbeta-line\\ngamma-line\\n'"}}], "finish_reason": "tool_calls"}, {"reasoning": "done", "content": "Output captured.", "finish_reason": "stop"}]}
