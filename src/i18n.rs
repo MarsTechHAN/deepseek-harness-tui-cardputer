@@ -209,6 +209,10 @@ const EN: &[(&str, &str)] = &[
     ("cat_tools", "tools"),
     ("cat_info", "info"),
     ("onboard_prev_sandbox", "sandbox defaults to auto: safe commands run, risky ones are judged or refused; change it in /config."),
+    // EN queue keys
+    ("queue_title", "Queued messages"),
+    ("queue_hint", "↑↓ select · x delete · Enter edit · Esc close"),
+    ("queue_empty", "Queue is empty"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -358,6 +362,10 @@ const ZH: &[(&str, &str)] = &[
     ("cat_tools", "工具"),
     ("cat_info", "信息"),
     ("onboard_prev_sandbox", "sandbox 默认 auto：安全命令直接执行，风险操作由 LLM 判定或拒绝；可在 /config 修改。"),
+    // ZH queue keys
+    ("queue_title", "排队消息"),
+    ("queue_hint", "↑↓ 选择 · x 删除 · Enter 编辑 · Esc 关闭"),
+    ("queue_empty", "队列为空"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -506,6 +514,10 @@ const ES: &[(&str, &str)] = &[
     ("cat_tools", "herramientas"),
     ("cat_info", "info"),
     ("onboard_prev_sandbox", "sandbox usa auto: comandos seguros se ejecutan, los riesgosos se juzgan o rechazan; cámbialo en /config."),
+    // ES queue keys
+    ("queue_title", "Mensajes en cola"),
+    ("queue_hint", "↑↓ elegir · x borrar · Enter editar · Esc cerrar"),
+    ("queue_empty", "La cola está vacía"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -655,6 +667,10 @@ const JA: &[(&str, &str)] = &[
     ("cat_tools", "ツール"),
     ("cat_info", "情報"),
     ("onboard_prev_sandbox", "sandbox は auto: 安全なコマンドは実行、危険なものは判定・拒否。/config で変更。"),
+    // JA queue keys
+    ("queue_title", "キューのメッセージ"),
+    ("queue_hint", "↑↓ 選択 · x 削除 · Enter 編集 · Esc 閉じる"),
+    ("queue_empty", "キューは空です"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -804,6 +820,10 @@ const DE: &[(&str, &str)] = &[
     ("cat_tools", "Tools"),
     ("cat_info", "Info"),
     ("onboard_prev_sandbox", "Sandbox ist auto: sichere Befehle laufen, riskante werden bewertet/abgelehnt; in /config änderbar."),
+    // DE queue keys
+    ("queue_title", "Eingereihte Nachrichten"),
+    ("queue_hint", "↑↓ wählen · x löschen · Enter bearbeiten · Esc schließen"),
+    ("queue_empty", "Warteschlange ist leer"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -953,6 +973,10 @@ const IT: &[(&str, &str)] = &[
     ("cat_tools", "strumenti"),
     ("cat_info", "info"),
     ("onboard_prev_sandbox", "sandbox è auto: i comandi sicuri girano, i rischiosi vengono giudicati o rifiutati; cambialo in /config."),
+    // IT queue keys
+    ("queue_title", "Messaggi in coda"),
+    ("queue_hint", "↑↓ scegli · x elimina · Enter modifica · Esc chiudi"),
+    ("queue_empty", "La coda è vuota"),
 ];
 
 

@@ -1,0 +1,61 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "slow question"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 400
+  },
+  {
+   "send": "first queued"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 200
+  },
+  {
+   "send": "second queued"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "key": "CtrlQ"
+  },
+  {
+   "wait_for": {
+    "text": "Queued messages",
+    "timeout_ms": 10000
+   },
+   "snap": "panel"
+  },
+  {
+   "send": "x"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "removed"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "edited"
+  }
+ ]
+}

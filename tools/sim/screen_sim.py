@@ -110,6 +110,7 @@ KEYMAP = {
     "CtrlD": b"\x04",
     "CtrlL": b"\x0c",
     "CtrlO": b"\x0f",
+    "CtrlQ": b"\x11",
     "CtrlU": b"\x15",
     "CtrlW": b"\x17",
 }

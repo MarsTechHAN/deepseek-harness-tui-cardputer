@@ -496,7 +496,10 @@ impl Scr {
             live_line.push_str(t);
         }
         if live_line.is_empty() && !self.queue.is_empty() {
-            live_line = i18n::tf("queued", &[&self.queue.len().to_string()]);
+            live_line = format!(
+                "{} \u{b7} CtrlQ",
+                i18n::tf("queued", &[&self.queue.len().to_string()])
+            );
         }
         // Scrolled back: say so, and how to get back.
         if self.busy && live_line.is_empty() {
@@ -1203,6 +1206,90 @@ impl Scr {
         true
     }
 
+    /// CtrlQ: inspect/edit queued messages while a turn is running.
+    /// Blocks the stream pump while open (the API channel buffers meanwhile).
+    fn queue_panel_modal(&mut self) -> Option<String> {
+        if self.queue.is_empty() {
+            return None;
+        }
+        let mut sel = 0usize;
+        loop {
+            let mut out = String::with_capacity(2048);
+            out.push_str("\x1b[?25l\x1b[2J\x1b[H\x1b[1;36m");
+            out.push_str(&fit(&format!(" {}", i18n::t("queue_title")), self.cols));
+            out.push_str("\x1b[0m\x1b[K\r\n");
+            let rows = self.rows.saturating_sub(2).max(1);
+            let start = if sel >= rows { sel + 1 - rows } else { 0 };
+            for i in 0..rows {
+                let idx = start + i;
+                if let Some(item) = self.queue.get(idx) {
+                    let selected = idx == sel;
+                    let mark = if selected { "\u{25b8}" } else { " " };
+                    let line = format!("{mark} {}. {}", idx + 1, item);
+                    let line: String = line.chars().take(self.cols.saturating_sub(2)).collect();
+                    if selected {
+                        out.push_str("\x1b[7m");
+                    } else {
+                        out.push_str("\x1b[0;37m");
+                    }
+                    // Pad to the panel width so the selection highlight and
+                    // the row background span the whole line.
+                    let mut shown = fit(&line, self.cols);
+                    shown.push_str(&" ".repeat(self.cols.saturating_sub(dw(&shown))));
+                    out.push_str(&shown);
+                    out.push_str("\x1b[0m\x1b[K\r\n");
+                } else {
+                    out.push_str("\x1b[K\r\n");
+                }
+            }
+            out.push_str("\x1b[90m");
+            out.push_str(&fit(&if self.queue.is_empty() { i18n::t("queue_empty") } else { i18n::t("queue_hint") }, self.cols));
+            out.push_str("\x1b[0m\x1b[K");
+            {
+                use std::io::Write as _;
+                let mut o = std::io::stdout();
+                let _ = o.write_all(out.as_bytes());
+                let _ = o.flush();
+            }
+            let k = match self.read_key_timeout() {
+                Some(k) => k,
+                None => continue,
+            };
+            if k == 0x1b {
+                match self.read_key_timeout() {
+                    Some(b'[') => match self.read_key_timeout() {
+                        Some(b'A') => sel = sel.saturating_sub(1),
+                        Some(b'B') => sel = (sel + 1).min(self.queue.len().saturating_sub(1)),
+                        _ => {}
+                    },
+                    _ => return None,
+                }
+                continue;
+            }
+            match k {
+                0x03 => return None,
+                b'x' | b'X' | 0x7f => {
+                    if !self.queue.is_empty() {
+                        self.queue.remove(sel);
+                        if sel >= self.queue.len() {
+                            sel = self.queue.len().saturating_sub(1);
+                        }
+                    }
+                    if self.queue.is_empty() {
+                        return None;
+                    }
+                }
+                0x0d | 0x0a => {
+                    if !self.queue.is_empty() {
+                        return Some(self.queue.remove(sel));
+                    }
+                    return None;
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// returns Some(line) when the user submits
     fn edit(&mut self) -> Option<String> {
         loop {
@@ -1250,6 +1337,14 @@ impl Scr {
                 0x0f => {
                     // Ctrl-O: recent tool output viewer.
                     tool_output_panel(self);
+                    continue;
+                }
+                0x11 => {
+                    // Ctrl-Q: edit queued messages (normally only while busy).
+                    if let Some(text) = self.queue_panel_modal() {
+                        self.input = text.chars().collect();
+                        self.cursor = self.input.len();
+                    }
                     continue;
                 }
                 0x01 => self.cursor = 0,                   // Ctrl-A
@@ -2060,6 +2155,16 @@ impl<'a> harness::Ui for TermUi<'a> {
                         self.scr
                             .push(i18n::t("voice_queued"), K_DIM);
                         changed = true;
+                    }
+                }
+                0x11 => {
+                    if !self.scr.queue.is_empty() {
+                        if let Some(text) = self.scr.queue_panel_modal() {
+                            self.scr.input = text.chars().collect();
+                            self.scr.cursor = self.scr.input.len();
+                        }
+                        poll_mode(true);
+                        self.scr.draw();
                     }
                 }
                 0x1b => {

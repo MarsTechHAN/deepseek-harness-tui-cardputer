@@ -1,0 +1,1 @@
+{"responses": [{"reasoning": "slow", "initial_delay_ms": 4000, "content": "Slow answer.", "finish_reason": "stop"}, {"reasoning": "after", "content": "After queue.", "finish_reason": "stop"}]}

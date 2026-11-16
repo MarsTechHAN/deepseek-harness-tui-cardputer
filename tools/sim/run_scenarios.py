@@ -704,6 +704,21 @@ def check_sandbox_es(screens, reqs, work):
     return checks
 
 
+def check_queue_edit(screens, reqs, work):
+    panel = screens.get("panel", "")
+    removed = screens.get("removed", "")
+    edited = screens.get("edited", "")
+    checks = []
+    checks.append(("Queued messages" in panel and "first queued" in panel and "second queued" in panel,
+                   "CtrlQ opens the queued-message editor while busy"))
+    checks.append(("x delete" in panel, "editor advertises delete/edit keys"))
+    checks.append(("first queued" not in removed and "second queued" in removed,
+                   "x removes the selected queued message"))
+    checks.append(("> second queued" in edited,
+                   "Enter moves the selected message back into the prompt"))
+    return checks
+
+
 def check_config_menu(screens, reqs, work):
     menu = screens.get("menu", "")
     bottom = screens.get("bottom", "")
@@ -779,6 +794,7 @@ def check_goal_blocked(screens, reqs, work):
 
 CHECKS = {
     "clear": check_clear,
+    "queue_edit": check_queue_edit,
     "sandbox_es": check_sandbox_es,
     "history_persist": check_history_persist,
     "watcher_flood": check_watcher_flood,
