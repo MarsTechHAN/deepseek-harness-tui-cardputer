@@ -505,6 +505,14 @@ impl Scr {
         if self.busy && live_line.is_empty() {
             live_line = i18n::t("busy").to_string();
         }
+        // While the palette is open, its footer doubles as a position/hint line.
+        if live_line.is_empty() && !pal.is_empty() {
+            live_line = format!(
+                "{}/{}  \u{2191}\u{2193}  Enter  Esc",
+                self.palette_sel.min(pal.len().saturating_sub(1)) + 1,
+                pal.len()
+            );
+        }
         // Idle status line doubles as a key-hint area.
         if live_line.is_empty() && !self.busy && self.input.is_empty() && self.scroll == 0 {
             live_line = i18n::t("idle_hint").to_string();
@@ -3245,7 +3253,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
     let mut sel = 0usize;
     loop {
         let c = config_rc.borrow();
-        let (model, effort, base, kstate, voice, auto, queued, lang, steps, compact, goalr, sandbox_mode, caps) = (
+        let (model, effort, base, kstate, voice, auto, queued, lang, steps, compact, goalr, sandbox_mode, judge_model, caps) = (
             c.model.clone(),
             c.effort.clone(),
             c.base.clone(),
@@ -3270,6 +3278,11 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                 c.goal_max_rounds.to_string()
             },
             c.sandbox_mode.clone(),
+            if c.sandbox_judge_model.is_empty() {
+                i18n::t("same_as_model").to_string()
+            } else {
+                c.sandbox_judge_model.clone()
+            },
             c.capabilities(),
         );
         drop(c);
@@ -3292,6 +3305,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             MenuItem { label: i18n::t("menu_compact").into(), value: compact },
             MenuItem { label: i18n::t("menu_goalrounds").into(), value: goalr },
             MenuItem { label: i18n::t("menu_sandbox").into(), value: sandbox_mode },
+            MenuItem { label: i18n::t("menu_sandbox_judge").into(), value: judge_model },
             MenuItem { label: i18n::t("menu_extensions").into(), value: String::new() },
             MenuItem { label: i18n::t("menu_save").into(), value: String::new() },
         ];
@@ -3313,6 +3327,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             "cfg_help_compact",
             "cfg_help_goalrounds",
             "cfg_help_sandbox",
+            "cfg_help_sandbox_judge",
             "cfg_help_extensions",
             "cfg_help_save",
         ];
@@ -3533,6 +3548,17 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                 }
             }
             12 => {
+                if let Some(v) = menu_prompt(
+                    scr,
+                    "Judge model for auto sandbox (empty = session model):",
+                    false,
+                ) {
+                    let mut c = config_rc.borrow_mut();
+                    c.sandbox_judge_model = v.trim().to_string();
+                    let _ = c.save();
+                }
+            }
+            13 => {
                 scr.menu = None;
                 scr.draw();
                 extensions_menu(scr);

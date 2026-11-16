@@ -213,6 +213,12 @@ const EN: &[(&str, &str)] = &[
     ("queue_title", "Queued messages"),
     ("queue_hint", "↑↓ select · x delete · Enter edit · Esc close"),
     ("queue_empty", "Queue is empty"),
+    // EN sandbox judge keys
+    ("menu_sandbox_judge", "Sandbox judge model"),
+    ("same_as_model", "same as model"),
+
+    // sandbox judge help
+    ("cfg_help_sandbox_judge", "model used to judge uncertain tool calls in auto mode"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -366,6 +372,12 @@ const ZH: &[(&str, &str)] = &[
     ("queue_title", "排队消息"),
     ("queue_hint", "↑↓ 选择 · x 删除 · Enter 编辑 · Esc 关闭"),
     ("queue_empty", "队列为空"),
+    // ZH sandbox judge keys
+    ("menu_sandbox_judge", "沙箱判定模型"),
+    ("same_as_model", "同当前模型"),
+
+    // sandbox judge help
+    ("cfg_help_sandbox_judge", "auto 模式下判定不确定工具调用的模型"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -518,6 +530,12 @@ const ES: &[(&str, &str)] = &[
     ("queue_title", "Mensajes en cola"),
     ("queue_hint", "↑↓ elegir · x borrar · Enter editar · Esc cerrar"),
     ("queue_empty", "La cola está vacía"),
+    // ES sandbox judge keys
+    ("menu_sandbox_judge", "Modelo juez del sandbox"),
+    ("same_as_model", "igual que el modelo"),
+
+    // sandbox judge help
+    ("cfg_help_sandbox_judge", "modelo que juzga llamadas inciertas en auto"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -671,6 +689,12 @@ const JA: &[(&str, &str)] = &[
     ("queue_title", "キューのメッセージ"),
     ("queue_hint", "↑↓ 選択 · x 削除 · Enter 編集 · Esc 閉じる"),
     ("queue_empty", "キューは空です"),
+    // JA sandbox judge keys
+    ("menu_sandbox_judge", "サンドボックス判定モデル"),
+    ("same_as_model", "モデルと同じ"),
+
+    // sandbox judge help
+    ("cfg_help_sandbox_judge", "auto で不確実なツール呼び出しを判定するモデル"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -824,6 +848,12 @@ const DE: &[(&str, &str)] = &[
     ("queue_title", "Eingereihte Nachrichten"),
     ("queue_hint", "↑↓ wählen · x löschen · Enter bearbeiten · Esc schließen"),
     ("queue_empty", "Warteschlange ist leer"),
+    // DE sandbox judge keys
+    ("menu_sandbox_judge", "Sandbox-Prüfmodell"),
+    ("same_as_model", "wie Modell"),
+
+    // sandbox judge help
+    ("cfg_help_sandbox_judge", "Modell zur Bewertung unklarer Tool-Aufrufe (auto)"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -977,6 +1007,12 @@ const IT: &[(&str, &str)] = &[
     ("queue_title", "Messaggi in coda"),
     ("queue_hint", "↑↓ scegli · x elimina · Enter modifica · Esc chiudi"),
     ("queue_empty", "La coda è vuota"),
+    // IT sandbox judge keys
+    ("menu_sandbox_judge", "Modello giudice sandbox"),
+    ("same_as_model", "come il modello"),
+
+    // sandbox judge help
+    ("cfg_help_sandbox_judge", "modello che giudica le chiamate incerte in auto"),
 ];
 
 

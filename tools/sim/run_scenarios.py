@@ -723,16 +723,18 @@ def check_config_menu(screens, reqs, work):
     menu = screens.get("menu", "")
     bottom = screens.get("bottom", "")
     toggled = screens.get("toggled", "")
+    middle = screens.get("middle", "")
     cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
     checks = []
     checks.append(("Max steps/turn" in menu, "max steps setting visible"))
     checks.append(("Auto compact" in menu or "Auto compact" in toggled or "Auto compact" in bottom,
                    "compaction setting visible"))
-    checks.append(("1/14" in menu, "config menu shows the scroll position"))
-    checks.append(("Goal rounds" in menu or "Goal rounds" in bottom,
+    checks.append(("1/15" in menu, "config menu shows the scroll position"))
+    checks.append(("Goal rounds" in menu or "Goal rounds" in middle or "Goal rounds" in bottom,
                    "goal round setting present"))
-    checks.append(("Sandbox mode" in menu or "Sandbox mode" in bottom,
+    checks.append(("Sandbox mode" in menu or "Sandbox mode" in middle or "Sandbox mode" in bottom,
                    "sandbox mode setting present"))
+    checks.append(("Sandbox judge" in bottom, "sandbox judge setting present"))
     return checks
 
 
@@ -749,6 +751,8 @@ def check_commands(screens, reqs, work):
     checks.append(("[goal]" in palette_g or "[core]" in palette_g,
                    "palette groups commands by category"))
     checks.append(("[session]" in palette_c, "palette shows session category"))
+    checks.append(("Enter" in palette_g and "/" in palette_g,
+                   "palette footer shows the match position"))
     checks.append(("/compact" in help_ or "/clear" in help_,
                    "/help lists commands"))
     checks.append(("/15" in help_ or "1/15" in help_, "help shows the command count position"))

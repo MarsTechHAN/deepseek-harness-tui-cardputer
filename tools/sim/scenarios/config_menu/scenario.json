@@ -169,6 +169,28 @@
    "wait_ms": 90
   },
   {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 90
+  },
+  {
+   "wait_ms": 300,
+   "snap": "middle"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 90
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 90
+  },
+  {
    "wait_ms": 300,
    "snap": "bottom"
   },

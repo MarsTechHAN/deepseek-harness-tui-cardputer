@@ -112,8 +112,9 @@ repository.
 
 **Configuration screen**
 - `/config` is a menuconfig-style screen: arrows move, Enter edits, Esc leaves. It
-  edits model, effort, endpoint, API key, TTS voice, auto-send, queue mode and
-  language, and warns before switching to a third-party endpoint.
+  edits model, effort, endpoint, API key, TTS voice, auto-send, queue mode,
+  language, step/compaction/goal budgets, sandbox mode and the auto-judge
+  model, and warns before switching to a third-party endpoint.
 
 **Endpoint capabilities**
 - Speech and the server-side tools (`search`/`fetch`/`ocr`) only exist on DeepSeek's
@@ -122,6 +123,7 @@ repository.
   prints the effective tool set for diagnosis.
 
 **Interaction polish**
+- The `/` palette footer shows the match position (`1/5 ↑↓ Enter Esc`).
 - `/help` and the `/` palette group commands by category (session, goal, core,
   setup, tools, info); `/help` previews usage, the palette keeps only short
   argument hints so descriptions stay readable. Enter runs a no-argument
