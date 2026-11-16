@@ -58,6 +58,32 @@ pub fn list() -> Vec<Checkpoint> {
     out.into_iter().map(|(_, _, c)| c).collect()
 }
 
+/// Human preview lines for the rewind picker.
+pub fn preview(path: &std::path::Path) -> Vec<String> {
+    let (title, messages) = match load(path) {
+        Some(v) => v,
+        None => return vec!["(unreadable checkpoint)".to_string()],
+    };
+    let mut out = vec![format!("title: {title}")];
+    let mut recent: Vec<(bool, String)> = Vec::new();
+    for m in messages.iter().rev() {
+        let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        let text = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
+        if text.trim().is_empty() || (role != "user" && role != "assistant") {
+            continue;
+        }
+        let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        recent.push((role == "user", flat.chars().take(40).collect()));
+        if recent.len() >= 3 {
+            break;
+        }
+    }
+    for (is_user, text) in recent.into_iter().rev() {
+        out.push(format!("  {} {}", if is_user { ">" } else { "<" }, text));
+    }
+    out
+}
+
 /// Returns the checkpoint title and messages.
 pub fn load(path: &std::path::Path) -> Option<(String, Vec<J>)> {
     let v = json::parse(&std::fs::read_to_string(path).ok()?)?;

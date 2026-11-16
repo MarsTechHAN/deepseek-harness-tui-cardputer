@@ -128,7 +128,11 @@ repository.
 - CtrlO opens a recent tool-output list; Enter shows the full result in the
   scrollable panel viewer, `s` saves it under `~/.dst/tmp/`. Ctrl+A/Ctrl+E move the cursor, Ctrl+W deletes a word;
   Home/End jump to the top/bottom of the scrollback when not editing.
-- Menu right-hand text truncates with `…` instead of silently cutting words.
+- Menu right-hand text truncates with `…` instead of silently cutting words;
+  `/help`, `/rewind`, `/config` and onboarding show a live description/preview
+  for the highlighted row.
+- The background-task manager opens the full task output in the scrollable
+  panel viewer; the viewer supports `s` to save the panel text.
 - Numeric config rows (max steps, compaction threshold, goal rounds) open an
   edit prompt instead of only cycling fixed values.
 - Failed requests print an actionable hint (auth → `/key`, rate limit → wait or

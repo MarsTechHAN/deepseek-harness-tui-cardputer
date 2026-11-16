@@ -157,6 +157,8 @@ struct Artifact {
     title: String,
     body: Vec<String>,
     scroll: usize,
+    /// Transient footer notice (e.g. "saved to ~/.dst/tmp/...").
+    notice: Option<String>,
 }
 
 impl Scr {
@@ -665,7 +667,7 @@ impl Scr {
         if let Some(preview) = &m.preview {
             for line in preview {
                 s.push_str("\x1b[0;36m");
-                s.push_str(&fit(line, self.cols));
+                s.push_str(&fit_ellipsis(line, self.cols));
                 s.push_str("\x1b[0m\x1b[K\r\n");
             }
         }
@@ -691,15 +693,18 @@ impl Scr {
             s.push_str("\x1b[0m\x1b[K\r\n");
         }
         let hidden = a.body.len().saturating_sub(a.scroll + body_rows);
-        let footer = if hidden > 0 {
+        let mut footer = if hidden > 0 {
             format!(
-                " {} | {}",
+                " {} | s save | {}",
                 i18n::t("artifact_back"),
                 i18n::tf("artifact_more", &[&hidden.to_string()])
             )
         } else {
-            format!(" {}", i18n::t("artifact_back"))
+            format!(" {} | s save", i18n::t("artifact_back"))
         };
+        if let Some(n) = &a.notice {
+            footer = format!("{footer} | {n}");
+        }
         s.push_str("\x1b[90m");
         s.push_str(&fit(&footer, self.cols));
         s.push_str("\x1b[0m\x1b[K");
@@ -753,6 +758,26 @@ impl Scr {
         match self.read_key_timeout() {
             None => false,
             Some(b) => match b {
+                b's' | b'S' => {
+                    if let Some(a) = self.artifact.as_mut() {
+                        let name = a.title.chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' }).collect::<String>();
+                        let path = crate::config::tmp_dir().join(format!("{name}.txt"));
+                        let text = a.body.join("\n");
+                        match std::fs::write(&path, text) {
+                            Ok(()) => {
+                                let home = std::env::var("HOME").unwrap_or_default();
+                                let mut shown = path.display().to_string();
+                                if !home.is_empty() && shown.starts_with(&home) {
+                                    shown = format!("~{}", &shown[home.len()..]);
+                                }
+                                a.notice = Some(format!("saved {shown}"));
+                            }
+                            Err(e) => a.notice = Some(format!("save failed: {e}")),
+                        }
+                        self.draw();
+                    }
+                    true
+                }
                 0x0d | 0x0a | b'q' | 0x03 => {
                     self.artifact = None;
                     self.draw();
@@ -1020,12 +1045,23 @@ impl Scr {
                 }
                 0x0d | 0x0a => {
                     let id = views[sel].id.clone();
-                    let text = crate::bg::output_of(&id, 6);
+                    let text = crate::bg::output_of(&id, 200);
                     let mut lines: Vec<String> = Vec::new();
                     for l in text.lines() {
-                        lines.push(l.to_string());
+                        let mut wrapped = Vec::new();
+                        Scr::wrap_into(&mut wrapped, l, self.cols);
+                        if wrapped.is_empty() { lines.push(String::new()); }
+                        lines.extend(wrapped);
                     }
-                    preview = Some(lines);
+                    self.menu = None;
+                    self.artifact = Some(Artifact {
+                        title: format!("{id} output"),
+                        body: lines,
+                        scroll: 0,
+                        notice: None,
+                    });
+                    self.draw();
+                    return;
                 }
                 _ => {}
             }
@@ -1862,6 +1898,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                     title: tidy(&title),
                     body: lines,
                     scroll: 0,
+                    notice: None,
                 });
                 self.scr.draw();
             }
@@ -2245,21 +2282,32 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc, login_rx: &LoginRx) {
     let items = vec![
         MenuItem {
             label: i18n::t("onboard_opt1").into(),
-            value: "platform.deepseek.com".into(),
+            value: String::new(),
         },
         MenuItem {
             label: i18n::t("onboard_opt2").into(),
-            value: "OpenAI-compatible".into(),
+            value: String::new(),
         },
     ];
     let mut sel = 0usize;
     loop {
+        let preview = Some(if sel == 0 {
+            vec![
+                "DeepSeek official: key at platform.deepseek.com".to_string(),
+                "QR login opens a page on your phone to paste it.".to_string(),
+            ]
+        } else {
+            vec![
+                "Custom endpoint: any OpenAI-compatible /v1 URL + key.".to_string(),
+                "search/fetch/ocr and speech tools are unavailable there.".to_string(),
+            ]
+        });
         scr.menu = Some(Menu {
             title: i18n::t("onboard_choose").into(),
             items: items.clone(),
             sel,
             hint: i18n::t("onboard_hint").into(),
-            preview: None,
+            preview,
         });
         scr.draw();
         let k = match scr.read_key_timeout() {
@@ -2714,8 +2762,9 @@ let items: Vec<MenuItem> = list.iter().enumerate().map(|(i, c)| MenuItem {
             label: format!("{}. {}", i + 1, c.label.chars().take(42).collect::<String>()),
             value: if c.preview.is_empty() { String::new() } else { c.preview.chars().take(18).collect() },
         }).collect();
+        let preview = Some(crate::checkpoint::preview(&list[sel].path));
         scr.menu = Some(Menu { title: i18n::t("rewind_title").into(), items, sel,
-            hint: i18n::t("rewind_hint").into(), preview: None });
+            hint: i18n::t("rewind_hint").into(), preview });
         scr.draw();
         let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
         if k == 0x1b {
@@ -2885,7 +2934,7 @@ fn tool_output_panel(scr: &mut Scr) {
                 body.extend(wrapped);
             }
             scr.menu = None;
-            scr.artifact = Some(Artifact { title, body, scroll: 0 });
+            scr.artifact = Some(Artifact { title, body, scroll: 0, notice: None });
             scr.draw();
             return;
         }
@@ -2907,12 +2956,19 @@ fn help_menu(scr: &mut Scr) -> Option<String> {
     }
     let mut sel = 0usize;
     loop {
+        let c = &cmd::COMMANDS[sel];
+        let hint = c.input_hint.map(|h| format!(" {h}")).unwrap_or_default();
+        let preview = Some(vec![
+            format!("/{}{hint}", c.name),
+            cmd::describe(c.name),
+            "Enter runs it (or completes the command)".to_string(),
+        ]);
         scr.menu = Some(Menu {
             title: i18n::t("cmd_help_title").into(),
             items: items.clone(),
             sel,
             hint: i18n::t("help_hint").into(),
-            preview: None,
+            preview,
         });
         scr.draw();
         let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
@@ -3012,7 +3068,24 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
         } else {
             i18n::t("menu_hint_gated").to_string()
         };
-        scr.menu = Some(Menu { title: i18n::t("menu_title").into(), items: items.clone(), sel, hint, preview: None });
+        let helps = [
+            "model: which model /model uses",
+            "effort: reasoning effort tier sent to the API",
+            "endpoint: official DeepSeek or a compatible base URL",
+            "key: API key (stored in config.yml, mode 600)",
+            "voice: TTS voice used by the speak tool",
+            "auto-send: submit the transcript automatically after push-to-talk",
+            "queue: Enter queues while busy; off = send immediately",
+            "language: UI language (en/zh/es/ja/de/it)",
+            "max steps: model requests per turn (0 = unlimited)",
+            "auto compact: summarise history when pressure exceeds this token budget (0 = off)",
+            "goal rounds: automatic continuation rounds (0 = unlimited)",
+            "sandbox: auto (LLM judge) / strict (ask) / full access",
+            "extensions: inspect skills and MCP servers",
+            "save: write config.yml and return",
+        ];
+        let preview = Some(vec![helps[sel.min(helps.len() - 1)].to_string()]);
+        scr.menu = Some(Menu { title: i18n::t("menu_title").into(), items: items.clone(), sel, hint, preview });
         scr.draw();
         let k = match scr.read_key_timeout() {
             Some(k) => k,
