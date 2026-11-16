@@ -41,7 +41,7 @@ def main():
         subprocess.run(
             [CHROME, "--headless=new", "--disable-gpu", "--no-sandbox",
              "--proxy-server=direct://", "--proxy-bypass-list=*",
-             "--virtual-time-budget=700", f"--window-size=500,1100",
+             "--virtual-time-budget=700", f"--window-size=500,1450",
              f"--screenshot={out}", url + "/"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
         if not os.path.exists(out):

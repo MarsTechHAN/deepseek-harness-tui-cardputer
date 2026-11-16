@@ -40,6 +40,7 @@ def main(argv):
         (f"feature scenarios ({scenario_count})", ["run_scenarios.py"], False),
         ("login page i18n (en/zh/es/ja/de/it)", ["check_login_page_i18n.py"], quick),
         ("login cancel (phone page)", ["check_login_cancel.py"], quick),
+        ("login token paste (phone page)", ["check_login_manual_token.py"], quick),
         ("QR scanability (jsQR)", ["check_qr_scan.py"], quick),
         ("login screen layout (6 languages)", ["render_login_i18n.py"], quick),
         ("memory (20-turn long session)", ["check_memory.py"], quick),

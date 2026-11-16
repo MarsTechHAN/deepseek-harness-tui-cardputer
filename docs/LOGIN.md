@@ -25,7 +25,7 @@ Run `/login` (or pick *DeepSeek official* during onboarding):
    the phone, and the device finishes the nine-step token exchange by itself.
 2. **Phone page** — dst serves `http://<device-ip>:8787/` on the LAN. The page
    shows the same QR, live progress, a QR countdown, Cancel and Retry buttons,
-   and a manual API-key form. The page follows the device UI language
+   a manual API-key form, and a field to paste an existing DSH token. The page follows the device UI language
    (en/zh/es/ja/de/it).
 3. **Type directly** — menuconfig-style entry for a DSH token, or Base URL +
    API key + model.

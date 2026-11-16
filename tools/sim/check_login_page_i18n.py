@@ -5,12 +5,12 @@ import os, subprocess, sys, tempfile, time, urllib.request
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 BIN = os.environ.get("DST_BIN", os.path.join(ROOT, "target", "debug", "dst"))
 EXPECT = {
-    "en": ["Sign in to DeepSeek", "Start WeChat login", "Save to device", "QR expired — refreshing", "Cancel", "Retry WeChat login", "login failed — details below"],
-    "zh": ["登录 DeepSeek", "开始微信登录", "保存到设备", "二维码过期 — 正在刷新", "取消", "重试微信登录", "登录失败 — 详情见下方"],
-    "es": ["Inicia sesión en DeepSeek", "Iniciar login con WeChat", "Guardar en el dispositivo", "QR caducado — renovando", "Cancelar", "Reintentar login WeChat", "login fallido — detalles abajo"],
-    "ja": ["DeepSeek にログイン", "WeChat ログインを開始", "端末に保存", "QR の期限切れ — 更新中", "キャンセル", "WeChat ログインを再試行", "ログイン失敗 — 下記の詳細"],
-    "de": ["Bei DeepSeek anmelden", "WeChat-Login starten", "Auf Gerät speichern", "QR abgelaufen — wird erneuert", "Abbrechen", "WeChat-Login wiederholen", "Login fehlgeschlagen — Details unten"],
-    "it": ["Accedi a DeepSeek", "Avvia login WeChat", "Salva sul dispositivo", "QR scaduto — aggiornamento", "Annulla", "Riprova login WeChat", "login fallito — dettagli sotto"],
+    "en": ["Sign in to DeepSeek", "Start WeChat login", "Save to device", "QR expired — refreshing", "Cancel", "Retry WeChat login", "login failed — details below", "Already have a DSH token?", "Save token"],
+    "zh": ["登录 DeepSeek", "开始微信登录", "保存到设备", "二维码过期 — 正在刷新", "取消", "重试微信登录", "登录失败 — 详情见下方", "已有 DSH token？", "保存 token"],
+    "es": ["Inicia sesión en DeepSeek", "Iniciar login con WeChat", "Guardar en el dispositivo", "QR caducado — renovando", "Cancelar", "Reintentar login WeChat", "login fallido — detalles abajo", "¿Ya tienes un token DSH?", "Guardar token"],
+    "ja": ["DeepSeek にログイン", "WeChat ログインを開始", "端末に保存", "QR の期限切れ — 更新中", "キャンセル", "WeChat ログインを再試行", "ログイン失敗 — 下記の詳細", "DSH トークンを既にお持ちですか？", "トークンを保存"],
+    "de": ["Bei DeepSeek anmelden", "WeChat-Login starten", "Auf Gerät speichern", "QR abgelaufen — wird erneuert", "Abbrechen", "WeChat-Login wiederholen", "Login fehlgeschlagen — Details unten", "DSH-Token bereits vorhanden?", "Token speichern"],
+    "it": ["Accedi a DeepSeek", "Avvia login WeChat", "Salva sul dispositivo", "QR scaduto — aggiornamento", "Annulla", "Riprova login WeChat", "login fallito — dettagli sotto", "Hai già un token DSH?", "Salva token"],
 }
 
 def main():

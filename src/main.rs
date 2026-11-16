@@ -2721,6 +2721,9 @@ fn login_web(scr: &mut Scr, port: u16, lang: &str) -> Result<LoginResult, String
         }
         if let Ok(sub) = session.rx.try_recv() {
             close_qr(scr);
+            if let Some(t) = sub.token.clone() {
+                return Ok(LoginResult::Token(t));
+            }
             return Ok(LoginResult::Key(sub));
         }
         if let Some(token) = session.shared.lock().unwrap().token.clone() {
@@ -2793,6 +2796,7 @@ fn login_type(scr: &mut Scr) -> Option<LoginResult> {
                 base.trim().to_string()
             },
             model: model.trim().to_string(),
+            token: None,
         }))
     }
 }
@@ -4132,7 +4136,11 @@ fn main() {
                 let mut announced_cancel = false;
                 loop {
                     if let Ok(sub) = session.rx.try_recv() {
-                        println!("MANUAL {} {}", sub.base, dsh_login::mask(&sub.key));
+                        if let Some(t) = sub.token {
+                            println!("TOKENPASTE {}", dsh_login::mask(&t));
+                        } else {
+                            println!("MANUAL {} {}", sub.base, dsh_login::mask(&sub.key));
+                        }
                         return;
                     }
                     let (token, err, phase) = {
