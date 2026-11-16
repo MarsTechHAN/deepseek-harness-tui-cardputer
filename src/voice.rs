@@ -1,4 +1,4 @@
-//! Voice input/output on DeepSeek's own APIs — pure Rust, no Python helper.
+//! Voice input/output on DeepSeek's own APIs — no Python, no Volcengine.
 //!
 //!   TTS: POST /v1/tools/tts   {text, voice_id, format:"pcm"}
 //!        -> 24 kHz s16 mono PCM, converted here to 48 kHz S32 stereo for
@@ -24,6 +24,21 @@ const ASR_RATE: usize = 16_000;
 const PLAY_PAD_MS: usize = 400;
 
 static CFG: std::sync::Mutex<Option<crate::api::Cfg>> = std::sync::Mutex::new(None);
+
+/// Set while `aplay` is running, so the UI can stop speech with Esc.
+static PLAYING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+static STOP_PLAYBACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ask any in-flight TTS playback to stop (called when the user presses Esc).
+pub fn request_stop() {
+    STOP_PLAYBACK.store(true, std::sync::atomic::Ordering::SeqCst);
+    let pid = PLAYING.load(std::sync::atomic::Ordering::SeqCst);
+    if pid > 0 {
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .output();
+    }
+}
 
 pub fn set_cfg(c: crate::api::Cfg) {
     if let Ok(mut g) = CFG.lock() {
@@ -113,15 +128,34 @@ fn play_pcm24k(pcm: &[u8]) -> Result<(), String> {
     let path = crate::config::cache_dir().join("tts.raw");
     let path = path.to_string_lossy().to_string();
     std::fs::write(&path, &raw).map_err(|e| format!("{path}: {e}"))?;
-    let status = Command::new("aplay")
+    STOP_PLAYBACK.store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut child = Command::new("aplay")
         .args([
             "-q", "-D", CARD, "-f", "S32_LE", "-r", "48000", "-c", "2", "-t", "raw", path.as_str(),
         ])
-        .status()
+        .stdin(Stdio::null())
+        .spawn()
         .map_err(|e| format!("aplay: {e}"))?;
+    PLAYING.store(child.id() as i32, std::sync::atomic::Ordering::SeqCst);
+    let mut interrupted = false;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {}
+            Err(_) => break,
+        }
+        if STOP_PLAYBACK.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            let _ = child.kill();
+            let _ = child.wait();
+            interrupted = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+    PLAYING.store(0, std::sync::atomic::Ordering::SeqCst);
     let _ = std::fs::remove_file(&path);
-    if !status.success() {
-        return Err(format!("aplay exited with {status}"));
+    if interrupted {
+        return Err("speech interrupted by the user".into());
     }
     Ok(())
 }

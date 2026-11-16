@@ -166,16 +166,15 @@ Parent directories are created as needed. Read a file before overwriting it.",
         },
         ToolDef {
             name: "speak",
-            description: "Say a short spoken status out loud through the device speaker. \
-This is the voice channel for a person who is not reading the screen: it carries the \
-gist of what you did and where things stand, not the details. Detail belongs in your \
-reply text, which the person reads. Keep it to one or two sentences.",
+            description: "Read text out loud through the device speaker. Use it when the \
+user asks to be told something aloud. Generate a SHORT spoken message (a sentence or \
+two); requests longer than 150 words are rejected, so summarise and leave detail in \
+your reply text.",
             params: vec![Param::req(
                 "text",
                 "string",
-                "What to say. At most about 10 seconds of speech: roughly 40 Chinese \
-characters or 90 English characters. Summarise the outcome (\u{201c}done, the display \
-is back\u{201d}), not the steps. Never read out code, paths, or logs.",
+                "What to say. Maximum 150 words (a CJK character counts as one word). \
+Longer input is rejected outright \u{2014} shorten it and call again.",
             )],
             concurrency_safe: false,
             timeout_ms: 30_000,
@@ -184,7 +183,7 @@ is back\u{201d}), not the steps. Never read out code, paths, or logs.",
             dynamic: None,
             render: speak_render,
             present: |a| format!("speak {}", short(&str_arg(a, "text").unwrap_or_default(), 40)),
-            post: Some(speak_post),
+            post: None,
         },
         ToolDef {
             name: "skill",
@@ -569,106 +568,63 @@ fn list_render(_args: &J, v: &J) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// speak -- bounded to ~10 s of speech
+// speak -- max 150 words, longer calls are rejected
 // ---------------------------------------------------------------------------
 
-/// Speech budget. The TTS voice speaks roughly 4.5 Chinese characters per
-/// second, or ~15 English characters per second.
-const SPEECH_BUDGET_S: f64 = 9.5;
+/// Upper bound on spoken length. Counted as words for spaced languages and as
+/// one word per CJK character. A longer request is rejected so the model has to
+/// summarise instead of streaming an essay into the speaker.
+const MAX_SPEECH_WORDS: usize = 150;
 
-fn speech_seconds(text: &str) -> f64 {
-    let mut cjk = 0usize;
-    let mut other = 0usize;
+fn count_words(text: &str) -> usize {
+    let mut words = 0usize;
+    let mut latin_token = false;
     for ch in text.chars() {
-        if matches!(ch as u32, 0x3000..=0x9FFF | 0xFF00..=0xFFEF) {
-            cjk += 1;
-        } else if !ch.is_whitespace() {
-            other += 1;
-        }
-    }
-    cjk as f64 / 4.5 + other as f64 / 15.0
-}
-
-/// Trim to the last sentence boundary inside the budget, so the clip never
-/// stops mid-phrase.
-fn fit_speech(text: &str) -> (String, bool) {
-    let t = text.trim();
-    if speech_seconds(t) <= SPEECH_BUDGET_S {
-        return (t.to_string(), false);
-    }
-    let mut budget = SPEECH_BUDGET_S;
-    let mut out = String::new();
-    for ch in t.chars() {
-        let cost = if matches!(ch as u32, 0x3000..=0x9FFF | 0xFF00..=0xFFEF) {
-            1.0 / 4.5
+        let u = ch as u32;
+        let is_cjk = matches!(u, 0x3000..=0x9FFF | 0xFF00..=0xFFEF);
+        if is_cjk {
+            if latin_token {
+                words += 1;
+                latin_token = false;
+            }
+            words += 1;
         } else if ch.is_whitespace() {
-            0.0
+            if latin_token {
+                words += 1;
+                latin_token = false;
+            }
         } else {
-            1.0 / 15.0
-        };
-        if cost > budget {
-            break;
-        }
-        budget -= cost;
-        out.push(ch);
-    }
-    // Prefer ending at a real sentence boundary.
-    let marks = ['\u{3002}', '\u{ff01}', '\u{ff1f}', '.', '!', '?', '\u{ff0c}', ','];
-    if let Some(pos) = out.rfind(|c| marks.contains(&c)) {
-        // `pos` is the start byte of a possibly multi-byte mark (。 is three
-        // bytes), so the end of the run must be measured, not pos+1.
-        let end = pos + out[pos..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-        if out[..end].chars().count() >= 6 {
-            out.truncate(end);
+            latin_token = true;
         }
     }
-    (out.trim().to_string(), true)
+    if latin_token {
+        words += 1;
+    }
+    words
 }
 
 fn speak_exec(args: &J) -> Result<J, Fail> {
     let text = str_arg(args, "text").ok_or_else(|| Fail::new("missing 'text'"))?;
-    let (spoken, truncated) = fit_speech(&text);
-    if spoken.trim().is_empty() {
-        return Err(Fail::new("nothing to say after trimming to the speech budget"));
+    let words = count_words(&text);
+    if words > MAX_SPEECH_WORDS {
+        return Err(Fail::new(format!(
+            "speech rejected: {words} words exceeds the {MAX_SPEECH_WORDS}-word limit. \
+Summarise what matters to the user and call speak again, or put the detail in your reply text."
+        )));
     }
-    // DeepSeek TTS, implemented in Rust (no Python helper).
-    crate::voice::tts(&spoken).map_err(Fail::new)?;
+    let helper = "/home/hanxiao/dsh-lite/voice/voice_helper.py";
+    let _ = helper;
+    crate::voice::tts(&text).map_err(Fail::new)?;
     Ok(obj(vec![
-        ("spoken", J::s(&spoken)),
-        ("chars", J::Num(spoken.chars().count() as f64)),
-        ("seconds", J::Num((speech_seconds(&spoken) * 10.0).round() / 10.0)),
-        ("truncated", J::Bool(truncated)),
+        ("spoken", J::s(&text)),
+        ("words", J::Num(words as f64)),
     ]))
 }
 
 fn speak_render(_args: &J, v: &J) -> String {
     let spoken = v.get("spoken").and_then(|x| x.as_str()).unwrap_or("");
-    let secs = v.get("seconds").and_then(|x| x.as_num()).unwrap_or(0.0);
-    let cut = v
-        .get("truncated")
-        .map(|x| matches!(x, J::Bool(true)))
-        .unwrap_or(false);
-    let mut s = format!("spoke {secs:.1}s: {spoken}");
-    if cut {
-        s.push_str(
-            "\n[text was cut to the 10-second speech budget; put the rest in your reply text]",
-        );
-    }
-    s
-}
-
-/// post-execute: when speech was trimmed, hand the model the constraint as
-/// context for the next request instead of only as result text.
-fn speak_post(_args: &J, v: &J) -> Option<String> {
-    if v.get("truncated").map(|x| matches!(x, J::Bool(true))).unwrap_or(false) {
-        Some(
-            "The speak tool cut your text to the 10-second budget. Say the gist next time; \
-write the details in your reply instead of speaking them."
-                .to_string(),
-        )
-    } else {
-        None
-    }
+    let words = v.get("words").and_then(|x| x.as_num()).unwrap_or(0.0);
+    format!("spoke {words:.0} words: {spoken}")
 }
 
 // ---------------------------------------------------------------------------

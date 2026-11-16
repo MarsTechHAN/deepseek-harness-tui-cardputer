@@ -49,6 +49,8 @@ pub enum Ev {
     Delta(String),
     /// Live thinking progress. `chars` is how much has arrived so far.
     Thinking { secs: f32, chars: usize },
+    /// A piece of the reasoning text, shown live and folded when content starts.
+    ThinkingDelta(String),
     /// Thinking finished; the UI should collapse it to one line.
     ThinkingDone { secs: f32, chars: usize },
     /// Settled assistant text (`assistant/message`).
@@ -193,6 +195,7 @@ fn stream_once(
             match chat.rx.try_recv() {
                 Ok(ApiEv::Reason(r)) => {
                     reason_chars += r.chars().count();
+                    ui.on(Ev::ThinkingDelta(r));
                 }
                 Ok(ApiEv::Content(c)) => {
                     if let Some(t0) = think_t0.take() {

@@ -55,6 +55,9 @@ pub struct Scr {
     qr: Option<Vec<String>>,
     /// Whether speech (ASR/TTS) is available for the current endpoint.
     speech_ok: bool,
+    /// Live reasoning lines (folded into one summary line when content starts).
+    think_lines: Vec<String>,
+    think_active: bool,
     /// Animated splash: current frame and whether the animation is running.
     art_frame: usize,
     art_on: bool,
@@ -134,6 +137,8 @@ impl Scr {
             busy: false,
             voice_pending: false,
             speech_ok: true,
+            think_lines: Vec::new(),
+            think_active: false,
             art_frame: 0,
             art_on: false,
             menu: None,
@@ -329,11 +334,17 @@ impl Scr {
         // Layout: [header(1)] + transcript + palette + live(1) + input(1).
         let pal = self.palette_items();
         let pal_rows = pal.len().min(4);
+        let think_rows = if self.think_active {
+            self.think_lines.len().min(4)
+        } else {
+            0
+        };
         let body_rows = self
             .rows
             .saturating_sub(if self.hide_header { 2 } else { 3 })
             .max(1)
-            .saturating_sub(pal_rows);
+            .saturating_sub(pal_rows)
+            .saturating_sub(think_rows);
 
         // ---- header: title left, device state right ----
         // Under tmux the status bar already shows wifi/battery, so drawing it
@@ -376,6 +387,15 @@ impl Scr {
                 s.push_str(txt);
             }
             s.push_str("\x1b[0m\x1b[K\r\n");
+        }
+
+        // ---- live reasoning (folded once the answer begins) ----
+        if think_rows > 0 {
+            for line in self.think_lines.iter().skip(self.think_lines.len() - think_rows) {
+                s.push_str("\x1b[35m");
+                s.push_str(&fit(line, self.cols));
+                s.push_str("\x1b[0m\x1b[K\r\n");
+            }
         }
 
         // ---- command palette (only while composing a `/` command) ----
@@ -1226,6 +1246,7 @@ fn run_once(cfg: &Cfg, reg: &[tool::ToolDef], prompt: &str) {
 struct TermUi<'a> {
     scr: &'a mut Scr,
     acc: String,
+    think: String,
     tools: std::collections::HashMap<String, (String, String, std::time::Instant)>,
     spin: usize,
 }
@@ -1236,6 +1257,22 @@ impl<'a> harness::Ui for TermUi<'a> {
             Ev::Delta(d) => {
                 self.acc.push_str(&d);
                 self.scr.live = Some((2, tail_chars(&self.acc, 46)));
+                self.scr.draw();
+            }
+            Ev::ThinkingDelta(t) => {
+                self.think.push_str(&t);
+                let cols = self.scr.cols;
+                let mut wrapped: Vec<String> = Vec::new();
+                Scr::wrap_into(&mut wrapped, &self.think, cols.saturating_sub(2));
+                let tail: Vec<String> = wrapped
+                    .iter()
+                    .rev()
+                    .take(4)
+                    .rev()
+                    .map(|l| format!("  {l}"))
+                    .collect();
+                self.scr.think_lines = tail;
+                self.scr.think_active = !self.scr.think_lines.is_empty();
                 self.scr.draw();
             }
             Ev::Thinking { secs, chars } => {
@@ -1251,6 +1288,9 @@ impl<'a> harness::Ui for TermUi<'a> {
                 self.scr.draw();
             }
             Ev::ThinkingDone { secs, chars } => {
+                self.scr.think_active = false;
+                self.scr.think_lines.clear();
+                self.think.clear();
                 self.scr.live = None;
                 self.scr.push(
                     &format!("\u{25b8} thinking {secs:.1}s | {chars} chars (collapsed)"),
@@ -1258,6 +1298,9 @@ impl<'a> harness::Ui for TermUi<'a> {
                 );
             }
             Ev::Assistant(t) => {
+                self.scr.think_active = false;
+                self.scr.think_lines.clear();
+                self.think.clear();
                 self.acc.clear();
                 self.scr.live = None;
                 // Results are the payload of the turn: render them as
@@ -1265,6 +1308,8 @@ impl<'a> harness::Ui for TermUi<'a> {
                 self.scr.push_md(&t);
             }
             Ev::ToolCall { id, name, title } => {
+                self.scr.think_active = false;
+                self.scr.think_lines.clear();
                 self.scr.live = None;
                 self.tools.insert(id, (name, title, std::time::Instant::now()));
             }
@@ -1331,6 +1376,7 @@ impl<'a> harness::Ui for TermUi<'a> {
             };
             match k {
                 0x03 | 0x04 => {
+                    crate::voice::request_stop();
                     self.scr.quit = true;
                     return Action::Cancel;
                 }
@@ -2058,6 +2104,23 @@ user you can search the web or speak.\n",
         println!("tools={}", names.join(","));
         return;
     }
+    if argv.len() >= 4 && argv[1] == "--call" {
+        // Diagnostics: execute one tool call exactly as the model would.
+        let call = tool::Call {
+            id: "cli".to_string(),
+            name: argv[2].clone(),
+            raw_args: argv[3].clone(),
+        };
+        let mut host = tool::NullHost;
+        let outs = tool::run_batch(&reg, &[call], &mut host);
+        for o in outs {
+            println!("{}", o.content);
+            if o.is_error {
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if argv.len() >= 3 && argv[1] == "--once" {
         run_once(&cfg, &reg, &argv[2]);
         return;
@@ -2184,6 +2247,7 @@ user you can search the web or speak.\n",
                 let mut ui = TermUi {
                     scr: &mut scr,
                     acc: String::new(),
+                    think: String::new(),
                     tools: std::collections::HashMap::new(),
                     spin: 0,
                 };
