@@ -287,8 +287,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 cfg.model = arg.to_string();
                 let saved = if persist { cfg.save() } else { Ok(()) };
                 match saved {
-                    Ok(()) => Outcome::text(format!("model set to {}", cfg.model), KIND_NORMAL),
-                    Err(e) => Outcome::text(format!("model set, but saving failed: {e}"), KIND_ERR),
+                    Ok(()) => Outcome::text(crate::i18n::tf("cmd_model_set", &[&cfg.model]), KIND_NORMAL),
+                    Err(e) => Outcome::text(crate::i18n::tf("cmd_model_save_failed", &[&e.to_string()]), KIND_ERR),
                 }
             }
         }
@@ -307,8 +307,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                     cfg.effort = v.clone();
                     let saved = if persist { cfg.save() } else { Ok(()) };
                     match saved {
-                        Ok(()) => Outcome::text(format!("effort set to {v}"), KIND_NORMAL),
-                        Err(e) => Outcome::text(format!("effort set, but saving failed: {e}"), KIND_ERR),
+                        Ok(()) => Outcome::text(crate::i18n::tf("cmd_effort_set", &[&v]), KIND_NORMAL),
+                        Err(e) => Outcome::text(crate::i18n::tf("cmd_effort_save_failed", &[&e.to_string()]), KIND_ERR),
                     }
                 }
             }
@@ -324,10 +324,10 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 let saved = if persist { cfg.save() } else { Ok(()) };
                 match saved {
                     Ok(()) => Outcome::text(
-                        format!("API key saved to {}", config::key_path().display()),
+                        crate::i18n::tf("cmd_key_saved", &[&config::key_path().display().to_string()]),
                         KIND_NORMAL,
                     ),
-                    Err(e) => Outcome::text(format!("saving the key failed: {e}"), KIND_ERR),
+                    Err(e) => Outcome::text(crate::i18n::tf("cmd_key_save_failed", &[&e.to_string()]), KIND_ERR),
                 }
             }
         }
@@ -346,11 +346,11 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 o.config_wizard = true;
                 o
             } else {
-                let mut lines = vec![("effective config".to_string(), KIND_DIM)];
+                let mut lines = vec![(crate::i18n::t("cmd_config_effective").to_string(), KIND_DIM)];
                 for l in cfg.summary() {
                     lines.push((l, KIND_NORMAL));
                 }
-                lines.push(("edit: ~/.dst/config.yml  (DSH patch dialect)".into(), KIND_DIM));
+                lines.push((crate::i18n::t("cmd_config_edit_hint").to_string(), KIND_DIM));
                 Outcome::many(lines)
             }
         }
@@ -360,11 +360,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 lines.push((l, KIND_NORMAL));
             }
             if !config::is_official(&cfg.base) {
-                lines.push((
-                    "note: cache accounting is reported by the official DeepSeek API only"
-                        .to_string(),
-                    KIND_DIM,
-                ));
+                lines.push((crate::i18n::t("cmd_usage_note").to_string(), KIND_DIM));
             }
             Outcome::many(lines)
         }
@@ -388,7 +384,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             }
         }
         "rewind" => Outcome {
-            lines: vec![("select a checkpoint to restore".to_string(), KIND_DIM)],
+            lines: vec![(crate::i18n::t("cmd_rewind_pick").to_string(), KIND_DIM)],
             quit: false, clear: false, login: false, config_wizard: false,
             resume_menu: false, model_menu: false, compact: false,
             rewind_menu: true, extensions_menu: false, help_menu: false,
@@ -403,13 +399,13 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 usage("/rename <title>")
             } else {
                 match crate::session::rename(arg) {
-                    Ok(title) => Outcome::text(format!("session renamed to {title}"), KIND_NORMAL),
-                    Err(e) => Outcome::text(format!("rename failed: {e}"), KIND_ERR),
+                    Ok(title) => Outcome::text(crate::i18n::tf("cmd_rename_ok", &[&title]), KIND_NORMAL),
+                    Err(e) => Outcome::text(crate::i18n::tf("cmd_rename_failed", &[&e.to_string()]), KIND_ERR),
                 }
             }
         }
         "compact" => Outcome {
-            lines: vec![("compacting older history...".to_string(), KIND_DIM)],
+            lines: vec![(crate::i18n::t("cmd_compact_progress").to_string(), KIND_DIM)],
             quit: false,
             clear: false,
             login: false,
@@ -427,40 +423,40 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 Ok(crate::goal::status_lines())
             } else if lower == "clear" {
                 match crate::goal::clear() {
-                    Ok(()) => Ok(vec!["Goal cleared.".to_string()]),
+                    Ok(()) => Ok(vec![crate::i18n::t("goal_cleared").to_string()]),
                     Err(e) => Err(e),
                 }
             } else if lower == "pause" {
-                let g = crate::goal::load().ok_or("no goal is currently set".to_string());
+                let g = crate::goal::load().ok_or(crate::i18n::t("goal_no_goal").to_string());
                 g.and_then(|g| crate::goal::pause(&g.id, g.revision))
                     .map(|g| {
-                        let mut l = vec!["Goal paused".to_string()];
+                        let mut l = vec![crate::i18n::t("goal_paused").to_string()];
                         l.extend(crate::goal::status_lines().into_iter().skip(1));
                         let _ = g;
                         l
                     })
             } else if lower == "resume" {
-                let g = crate::goal::load().ok_or("no goal is currently set".to_string());
+                let g = crate::goal::load().ok_or(crate::i18n::t("goal_no_goal").to_string());
                 g.and_then(|g| crate::goal::resume(&g.id, g.revision))
                     .map(|_| {
-                        let mut l = vec!["Goal resumed".to_string()];
+                        let mut l = vec![crate::i18n::t("goal_resumed").to_string()];
                         l.extend(crate::goal::status_lines().into_iter().skip(1));
                         l
                     })
             } else if lower == "edit" {
-                Err("Goal editing requires a replacement objective.\nUsage: /goal [<objective>|clear|edit <objective>|pause|resume]".to_string())
+                Err(crate::i18n::t("goal_usage").to_string())
             } else if lower.starts_with("edit ") || lower.starts_with("edit\t") {
                 let objective = arg[4..].trim().to_string();
-                let g = crate::goal::load().ok_or("no goal is currently set".to_string());
+                let g = crate::goal::load().ok_or(crate::i18n::t("goal_no_goal").to_string());
                 g.and_then(|g| crate::goal::edit(&g.id, g.revision, Some(&objective), None))
                     .map(|_| {
-                        let mut l = vec!["Goal updated".to_string()];
+                        let mut l = vec![crate::i18n::t("goal_updated").to_string()];
                         l.extend(crate::goal::status_lines().into_iter().skip(1));
                         l
                     })
             } else {
                 crate::goal::create(arg, None).map(|_| {
-                    let mut l = vec!["Goal created".to_string()];
+                    let mut l = vec![crate::i18n::t("goal_created").to_string()];
                     l.extend(crate::goal::status_lines().into_iter().skip(1));
                     l
                 })
@@ -510,17 +506,17 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
 fn login_hint(cfg: &mut Config) -> Outcome {
     let mut lines = vec![("login".to_string(), KIND_DIM)];
     if !cfg.dsh_token.is_empty() {
-        lines.push(("a DSH token (WeChat login) is configured".into(), KIND_NORMAL));
-        lines.push(("re-run the guided login to replace it: /login".into(), KIND_DIM));
-        lines.push(("or switch to an API key: /key <api-key>".into(), KIND_DIM));
+        lines.push((crate::i18n::t("login_hint_token").to_string(), KIND_NORMAL));
+        lines.push((crate::i18n::t("login_hint_token_replace").to_string(), KIND_DIM));
+        lines.push((crate::i18n::t("login_hint_token_switch").to_string(), KIND_DIM));
     } else if cfg.configured {
-        lines.push(("an API key is already configured".into(), KIND_NORMAL));
-        lines.push(("replace it: /key <api-key>".into(), KIND_DIM));
-        lines.push(("re-run guided setup: delete ~/.dst/api_key then /login".into(), KIND_DIM));
+        lines.push((crate::i18n::t("login_hint_key").to_string(), KIND_NORMAL));
+        lines.push((crate::i18n::t("login_hint_key_replace").to_string(), KIND_DIM));
+        lines.push((crate::i18n::t("login_hint_key_setup").to_string(), KIND_DIM));
     } else {
-        lines.push(("no API key configured yet".into(), KIND_ERR));
-        lines.push(("Create a key at platform.deepseek.com, then send it with /key <api-key>".into(), KIND_NORMAL));
-        lines.push(("Or use the QR flow: /login starts a login page for your phone".into(), KIND_DIM));
+        lines.push((crate::i18n::t("login_hint_none").to_string(), KIND_ERR));
+        lines.push((crate::i18n::t("login_hint_create").to_string(), KIND_NORMAL));
+        lines.push((crate::i18n::t("login_hint_qr").to_string(), KIND_DIM));
     }
     Outcome::many(lines)
 }

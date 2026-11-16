@@ -264,6 +264,35 @@ const EN: &[(&str, &str)] = &[
     ("config_expected_number", "expected a whole number"),
     ("config_expected_tokens", "expected a token count"),
     ("ext_empty", "no skills or MCP servers configured"),
+    ("cmd_model_set", "model set to {}"),
+    ("cmd_model_save_failed", "model set, but saving failed: {}"),
+    ("cmd_effort_set", "effort set to {}"),
+    ("cmd_effort_save_failed", "effort set, but saving failed: {}"),
+    ("cmd_key_saved", "API key saved to {}"),
+    ("cmd_key_save_failed", "saving the key failed: {}"),
+    ("cmd_config_effective", "effective config"),
+    ("cmd_config_edit_hint", "edit: ~/.dst/config.yml  (DSH patch dialect)"),
+    ("cmd_usage_note", "note: cache accounting is reported by the official DeepSeek API only"),
+    ("cmd_rewind_pick", "select a checkpoint to restore"),
+    ("cmd_rename_ok", "session renamed to {}"),
+    ("cmd_rename_failed", "rename failed: {}"),
+    ("cmd_compact_progress", "compacting older history..."),
+    ("goal_no_goal", "no goal is currently set"),
+    ("goal_cleared", "Goal cleared."),
+    ("goal_paused", "Goal paused"),
+    ("goal_resumed", "Goal resumed"),
+    ("goal_updated", "Goal updated"),
+    ("goal_created", "Goal created"),
+    ("goal_usage", "Goal editing requires a replacement objective.\nUsage: /goal [<objective>|clear|edit <objective>|pause|resume]"),
+    ("login_hint_token", "a DSH token (WeChat login) is configured"),
+    ("login_hint_token_replace", "re-run the guided login to replace it: /login"),
+    ("login_hint_token_switch", "or switch to an API key: /key <api-key>"),
+    ("login_hint_key", "an API key is already configured"),
+    ("login_hint_key_replace", "replace it: /key <api-key>"),
+    ("login_hint_key_setup", "re-run guided setup: delete ~/.dst/api_key then /login"),
+    ("login_hint_none", "no API key configured yet"),
+    ("login_hint_create", "Create a key at platform.deepseek.com, then send it with /key <api-key>"),
+    ("login_hint_qr", "Or use /login for the real WeChat / DSH sign-in flow"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -468,6 +497,35 @@ const ZH: &[(&str, &str)] = &[
     ("config_expected_number", "请输入整数"),
     ("config_expected_tokens", "请输入 token 数"),
     ("ext_empty", "未配置 skill 或 MCP 服务器"),
+    ("cmd_model_set", "模型已设为 {}"),
+    ("cmd_model_save_failed", "模型已设置，但保存失败: {}"),
+    ("cmd_effort_set", "推理强度已设为 {}"),
+    ("cmd_effort_save_failed", "推理强度已设置，但保存失败: {}"),
+    ("cmd_key_saved", "API key 已保存到 {}"),
+    ("cmd_key_save_failed", "保存 key 失败: {}"),
+    ("cmd_config_effective", "当前配置"),
+    ("cmd_config_edit_hint", "编辑: ~/.dst/config.yml（DSH patch 格式）"),
+    ("cmd_usage_note", "注: 缓存计费仅官方 DeepSeek API 提供"),
+    ("cmd_rewind_pick", "选择要恢复的检查点"),
+    ("cmd_rename_ok", "会话已重命名为 {}"),
+    ("cmd_rename_failed", "重命名失败: {}"),
+    ("cmd_compact_progress", "正在压缩较早的历史…"),
+    ("goal_no_goal", "当前没有设置 goal"),
+    ("goal_cleared", "Goal 已清除"),
+    ("goal_paused", "Goal 已暂停"),
+    ("goal_resumed", "Goal 已恢复"),
+    ("goal_updated", "Goal 已更新"),
+    ("goal_created", "Goal 已创建"),
+    ("goal_usage", "编辑 Goal 需要提供新目标。\n用法: /goal [<objective>|clear|edit <objective>|pause|resume]"),
+    ("login_hint_token", "已配置 DSH token（微信登录）"),
+    ("login_hint_token_replace", "重新执行登录可替换: /login"),
+    ("login_hint_token_switch", "或切换为 API key: /key <api-key>"),
+    ("login_hint_key", "已配置 API key"),
+    ("login_hint_key_replace", "替换: /key <api-key>"),
+    ("login_hint_key_setup", "重新引导配置: 删除 ~/.dst/api_key 后执行 /login"),
+    ("login_hint_none", "还没有配置 API key"),
+    ("login_hint_create", "到 platform.deepseek.com 创建 key，然后用 /key <api-key> 发送"),
+    ("login_hint_qr", "或执行 /login 使用真实微信/DSH 登录流程"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -671,6 +729,35 @@ const ES: &[(&str, &str)] = &[
     ("config_expected_number", "se esperaba un número entero"),
     ("config_expected_tokens", "se esperaba un número de tokens"),
     ("ext_empty", "sin skills ni servidores MCP configurados"),
+    ("cmd_model_set", "modelo establecido en {}"),
+    ("cmd_model_save_failed", "modelo establecido, pero falló el guardado: {}"),
+    ("cmd_effort_set", "esfuerzo establecido en {}"),
+    ("cmd_effort_save_failed", "esfuerzo establecido, pero falló el guardado: {}"),
+    ("cmd_key_saved", "API key guardada en {}"),
+    ("cmd_key_save_failed", "falló el guardado de la key: {}"),
+    ("cmd_config_effective", "configuración efectiva"),
+    ("cmd_config_edit_hint", "editar: ~/.dst/config.yml (dialecto patch DSH)"),
+    ("cmd_usage_note", "nota: la caché solo la informa la API oficial de DeepSeek"),
+    ("cmd_rewind_pick", "elige un checkpoint para restaurar"),
+    ("cmd_rename_ok", "sesión renombrada a {}"),
+    ("cmd_rename_failed", "falló el renombrado: {}"),
+    ("cmd_compact_progress", "compactando historial antiguo…"),
+    ("goal_no_goal", "no hay un objetivo establecido"),
+    ("goal_cleared", "Objetivo borrado."),
+    ("goal_paused", "Objetivo pausado"),
+    ("goal_resumed", "Objetivo reanudado"),
+    ("goal_updated", "Objetivo actualizado"),
+    ("goal_created", "Objetivo creado"),
+    ("goal_usage", "Editar el objetivo requiere un nuevo objetivo.\nUso: /goal [<objective>|clear|edit <objective>|pause|resume]"),
+    ("login_hint_token", "hay configurado un token DSH (login WeChat)"),
+    ("login_hint_token_replace", "vuelve a iniciar sesión para reemplazarlo: /login"),
+    ("login_hint_token_switch", "o cambia a una API key: /key <api-key>"),
+    ("login_hint_key", "ya hay una API key configurada"),
+    ("login_hint_key_replace", "reemplázala: /key <api-key>"),
+    ("login_hint_key_setup", "reinicia la configuración: borra ~/.dst/api_key y ejecuta /login"),
+    ("login_hint_none", "aún no hay API key configurada"),
+    ("login_hint_create", "Crea una key en platform.deepseek.com y envíala con /key <api-key>"),
+    ("login_hint_qr", "O usa /login para el flujo real de WeChat / DSH"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -875,6 +962,35 @@ const JA: &[(&str, &str)] = &[
     ("config_expected_number", "整数を入力してください"),
     ("config_expected_tokens", "トークン数を入力してください"),
     ("ext_empty", "skills / MCP サーバーが設定されていません"),
+    ("cmd_model_set", "モデルを {} に設定しました"),
+    ("cmd_model_save_failed", "モデルは設定しましたが保存に失敗: {}"),
+    ("cmd_effort_set", "推論強度を {} に設定しました"),
+    ("cmd_effort_save_failed", "推論強度は設定しましたが保存に失敗: {}"),
+    ("cmd_key_saved", "API キーを {} に保存しました"),
+    ("cmd_key_save_failed", "キーの保存に失敗: {}"),
+    ("cmd_config_effective", "現在の設定"),
+    ("cmd_config_edit_hint", "編集: ~/.dst/config.yml（DSH patch 形式）"),
+    ("cmd_usage_note", "注: キャッシュ計上は公式 DeepSeek API のみ"),
+    ("cmd_rewind_pick", "復元するチェックポイントを選択"),
+    ("cmd_rename_ok", "セッション名を {} に変更しました"),
+    ("cmd_rename_failed", "名前変更に失敗: {}"),
+    ("cmd_compact_progress", "古い履歴を圧縮中…"),
+    ("goal_no_goal", "ゴールが設定されていません"),
+    ("goal_cleared", "ゴールを消去しました"),
+    ("goal_paused", "ゴールを一時停止しました"),
+    ("goal_resumed", "ゴールを再開しました"),
+    ("goal_updated", "ゴールを更新しました"),
+    ("goal_created", "ゴールを作成しました"),
+    ("goal_usage", "ゴール編集には新しい目標が必要です。\n使用法: /goal [<objective>|clear|edit <objective>|pause|resume]"),
+    ("login_hint_token", "DSH トークン（WeChat ログイン）が設定済みです"),
+    ("login_hint_token_replace", "再ログインで置き換え: /login"),
+    ("login_hint_token_switch", "API キーに切り替え: /key <api-key>"),
+    ("login_hint_key", "API キーが設定済みです"),
+    ("login_hint_key_replace", "置き換え: /key <api-key>"),
+    ("login_hint_key_setup", "再設定: ~/.dst/api_key を削除して /login"),
+    ("login_hint_none", "API キーが未設定です"),
+    ("login_hint_create", "platform.deepseek.com でキーを作成し /key <api-key> で送信"),
+    ("login_hint_qr", "または /login で実際の WeChat / DSH ログインを実行"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -1079,6 +1195,35 @@ const DE: &[(&str, &str)] = &[
     ("config_expected_number", "ganze Zahl erwartet"),
     ("config_expected_tokens", "Token-Anzahl erwartet"),
     ("ext_empty", "keine Skills oder MCP-Server konfiguriert"),
+    ("cmd_model_set", "Modell auf {} gesetzt"),
+    ("cmd_model_save_failed", "Modell gesetzt, Speichern fehlgeschlagen: {}"),
+    ("cmd_effort_set", "Aufwand auf {} gesetzt"),
+    ("cmd_effort_save_failed", "Aufwand gesetzt, Speichern fehlgeschlagen: {}"),
+    ("cmd_key_saved", "API-Key gespeichert in {}"),
+    ("cmd_key_save_failed", "Speichern des Keys fehlgeschlagen: {}"),
+    ("cmd_config_effective", "effektive Konfiguration"),
+    ("cmd_config_edit_hint", "bearbeiten: ~/.dst/config.yml (DSH-Patch-Dialekt)"),
+    ("cmd_usage_note", "Hinweis: Cache-Abrechnung nur bei der offiziellen DeepSeek-API"),
+    ("cmd_rewind_pick", "Checkpoint zum Wiederherstellen wählen"),
+    ("cmd_rename_ok", "Sitzung umbenannt in {}"),
+    ("cmd_rename_failed", "Umbenennen fehlgeschlagen: {}"),
+    ("cmd_compact_progress", "ältere Historie wird verdichtet…"),
+    ("goal_no_goal", "kein Ziel gesetzt"),
+    ("goal_cleared", "Ziel gelöscht."),
+    ("goal_paused", "Ziel pausiert"),
+    ("goal_resumed", "Ziel fortgesetzt"),
+    ("goal_updated", "Ziel aktualisiert"),
+    ("goal_created", "Ziel erstellt"),
+    ("goal_usage", "Zielbearbeitung braucht ein neues Ziel.\nNutzung: /goal [<objective>|clear|edit <objective>|pause|resume]"),
+    ("login_hint_token", "ein DSH-Token (WeChat-Login) ist konfiguriert"),
+    ("login_hint_token_replace", "erneut anmelden zum Ersetzen: /login"),
+    ("login_hint_token_switch", "oder zu einem API-Key wechseln: /key <api-key>"),
+    ("login_hint_key", "ein API-Key ist bereits konfiguriert"),
+    ("login_hint_key_replace", "ersetzen: /key <api-key>"),
+    ("login_hint_key_setup", "Setup neu starten: ~/.dst/api_key löschen, dann /login"),
+    ("login_hint_none", "noch kein API-Key konfiguriert"),
+    ("login_hint_create", "Key auf platform.deepseek.com erstellen und mit /key <api-key> senden"),
+    ("login_hint_qr", "Oder /login für den echten WeChat-/DSH-Login nutzen"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -1283,6 +1428,35 @@ const IT: &[(&str, &str)] = &[
     ("config_expected_number", "atteso un numero intero"),
     ("config_expected_tokens", "atteso un numero di token"),
     ("ext_empty", "nessuna skill o server MCP configurato"),
+    ("cmd_model_set", "modello impostato su {}"),
+    ("cmd_model_save_failed", "modello impostato, salvataggio fallito: {}"),
+    ("cmd_effort_set", "sforzo impostato su {}"),
+    ("cmd_effort_save_failed", "sforzo impostato, salvataggio fallito: {}"),
+    ("cmd_key_saved", "API key salvata in {}"),
+    ("cmd_key_save_failed", "salvataggio della key fallito: {}"),
+    ("cmd_config_effective", "configurazione effettiva"),
+    ("cmd_config_edit_hint", "modifica: ~/.dst/config.yml (dialetto patch DSH)"),
+    ("cmd_usage_note", "nota: la cache è riportata solo dall'API ufficiale DeepSeek"),
+    ("cmd_rewind_pick", "scegli un checkpoint da ripristinare"),
+    ("cmd_rename_ok", "sessione rinominata in {}"),
+    ("cmd_rename_failed", "rinomina fallita: {}"),
+    ("cmd_compact_progress", "compattazione della cronologia…"),
+    ("goal_no_goal", "nessun obiettivo impostato"),
+    ("goal_cleared", "Obiettivo cancellato."),
+    ("goal_paused", "Obiettivo in pausa"),
+    ("goal_resumed", "Obiettivo ripreso"),
+    ("goal_updated", "Obiettivo aggiornato"),
+    ("goal_created", "Obiettivo creato"),
+    ("goal_usage", "Modificare l'obiettivo richiede un nuovo obiettivo.\nUso: /goal [<objective>|clear|edit <objective>|pause|resume]"),
+    ("login_hint_token", "è configurato un token DSH (login WeChat)"),
+    ("login_hint_token_replace", "riesegui il login per sostituirlo: /login"),
+    ("login_hint_token_switch", "oppure passa a una API key: /key <api-key>"),
+    ("login_hint_key", "è già configurata una API key"),
+    ("login_hint_key_replace", "sostituisci: /key <api-key>"),
+    ("login_hint_key_setup", "riesegui il setup: elimina ~/.dst/api_key poi /login"),
+    ("login_hint_none", "nessuna API key configurata"),
+    ("login_hint_create", "Crea una key su platform.deepseek.com e inviala con /key <api-key>"),
+    ("login_hint_qr", "Oppure usa /login per il flusso reale WeChat / DSH"),
 ];
 
 
@@ -1325,9 +1499,12 @@ pub fn tf(key: &str, args: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+    static LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn english_is_default() {
+        let _g = LOCK.lock().unwrap();
         set("en");
         assert_eq!(t("on"), "on");
         assert!(tf("force_sent", &["hi"]).contains("hi"));
@@ -1335,6 +1512,7 @@ mod tests {
 
     #[test]
     fn chinese_switch() {
+        let _g = LOCK.lock().unwrap();
         set("zh");
         assert_eq!(t("on"), "开");
         assert!(tf("queued", &["2"]).contains('2'));
@@ -1343,6 +1521,7 @@ mod tests {
 
     #[test]
     fn every_language_covers_the_english_catalog() {
+        let _g = LOCK.lock().unwrap();
         let en: Vec<&str> = table(Lang::En).iter().map(|(k, _)| *k).collect();
         for l in [Lang::Zh, Lang::Es, Lang::Ja, Lang::De, Lang::It] {
             let have: std::collections::HashSet<&str> =
@@ -1354,6 +1533,7 @@ mod tests {
 
     #[test]
     fn new_ui_keys_are_translated() {
+        let _g = LOCK.lock().unwrap();
         for code in ["es", "ja", "de", "it"] {
             set(code);
             assert!(!t("approval_title").is_empty());
@@ -1369,6 +1549,7 @@ mod tests {
 
     #[test]
     fn new_languages_switch_and_fallback() {
+        let _g = LOCK.lock().unwrap();
         for (code, hint) in [
             ("es", "mantén Tab"),
             ("ja", "Tab 長押し"),
