@@ -43,6 +43,8 @@ pub struct RunOpts {
     pub window: u64,
     /// Global tool timeout cap in ms; 0 = each tool's own `timeout_ms`.
     pub tool_timeout_ms: u64,
+    /// Tool-call permission policy.
+    pub sandbox: crate::sandbox::Settings,
 }
 
 impl Default for RunOpts {
@@ -55,6 +57,7 @@ impl Default for RunOpts {
             turn: 1,
             window: 0,
             tool_timeout_ms: 0,
+            sandbox: crate::sandbox::Settings::default(),
         }
     }
 }
@@ -69,6 +72,7 @@ impl RunOpts {
             turn: 1,
             window,
             tool_timeout_ms: c.tool_timeout_ms,
+            sandbox: crate::sandbox::Settings::from_config(c),
         }
     }
 }
@@ -140,12 +144,16 @@ pub trait Ui {
     /// Called continuously while the request is in flight. Implementations
     /// must not block for long: the keyboard is read here.
     fn pump(&mut self) -> Action;
+    /// Strict-mode permission pop-up. Returning false rejects the call.
+    fn confirm(&mut self, request: &crate::sandbox::Approval) -> bool;
 }
 
 /// Bridges the tool executor's host callbacks back onto the UI, so a running
 /// tool call can still deliver Esc.
 struct UiHost<'a> {
     ui: &'a mut dyn Ui,
+    api: Cfg,
+    sandbox: crate::sandbox::Settings,
 }
 
 impl<'a> tool::ToolHost for UiHost<'a> {
@@ -162,6 +170,18 @@ impl<'a> tool::ToolHost for UiHost<'a> {
     }
     fn cancel(&mut self) -> bool {
         self.ui.pump() == Action::Cancel
+    }
+    fn allow(&mut self, name: &str, args: &J) -> Result<(), String> {
+        struct UiConfirmer<'a> {
+            ui: &'a mut dyn Ui,
+        }
+        impl crate::sandbox::Confirmer for UiConfirmer<'_> {
+            fn confirm(&mut self, request: &crate::sandbox::Approval) -> bool {
+                self.ui.confirm(request)
+            }
+        }
+        let mut confirmer = UiConfirmer { ui: &mut *self.ui };
+        crate::sandbox::authorize(name, args, &self.sandbox, &self.api, &mut confirmer)
     }
 }
 
@@ -466,7 +486,11 @@ pub fn run_turn(
             .collect();
 
         let outcomes = {
-            let mut host = UiHost { ui: &mut *ui };
+            let mut host = UiHost {
+                ui: &mut *ui,
+                api: cfg.clone(),
+                sandbox: opts.sandbox.clone(),
+            };
             tool::run_batch_with(reg, &calls, opts.tool_timeout_ms, &mut host)
         };
 

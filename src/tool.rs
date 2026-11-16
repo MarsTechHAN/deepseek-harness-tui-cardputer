@@ -213,6 +213,11 @@ pub trait ToolHost {
     fn call(&mut self, ev: PipeEvent);
     /// True when the user asked to cancel.
     fn cancel(&mut self) -> bool;
+    /// `tools/pre-execute` permission gate. `Err(reason)` becomes a failed
+    /// tool result; the tool body never runs.
+    fn allow(&mut self, _name: &str, _args: &J) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// Host for callers with no UI (background jobs).
@@ -264,6 +269,12 @@ pub fn run_batch_with(
                     name: def.name.to_string(),
                     title: (def.present)(&args),
                 });
+                if let Err(reason) = host.allow(def.name, &args) {
+                    let o = err_out(c, format!("permission denied: {reason}"));
+                    host.call(PipeEvent::Made(o.clone()));
+                    outs[i] = Some(o);
+                    continue;
+                }
                 queue.push((i, def, args));
             }
             Err(reason) => {

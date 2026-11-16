@@ -482,6 +482,11 @@ pub struct Config {
     pub context_time: bool,
     /// Minimum seconds between two injected clock readings (0 = every step).
     pub context_refresh_secs: u64,
+    /// Tool permission mode: auto | strict | full.
+    pub sandbox_mode: String,
+    /// Optional judge model for auto mode (empty = session model).
+    pub sandbox_judge_model: String,
+    pub sandbox_judge_max_tokens: u32,
     /// True once a usable API key has been provided.
     pub configured: bool,
 }
@@ -512,6 +517,9 @@ impl Default for Config {
             tool_timeout_ms: crate::tool::DEFAULT_TIMEOUT_MS,
             context_time: true,
             context_refresh_secs: crate::context::DEFAULT_REFRESH_SECS,
+            sandbox_mode: "auto".into(),
+            sandbox_judge_model: String::new(),
+            sandbox_judge_max_tokens: 48,
             configured: false,
         }
     }
@@ -633,6 +641,17 @@ impl Config {
                 self.tool_timeout_ms = v.max(0.0) as u64;
             }
         }
+        if let Some(sb) = doc.get("sandbox") {
+            if let Some(v) = sb.get("mode").and_then(|v| v.as_str()) {
+                self.sandbox_mode = v.to_string();
+            }
+            if let Some(v) = sb.get("judge_model").and_then(|v| v.as_str()) {
+                self.sandbox_judge_model = v.to_string();
+            }
+            if let Some(v) = sb.get("judge_max_tokens").and_then(|v| v.as_f64()) {
+                self.sandbox_judge_max_tokens = v.max(8.0) as u32;
+            }
+        }
         if let Some(ctx) = doc.get("context") {
             if let Some(v) = ctx.get("time").and_then(|v| v.as_bool()) {
                 self.context_time = v;
@@ -697,6 +716,12 @@ impl Config {
         }
         s.push_str("tools:\n");
         s.push_str(&format!("  call_timeout_ms: {}\n", self.tool_timeout_ms));
+        s.push_str("sandbox:\n");
+        s.push_str(&format!("  mode: {}\n", yaml_quote(&self.sandbox_mode)));
+        if !self.sandbox_judge_model.is_empty() {
+            s.push_str(&format!("  judge_model: {}\n", yaml_quote(&self.sandbox_judge_model)));
+        }
+        s.push_str(&format!("  judge_max_tokens: {}\n", self.sandbox_judge_max_tokens));
         s.push_str("context:\n");
         s.push_str(&format!("  time: {}\n", self.context_time));
         s.push_str(&format!("  time_refresh_secs: {}\n", self.context_refresh_secs));
@@ -764,6 +789,15 @@ impl Config {
             format!(
                 "tool call  timeout {}ms   time-context {}",
                 self.tool_timeout_ms, self.context_time
+            ),
+            format!(
+                "sandbox    {}{}",
+                self.sandbox_mode,
+                if self.sandbox_judge_model.is_empty() {
+                    String::new()
+                } else {
+                    format!("   judge {}", self.sandbox_judge_model)
+                }
             ),
             format!("home       {}", home().display()),
             format!("config     {}", config_path().display()),

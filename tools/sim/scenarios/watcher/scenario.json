@@ -1,0 +1,29 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "start the watcher"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "watcher-line",
+    "timeout_ms": 30000
+   }
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 1200,
+    "timeout_ms": 30000
+   },
+   "snap": "handled"
+  }
+ ]
+}

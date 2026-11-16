@@ -108,13 +108,20 @@ def run_scenario(name, binary, timeout=90):
     phases = doc.get("phases")
     scenario_paths = []
     if phases:
-        for i, steps in enumerate(phases, 1):
+        for i, phase in enumerate(phases, 1):
+            if isinstance(phase, dict):
+                steps = phase.get("steps", [])
+                phase_cwd = os.path.join(work, phase.get("cwd", "."))
+            else:
+                steps = phase
+                phase_cwd = work
+            os.makedirs(phase_cwd, exist_ok=True)
             path = os.path.join(work, f"phase{i}.json")
             json.dump({"steps": steps}, open(path, "w", encoding="utf-8"),
                       ensure_ascii=False, indent=1)
-            scenario_paths.append((path, os.path.join(out, f"phase{i}")))
+            scenario_paths.append((path, os.path.join(out, f"phase{i}"), phase_cwd))
     else:
-        scenario_paths.append((scenario, out))
+        scenario_paths.append((scenario, out, work))
     # A scenario may ship a pre-populated HOME tree (e.g. goal.json or
     # mcp.json) under scenarios/<name>/home/. Copy it in first.
     overlay = os.path.join(base, "home")
@@ -133,9 +140,9 @@ def run_scenario(name, binary, timeout=90):
             cfg_path = os.path.join(home, ".dst", "config.yml")
             open(cfg_path, "w", encoding="utf-8").write(cfg)
             os.chmod(cfg_path, 0o600)
-        for scen_path, phase_out in scenario_paths:
+        for scen_path, phase_out, phase_cwd in scenario_paths:
             cmd = [sys.executable, SIM, "--bin", binary, "--home", home,
-                   "--cwd", work, "--out", phase_out, "--scenario", scen_path]
+                   "--cwd", phase_cwd, "--out", phase_out, "--scenario", scen_path]
             # Text snapshots are enough for assertions; PNG rendering is only
             # needed when a contact sheet is being produced.
             if not os.environ.get("DST_SCENARIO_PNG"):
@@ -148,7 +155,7 @@ def run_scenario(name, binary, timeout=90):
         stop_mock(proc)
 
     screens = {}
-    for _path, phase_out in scenario_paths:
+    for _path, phase_out, _cwd in scenario_paths:
         screens.update(read_screens(phase_out))
     reqs = chat_requests(log_path)
     return screens, reqs, work
@@ -406,6 +413,109 @@ def check_onboarding(screens, reqs, work):
     return checks
 
 
+def check_sandbox_auto(screens, reqs, work):
+    results = [r.get("content") or "" for r in request_tool_results(reqs)]
+    joined = "\n".join(results)
+    texts = message_texts(reqs)
+    checks = []
+    checks.append(("permission denied" not in results[0] if results else False,
+                   "safe read-only command runs without asking"))
+    checks.append(("system-configuration change" in joined,
+                   "danger rule rejects system changes without an LLM call"))
+    checks.append(("permission judge" in joined and "unknown script" in joined,
+                   "unknown command is judged by the short LLM and denied with its reason"))
+    checks.append((any("permission judge for a coding agent" in t for t in texts),
+                   "the auto judge prompt was sent to the model"))
+    checks.append((len(reqs) >= 7, f"one extra request for the judge ({len(reqs)} requests)"))
+    return checks
+
+
+def check_sandbox_strict(screens, reqs, work):
+    popup = screens.get("popup", "")
+    rejected = screens.get("rejected", "")
+    joined = "\n".join(r.get("content") or "" for r in request_tool_results(reqs))
+    checks = []
+    checks.append(("Permission required" in popup and "bash" in popup and "./deploy.sh" in popup,
+                   "strict mode shows the confirmation pop-up with tool and arguments"))
+    checks.append(("[y] allow" in popup and "[n] reject" in popup,
+                   "pop-up offers allow / reject"))
+    checks.append(("rejected by the user" in joined,
+                   "rejecting the pop-up fails the tool call with a reason"))
+    checks.append(("User rejected the deployment." in rejected,
+                   "model continues after the rejection"))
+    return checks
+
+
+def check_sandbox_full(screens, reqs, work):
+    results = [r.get("content") or "" for r in request_tool_results(reqs)]
+    joined = "\n".join(results)
+    checks = []
+    checks.append(("permission denied" not in joined,
+                   "full mode never rejects the dangerous call"))
+    checks.append((any("systemctl" in r or "not found" in r or "exit" in r for r in results),
+                   "the dangerous command really executed"))
+    checks.append(("Full mode ran it." in "\n".join(screens.values()),
+                   "conversation continues after the unrestricted call"))
+    return checks
+
+
+def check_jobs(screens, reqs, work):
+    results = [r.get("content") or "" for r in request_tool_results(reqs)]
+    joined = "\n".join(results)
+    calls = request_tool_calls(reqs)
+    names = {c["name"] for c in calls}
+    checks = []
+    checks.append(("job-done" in joined, "job_wait returned the job output"))
+    checks.append(("killed" in joined, "job_kill stopped the long job"))
+    checks.append(({"job_start", "job_wait", "job_kill"} <= names,
+                   "job_start / job_wait / job_kill tools were called"))
+    checks.append(("j1" in "\n".join(screens.values()) and "j2" in "\n".join(screens.values()),
+                   "job ids are visible in the transcript"))
+    checks.append(("Jobs finished." in "\n".join(screens.values()),
+                   "model concludes after the job batch"))
+    return checks
+
+
+def check_watcher(screens, reqs, work):
+    texts = "\n".join(message_texts(reqs))
+    results = "\n".join(r.get("content") or "" for r in request_tool_results(reqs))
+    screens_all = "\n".join(screens.values())
+    checks = []
+    checks.append(("watcher-line-one" in texts or "watcher-line-two" in texts,
+                   "watcher output was delivered to the agent as a user message"))
+    checks.append(("[watcher w1]" in texts, "delivered lines carry the [watcher <id>] prefix"))
+    checks.append(("watcher-line" in screens_all and "\u26a1 watcher w1" in screens_all,
+                   "transcript shows the watcher-triggered turn"))
+    checks.append(("stopped" in results, "watcher_stop stopped the watcher"))
+    return checks
+
+
+def check_resume_search(screens, reqs, work):
+    import glob
+    listing = screens.get("list", "")
+    search = screens.get("search", "")
+    checks = []
+    checks.append(("alpha whale task" in listing and "beta deploy task" in listing,
+                   "resume lists sessions from both directories"))
+    checks.append((listing.find("alpha whale task") < listing.find("beta deploy task"),
+                   "current-directory session is listed first"))
+    checks.append(("this folder" in listing, "rows mark sessions from the current folder"))
+    checks.append(("now" in listing, "relative last-talk time shown at the row start"))
+    checks.append(("beta deploy task" in search and "alpha whale task" not in search,
+                   "typing filters by session name only"))
+    checks.append(("type to search" in search, "hint advertises type-to-search"))
+    cwds = []
+    for path in glob.glob(os.path.join(work, "home", ".dst", "sessions", "*.json")):
+        try:
+            cwds.append(json.load(open(path, encoding="utf-8")).get("cwd", ""))
+        except (OSError, json.JSONDecodeError):
+            pass
+    checks.append((any(c.endswith("dir_a") for c in cwds) and
+                   any(c.endswith("dir_b") for c in cwds),
+                   "sessions record the directory they were created in"))
+    return checks
+
+
 def check_config_menu(screens, reqs, work):
     menu = screens.get("menu", "")
     bottom = screens.get("bottom", "")
@@ -474,6 +584,12 @@ def check_goal_blocked(screens, reqs, work):
 
 CHECKS = {
     "clear": check_clear,
+    "sandbox_auto": check_sandbox_auto,
+    "sandbox_strict": check_sandbox_strict,
+    "sandbox_full": check_sandbox_full,
+    "jobs": check_jobs,
+    "watcher": check_watcher,
+    "resume_search": check_resume_search,
     "session_menu": check_session_menu,
     "onboarding": check_onboarding,
     "goal_manage": check_goal_manage,

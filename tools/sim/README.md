@@ -418,11 +418,17 @@ request log:
 | `commands` | commands/palette | help lists `/goal` `/compact`, palette completes `/g` to `/goal`, `/usage` renders, `/model` lists endpoint models |
 | `artifact` | artifact panel | the model panel replaces the screen, Esc dismisses it and the conversation continues |
 | `session_menu` | rename + `/resume` | the `rename` tool persists a session title, it appears in the header, `/resume` lists titles in a menu, Right expands a preview, Enter resumes the transcript, `/model` is a menu, and no numbered option lists appear |
+| `sandbox_auto` | permissions | safe read-only command runs; system-change rule rejects; unknown command triggers the short judge LLM and is denied with its reason |
+| `sandbox_strict` | permissions | pop-up shows tool/args and allow/reject; `n` rejects, tool fails with "rejected by the user", conversation continues |
+| `sandbox_full` | permissions | dangerous command executes without a prompt |
+| `jobs` | background jobs | job_start x2, job_wait returns output, job_kill stops the long job, ids visible |
+| `watcher` | watchers | watcher lines arrive as `[watcher w1]` user messages, trigger an autonomous turn, watcher_stop stops it |
+| `resume_search` | resume UX | sessions from two directories, current folder first, relative age labels, type-to-filter by name only |
 | `onboarding` | first-run flow | an unconfigured start shows a menu (official vs custom endpoint), arrows move, no "type 1 or 2" prompt, Esc cancels |
 
 ```bash
 cd tools/sim
-python3 run_scenarios.py               # all 20 scenarios (~3 min)
+python3 run_scenarios.py               # all 26 scenarios (~3 min)
 python3 run_scenarios.py goal compact  # just some
 python3 check_memory.py                # 20-turn session, samples dst RSS
 python3 run_all.py                     # demo + scenarios + memory in one go

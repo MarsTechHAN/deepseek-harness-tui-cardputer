@@ -1,0 +1,66 @@
+{
+ "responses": [
+  {
+   "reasoning": "safe call",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "s1",
+     "name": "bash",
+     "arguments": {
+      "command": "ls"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "done",
+   "content": "Safe command ran.",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "danger call",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "s2",
+     "name": "bash",
+     "arguments": {
+      "command": "systemctl restart foo"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "done",
+   "content": "Danger denied.",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "unknown call",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "s3",
+     "name": "bash",
+     "arguments": {
+      "command": "./deploy.sh"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "judge",
+   "content": "UNSAFE: runs an unknown script outside the workspace",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "done",
+   "content": "Judge denied.",
+   "finish_reason": "stop"
+  }
+ ]
+}

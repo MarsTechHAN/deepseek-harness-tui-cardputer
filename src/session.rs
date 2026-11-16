@@ -106,6 +106,22 @@ pub fn rename(name: &str) -> Result<String, String> {
     Ok(title)
 }
 
+/// `(title, cwd)` of a session file, for the resume picker.
+pub fn meta(path: &std::path::Path) -> (String, String) {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(_) => return (String::new(), String::new()),
+    };
+    let v = match json::parse(&text) {
+        Some(v) => v,
+        None => return (String::new(), String::new()),
+    };
+    (
+        v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        v.get("cwd").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+    )
+}
+
 /// Human-facing preview lines for the `/resume` menu expansion: what the
 /// session is about and where it left off.
 pub fn preview(path: &std::path::Path) -> Vec<String> {

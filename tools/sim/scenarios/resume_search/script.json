@@ -1,0 +1,42 @@
+{
+ "responses": [
+  {
+   "reasoning": "name it",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "r1",
+     "name": "rename",
+     "arguments": {
+      "name": "alpha whale task"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "done",
+   "content": "Alpha session saved.",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "name it",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "r2",
+     "name": "rename",
+     "arguments": {
+      "name": "beta deploy task"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "done",
+   "content": "Beta session saved.",
+   "finish_reason": "stop"
+  }
+ ]
+}

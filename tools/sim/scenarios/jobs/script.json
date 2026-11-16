@@ -1,0 +1,52 @@
+{
+ "responses": [
+  {
+   "reasoning": "start jobs",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "b1",
+     "name": "job_start",
+     "arguments": {
+      "command": "sleep 1; echo job-done"
+     }
+    },
+    {
+     "id": "b2",
+     "name": "job_start",
+     "arguments": {
+      "command": "sleep 30"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "wait and kill",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "b3",
+     "name": "job_wait",
+     "arguments": {
+      "id": "j1",
+      "timeout_s": 10
+     }
+    },
+    {
+     "id": "b4",
+     "name": "job_kill",
+     "arguments": {
+      "id": "j2"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "done",
+   "content": "Jobs finished.",
+   "finish_reason": "stop"
+  }
+ ]
+}

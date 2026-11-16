@@ -118,15 +118,34 @@ repository.
   and the model is told they are unavailable; the wizard warns first. `dst --tools`
   prints the effective tool set for diagnosis.
 
+**Permissions / sandbox**
+- Every tool call passes a permission gate. `auto` (default) allows known-safe
+  operations (read-only commands, `read_file`/`list_dir`, web reads, writes under
+  the current workspace), refuses system-configuration changes (sudo, systemctl
+  start/stop, package managers, mounts, writes under /etc /boot /usr, reboot),
+  and asks a short LLM call to judge anything else. `strict` shows a full-screen
+  allow/reject pop-up for every non-safe call. `full` runs everything.
+- Switch mode in `/config` (`sandbox.mode`); rejected calls become failed tool
+  results with the concrete reason, so the model can explain instead of retrying.
+
+**Background jobs and watchers**
+- `job_start` launches a shell command in the background (multiple at once),
+  `job_output` peeks, `job_wait` blocks up to a timeout, `job_kill` stops it.
+- `watcher_start` runs a command and delivers every line it prints to the agent
+  as a `[watcher <id>]` user message on the next idle tick; `watcher_list` /
+  `watcher_stop` manage them. Jobs/watchers are killed when dst exits.
+
 **Sessions and task titles**
 - Every turn is saved to `~/.dst/sessions/<timestamp>.json` with a `title`.
 - The model keeps that title current through the `rename` tool (the system
   prompt tells it to call `rename` as soon as it understands the task and when
   the task changes); `/rename <title>` lets the human set it too. The title is
   shown in the header and is what `/resume` lists.
-- `/resume` is a menuconfig-style picker: Up/Down select, Right/Tab expands the
-  highlighted session into a preview (title, model, turn count, last user and
-  last reply), Enter resumes it, Esc cancels. There are no numbered lists.
+- `/resume` is a menuconfig-style picker grouped by directory: sessions from
+  the current folder come first, then the rest, each sorted by last talk time
+  with a relative age (`now`, `5m`, `3h`, `2d`, `1w`) at the row start. Typing
+  filters by session name; Right/Tab expands a preview (title, model, turns,
+  last user/reply); Enter resumes; Esc clears the search then exits.
 
 **Skills** (DSH-style progressive disclosure)
 - `~/.dst/skills/<name>/SKILL.md` with YAML frontmatter (`name`,
@@ -264,11 +283,12 @@ python3 run_scenarios.py          # /clear, /goal round driver, automatic compac
 ```
 
 `run_demo.py` writes snapshots and a contact sheet under `screenshots/`;
-`run_scenarios.py` runs 20 feature scenarios (thinking panel, tool call ordering,
+`run_scenarios.py` runs 26 feature scenarios (thinking panel, tool call ordering,
 tool timeout, Esc interrupt, step limits, repeat/time context injection,
 auto+manual compaction, all `/goal` flows, `/clear`, `/config`, command palette,
 artifact panel, `rename`+`/resume` session menu across a restart, onboarding
-menu) and asserts on captured screens *and* on the request log (e.g. that a
+menu, sandbox auto/strict/full, background jobs, watchers, searchable resume)
+and asserts on captured screens *and* on the request log (e.g. that a
 `<goal_round>` prompt was sent, or that a checkpoint message reached the next
 request). `check_memory.py` samples RSS across a 20-turn session, and
 `run_all.py` runs the three together. Everything binds the mock API to
@@ -290,6 +310,8 @@ src/compact.rs   automatic/manual context compaction (DSH compaction-basic port)
 src/context.rs   in-progress context injection (clock, repeat-call reminder)
 src/goal.rs      goals: state machine, tools, round driver prompt (DSH goal port)
 src/session.rs   saved-session title: rename tool, /resume menu previews
+src/sandbox.rs   tool permission gate: safe rules, danger rules, LLM judge
+src/bg.rs        background jobs + line watchers (job_*/watcher_* tools)
 src/api.rs       streaming chat client over a curl subprocess
 src/config.rs    ~/.dst home, DSH-dialect YAML config
 src/cmd.rs       human commands (/model, /compact, /goal, /resume, ...)

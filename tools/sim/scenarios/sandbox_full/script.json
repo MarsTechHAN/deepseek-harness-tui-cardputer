@@ -1,0 +1,23 @@
+{
+ "responses": [
+  {
+   "reasoning": "danger allowed",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "f1",
+     "name": "bash",
+     "arguments": {
+      "command": "systemctl restart cpz-no-such"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "done",
+   "content": "Full mode ran it.",
+   "finish_reason": "stop"
+  }
+ ]
+}

@@ -1,0 +1,23 @@
+{
+ "responses": [
+  {
+   "reasoning": "ask permission",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "t1",
+     "name": "bash",
+     "arguments": {
+      "command": "./deploy.sh"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "handled",
+   "content": "User rejected the deployment.",
+   "finish_reason": "stop"
+  }
+ ]
+}

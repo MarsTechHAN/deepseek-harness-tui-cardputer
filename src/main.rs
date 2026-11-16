@@ -12,6 +12,7 @@
 
 mod api;
 mod art;
+mod bg;
 mod cmd;
 mod compact;
 mod config;
@@ -22,6 +23,7 @@ mod i18n;
 mod jobs;
 mod login;
 mod mcp;
+mod sandbox;
 mod session;
 mod skills;
 mod usage;
@@ -90,7 +92,20 @@ pub struct Scr {
     hide_header: bool,
     /// Live line above the prompt: (1 = thinking, 2 = streaming tail, text).
     live: Option<(u8, String)>,
+    /// Strict-mode permission pop-up.
+    approval: Option<ApprovalView>,
+    /// Messages produced by background watchers: (model text, transcript label).
+    auto_queue: Vec<(String, String)>,
+    /// Label for the auto message edit() is about to return.
+    auto_label: Option<String>,
     on_tick: Option<Box<dyn FnMut(&mut Scr)>>,
+}
+
+/// Full-screen strict-mode confirmation panel.
+struct ApprovalView {
+    tool: String,
+    args: String,
+    reason: String,
 }
 
 pub const K_NORM: u8 = 0;
@@ -169,6 +184,9 @@ impl Scr {
             hide_header: std::env::var("TMUX").is_ok(),
             queue: Vec::new(),
             live: None,
+            approval: None,
+            auto_queue: Vec::new(),
+            auto_label: None,
             on_tick: None,
         }
     }
@@ -330,6 +348,10 @@ impl Scr {
     }
 
     fn draw(&self) {
+        if let Some(a) = &self.approval {
+            self.draw_approval(a);
+            return;
+        }
         if let Some(m) = &self.menu {
             self.draw_menu(m);
             return;
@@ -549,6 +571,31 @@ impl Scr {
         let col = col.min(self.cols.saturating_sub(1));
         s.push_str(&format!("\x1b[{};{}H\x1b[?25h", self.rows, col + 1));
 
+        let mut out = std::io::stdout();
+        let _ = out.write_all(s.as_bytes());
+        let _ = out.flush();
+    }
+
+    fn draw_approval(&self, a: &ApprovalView) {
+        let mut s = String::with_capacity(2048);
+        s.push_str("\x1b[?25l\x1b[2J\x1b[H");
+        s.push_str("\x1b[1;31m");
+        s.push_str(&fit(" Permission required (strict mode)", self.cols));
+        s.push_str("\x1b[0m\x1b[K\r\n\r\n");
+        s.push_str("\x1b[1;37m");
+        s.push_str(&fit(&format!(" tool: {}", a.tool), self.cols));
+        s.push_str("\x1b[0m\x1b[K\r\n\r\n");
+        s.push_str("\x1b[0;37m");
+        for line in wrap(a.args.lines().next().unwrap_or("")) {
+            s.push_str(&fit(&format!(" {line}"), self.cols));
+            s.push_str("\x1b[0m\x1b[K\r\n");
+        }
+        s.push_str("\x1b[90m");
+        s.push_str(&fit(&format!(" reason: {}", a.reason), self.cols));
+        s.push_str("\x1b[0m\x1b[K\r\n\r\n");
+        s.push_str("\x1b[1;33m");
+        s.push_str(&fit(" [y] allow    [n] reject    Esc reject", self.cols));
+        s.push_str("\x1b[0m\x1b[K");
         let mut out = std::io::stdout();
         let _ = out.write_all(s.as_bytes());
         let _ = out.flush();
@@ -891,6 +938,19 @@ impl Scr {
                         self.on_tick = Some(f);
                     }
                     self.anim_tick();
+                    // A watcher line is a model turn even though the user did
+                    // not type anything: hand it to the main loop.
+                    if !self.auto_queue.is_empty() {
+                        let label = self.auto_queue[0].1.clone();
+                        let text = self
+                            .auto_queue
+                            .drain(..)
+                            .map(|(line, _)| line)
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        self.auto_label = Some(label);
+                        return Some(text);
+                    }
                     continue;
                 }
             };
@@ -1036,6 +1096,13 @@ impl Scr {
 }
 
 /// Drop SGR/CSI sequences, for text that carries its own colour codes.
+/// Wrap a single line for a narrow panel (approval arguments).
+fn wrap(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    Scr::wrap_into(&mut out, text, PANEL_COLS.saturating_sub(2));
+    out
+}
+
 fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut it = s.chars();
@@ -1280,6 +1347,23 @@ RULES
 - Show the result rather than describing the process.";
 
 /// What the model should know about saved-session titles (`/resume` names).
+const TOOL_SAFETY_GUIDANCE: &str = "\
+Tool calls pass through a permission layer (sandbox mode auto/strict/full). \
+Known-safe operations (read-only commands, web reads, workspace writes) run \
+directly. System-configuration changes are refused in auto mode and need \
+human confirmation in strict mode. If a call fails with permission denied, \
+do not retry the same call: explain the reason, or ask the user to switch mode \
+in /config.\n\
+\n\
+JOBS AND WATCHERS\n\
+- job_start runs a shell command in the background and returns an id; use \
+job_output to peek, job_wait to wait up to a timeout, job_kill to stop it. \
+Start several jobs when work is independent.\n\
+- watcher_start runs a command in the background and delivers every line it \
+prints to you as a user message prefixed [watcher <id>]. Use it for servers, \
+logs and sensors; stop it with watcher_stop when it is no longer needed.\n\
+\n";
+
 const SESSION_GUIDANCE: &str = "\
 This conversation is saved and appears in the user's /resume menu. Keep its \
 title current with the `rename` tool: call it as soon as you understand the \
@@ -1324,6 +1408,14 @@ impl harness::Ui for OnceUi {
     }
     fn pump(&mut self) -> Action {
         Action::Continue
+    }
+    fn confirm(&mut self, request: &crate::sandbox::Approval) -> bool {
+        // No keyboard in --once mode: strict mode fails closed.
+        eprintln!(
+            "[permission] strict mode cannot ask in --once mode; rejecting {} ({})",
+            request.tool, request.reason
+        );
+        false
     }
 }
 
@@ -1529,6 +1621,26 @@ impl<'a> harness::Ui for TermUi<'a> {
         }
     }
 
+    fn confirm(&mut self, request: &crate::sandbox::Approval) -> bool {
+        self.scr.approval = Some(ApprovalView {
+            tool: request.tool.clone(),
+            args: request.args.clone(),
+            reason: request.reason.clone(),
+        });
+        self.scr.draw();
+        let verdict = loop {
+            match self.scr.read_key_timeout() {
+                Some(b'y') | Some(b'Y') => break true,
+                Some(b'n') | Some(b'N') | Some(0x1b) | Some(0x03) => break false,
+                Some(_) => {}
+                None => {}
+            }
+        };
+        self.scr.approval = None;
+        self.scr.draw();
+        verdict
+    }
+
     fn pump(&mut self) -> Action {
         if self.scr.artifact.is_some() {
             self.scr.artifact_keystroke();
@@ -1652,6 +1764,14 @@ impl<'a> TermUi<'a> {
         self.scr
             .push(&i18n::tf("force_sent", &[&line]), K_TOOL);
     }
+}
+
+fn first_line_short(s: &str, n: usize) -> String {
+    let mut out: String = s.lines().next().unwrap_or("").chars().take(n).collect();
+    if s.chars().count() > n {
+        out.push('\u{2026}');
+    }
+    out
 }
 
 fn tail_chars(s: &str, n: usize) -> String {
@@ -1994,8 +2114,12 @@ fn new_session_path() -> std::path::PathBuf {
 }
 
 fn save_session(msgs: &jobs::Msgs, cfg: &config::Config, path: &std::path::Path) {
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
     let doc = json::J::o(vec![
         ("title", json::J::s(&crate::session::title())),
+        ("cwd", json::J::s(&cwd)),
         ("model", json::J::s(&cfg.model)),
         ("effort", json::J::s(&cfg.effort)),
         ("messages", json::J::Arr(msgs.borrow().clone())),
@@ -2041,45 +2165,119 @@ fn resume_session_path(
 
 // ---------------------------------------------------------- session picker
 
-/// Turn a session filename stem (`YYYYMMDD-HHMMSS`) into a short stamp.
-fn session_stamp(stem: &str) -> String {
-    if stem.len() >= 13 {
-        format!(
-            "{}-{} {}:{}",
-            &stem[4..6],
-            &stem[6..8],
-            &stem[9..11],
-            &stem[11..13]
-        )
+/// Relative last-talk label: `now`, `5m`, `3h`, `2d`, `1w`, `4mo`.
+fn rel_time(now: u64, then: u64) -> String {
+    let secs = now.saturating_sub(then);
+    if secs < 60 {
+        "now".to_string()
+    } else if secs < 3_600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h", secs / 3_600)
+    } else if secs < 604_800 {
+        format!("{}d", secs / 86_400)
+    } else if secs < 2_419_200 {
+        format!("{}w", secs / 604_800)
     } else {
-        stem.to_string()
+        format!("{}mo", secs / 2_419_200)
     }
 }
 
-/// Menuconfig-style `/resume`: a list of saved sessions by their `rename`
-/// title. Up/Down move, Right/Tab expands the selected session into a preview
-/// block, Enter resumes it, Esc cancels.
+fn now_epoch() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn short_cwd(cwd: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut s = cwd.to_string();
+    if !home.is_empty() && s.starts_with(&home) {
+        s = format!("~{}", &s[home.len()..]);
+    }
+    let mut out: String = s.chars().rev().take(22).collect::<String>().chars().rev().collect();
+    if s.chars().count() > 22 {
+        out = format!("\u{2026}{out}");
+    }
+    out
+}
+
+/// Menuconfig-style `/resume`: sessions grouped with the current directory
+/// first, sorted by last-talk time (newest on top), each row prefixed with a
+/// relative age. Typing filters by title (search is over names only), Right/Tab
+/// expands the highlighted session, Enter resumes, Esc clears the search first.
 fn resume_menu(scr: &mut Scr) -> Option<std::path::PathBuf> {
     let sessions = config::list_sessions();
     if sessions.is_empty() {
         scr.push(i18n::t("resume_empty"), K_DIM);
         return None;
     }
-    let items: Vec<MenuItem> = sessions
-        .iter()
-        .map(|(p, stem, _mtime)| MenuItem {
-            label: crate::session::title_of(p).unwrap_or_else(|| "(untitled)".to_string()),
-            value: session_stamp(stem),
+    let here = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let now = now_epoch();
+    // (path, title, cwd, mtime)
+    let mut entries: Vec<(std::path::PathBuf, String, String, u64)> = sessions
+        .into_iter()
+        .map(|(p, stem, mtime)| {
+            let (title, cwd) = crate::session::meta(&p);
+            let title = if title.is_empty() {
+                format!("(untitled {stem})")
+            } else {
+                title
+            };
+            (p, title, cwd, mtime)
         })
         .collect();
+    // Current directory first, then newest first everywhere.
+    entries.sort_by(|a, b| {
+        let ac = a.2 == here;
+        let bc = b.2 == here;
+        bc.cmp(&ac).then(b.3.cmp(&a.3))
+    });
     let mut sel = 0usize;
     let mut preview: Option<Vec<String>> = None;
+    let mut query = String::new();
     loop {
+        let shown: Vec<&(std::path::PathBuf, String, String, u64)> = entries
+            .iter()
+            .filter(|e| {
+                query.is_empty()
+                    || e.1.to_lowercase().contains(&query.to_lowercase())
+            })
+            .collect();
+        if sel >= shown.len() {
+            sel = shown.len().saturating_sub(1);
+        }
+        let items: Vec<MenuItem> = shown
+            .iter()
+            .map(|e| MenuItem {
+                label: format!("{:>4}  {}", rel_time(now, e.3), e.1),
+                value: if e.2 == here {
+                    "this folder".to_string()
+                } else if e.2.is_empty() {
+                    String::new()
+                } else {
+                    short_cwd(&e.2)
+                },
+            })
+            .collect();
+        let title = if query.is_empty() {
+            i18n::t("resume_title").to_string()
+        } else {
+            format!("{}  \u{b7}  {}", i18n::t("resume_title"), query)
+        };
+        let hint = if items.is_empty() {
+            i18n::t("resume_no_match").to_string()
+        } else {
+            i18n::t("resume_hint").to_string()
+        };
         scr.menu = Some(Menu {
-            title: i18n::t("resume_title").into(),
-            items: items.clone(),
+            title,
+            items,
             sel,
-            hint: i18n::t("resume_hint").into(),
+            hint,
             preview: preview.clone(),
         });
         scr.draw();
@@ -2095,38 +2293,62 @@ fn resume_menu(scr: &mut Scr) -> Option<std::path::PathBuf> {
                         preview = None;
                     }
                     Some(b'B') => {
-                        sel = (sel + 1).min(items.len() - 1);
+                        sel = (sel + 1).min(shown.len().saturating_sub(1));
                         preview = None;
                     }
-                    Some(b'C') => preview = Some(crate::session::preview(&sessions[sel].0)),
+                    Some(b'C') => {
+                        if let Some(e) = shown.get(sel) {
+                            preview = Some(crate::session::preview(&e.0));
+                        }
+                    }
                     Some(b'D') => preview = None,
                     _ => {}
                 },
                 _ => {
-                    scr.menu = None;
-                    scr.draw();
-                    return None;
+                    if query.is_empty() {
+                        scr.menu = None;
+                        scr.draw();
+                        return None;
+                    }
+                    query.clear();
+                    preview = None;
                 }
             }
             continue;
         }
         match k {
-            0x03 | b'q' => {
+            0x03 => {
                 scr.menu = None;
                 scr.draw();
                 return None;
             }
-            b'\t' => preview = Some(crate::session::preview(&sessions[sel].0)),
+            0x7f | 0x08 => {
+                query.pop();
+                preview = None;
+            }
+            b'\t' => {
+                if let Some(e) = shown.get(sel) {
+                    preview = Some(crate::session::preview(&e.0));
+                }
+            }
             0x0d | 0x0a => {
-                scr.menu = None;
-                scr.draw();
-                return Some(sessions[sel].0.clone());
+                if let Some(e) = shown.get(sel) {
+                    let path = e.0.clone();
+                    scr.menu = None;
+                    scr.draw();
+                    return Some(path);
+                }
+            }
+            0x20..=0x7e => {
+                query.push(k as char);
+                preview = None;
             }
             _ => {}
         }
     }
 }
 
+/// Menuconfig-style `/model`:
 /// Menuconfig-style `/model`: pick from the endpoint's advertised models with
 /// arrows/Enter instead of printing a numbered list.
 fn model_menu(scr: &mut Scr, config_rc: &ConfigRc) {
@@ -2221,7 +2443,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
     let mut sel = 0usize;
     loop {
         let c = config_rc.borrow();
-        let (model, effort, base, kstate, voice, auto, queued, lang, steps, compact, goalr, caps) = (
+        let (model, effort, base, kstate, voice, auto, queued, lang, steps, compact, goalr, sandbox_mode, caps) = (
             c.model.clone(),
             c.effort.clone(),
             c.base.clone(),
@@ -2241,6 +2463,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             } else {
                 c.goal_max_rounds.to_string()
             },
+            c.sandbox_mode.clone(),
             c.capabilities(),
         );
         drop(c);
@@ -2262,6 +2485,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             MenuItem { label: i18n::t("menu_steps").into(), value: steps },
             MenuItem { label: i18n::t("menu_compact").into(), value: compact },
             MenuItem { label: i18n::t("menu_goalrounds").into(), value: goalr },
+            MenuItem { label: i18n::t("menu_sandbox").into(), value: sandbox_mode },
             MenuItem { label: i18n::t("menu_save").into(), value: String::new() },
         ];
         let hint = if caps.web_tools && caps.speech {
@@ -2474,6 +2698,15 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                 };
                 let _ = c.save();
             }
+            11 => {
+                let mut c = config_rc.borrow_mut();
+                c.sandbox_mode = crate::sandbox::Mode::parse(&c.sandbox_mode)
+                    .unwrap_or(crate::sandbox::Mode::Auto)
+                    .next()
+                    .as_str()
+                    .to_string();
+                let _ = c.save();
+            }
             _ => {
                 let _ = config_rc.borrow().save();
                 scr.menu = None;
@@ -2515,13 +2748,15 @@ fn main() {
     let mut reg = tools::registry(config_rc.borrow().capabilities());
     reg.extend(goal::tool_defs());
     reg.extend(session::tool_defs());
+    reg.extend(bg::tool_defs());
     reg.extend(mcp::tool_defs());
     let mut caps_at_start = config_rc.borrow().capabilities();
     let mut system_prompt = format!(
-        "{}{}\n\nGOALS\n{}\n\nSESSION\n{}",
+        "{}{}\n\nGOALS\n{}\n{}\nSESSION\n{}",
         SYSTEM_PROMPT,
         skills::catalog_prompt(&skill_list),
         goal::guidance(),
+        TOOL_SAFETY_GUIDANCE,
         SESSION_GUIDANCE
     );
     if !caps_at_start.web_tools {
@@ -2607,6 +2842,12 @@ user you can search the web or speak.\n",
         scr.on_tick = Some(Box::new(move |s: &mut Scr| {
             let c = sc.borrow().clone();
             jobs::poll(&c, &tdefs2, &msgs2, s);
+            for (id, line) in crate::bg::poll_watchers() {
+                s.auto_queue.push((
+                    format!("[watcher {id}] {line}"),
+                    format!("\u{26a1} watcher {id}: {}", first_line_short(&line, 36)),
+                ));
+            }
             let got = {
                 let b = lrx.borrow();
                 b.as_ref().and_then(|rx| rx.try_recv().ok())
@@ -2728,6 +2969,7 @@ user you can search the web or speak.\n",
                     reg = tools::registry(caps_now);
                     reg.extend(goal::tool_defs());
                     reg.extend(session::tool_defs());
+                    reg.extend(bg::tool_defs());
                     reg.extend(mcp::tool_defs());
                     scr.speech_ok = caps_now.speech;
                     caps_at_start = caps_now;
@@ -2777,9 +3019,12 @@ user you can search the web or speak.\n",
                 scr.splash_done = true;
                 scr.art_on = false;
             }
-            match &label {
-                Some(l) => scr.push(l, K_TOOL),
-                None => scr.push(&format!("> {submit}"), K_USER),
+            match scr.auto_label.take() {
+                Some(l) => scr.push(&l, K_TOOL),
+                None => match &label {
+                    Some(l) => scr.push(l, K_TOOL),
+                    None => scr.push(&format!("> {submit}"), K_USER),
+                },
             }
             turn_no += 1;
             // A session must exist before the turn so `rename` works inside
@@ -2909,6 +3154,7 @@ user you can search the web or speak.\n",
     if let Some(p) = &session_path {
         save_session(&msgs, &config_rc.borrow(), p);
     }
+    crate::bg::shutdown();
     raw_mode(false);
     let _ = std::io::stdout().write_all(b"\x1b[0m\x1b[2J\x1b[H");
     println!("bye");

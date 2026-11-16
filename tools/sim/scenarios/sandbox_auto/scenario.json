@@ -1,0 +1,47 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "run a safe command"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 700,
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "send": "run a dangerous command"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 700,
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "send": "run an unknown command"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 30000
+   },
+   "snap": "final"
+  }
+ ]
+}

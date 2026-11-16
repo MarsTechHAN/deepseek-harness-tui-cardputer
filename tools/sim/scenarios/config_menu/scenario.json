@@ -50,8 +50,14 @@
    "key": "Down"
   },
   {
+   "key": "Down"
+  },
+  {
    "wait_ms": 400,
    "snap": "bottom"
+  },
+  {
+   "key": "Up"
   },
   {
    "key": "Up"
@@ -65,6 +71,48 @@
   {
    "wait_ms": 400,
    "snap": "toggled"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Up"
+  },
+  {
+   "key": "Up"
+  },
+  {
+   "key": "Enter"
   },
   {
    "key": "Down"
