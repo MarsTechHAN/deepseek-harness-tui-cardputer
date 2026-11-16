@@ -121,8 +121,9 @@ repository.
 **Interaction polish**
 - `/help` is a command menu: arrows select, Enter runs a no-argument command or
   completes one that needs input, Esc closes.
-- Up/Down on an empty prompt recall input history (60 entries, `/key` never
-  recorded); PgUp/PgDn scroll the transcript a page at a time.
+- Up/Down on an empty prompt recall input history (60 entries persisted in
+  `~/.dst/history`, mode 600; `/key` never recorded); PgUp/PgDn scroll the
+  transcript a page at a time.
 - The idle status line shows key hints; running tools report live progress on
   the status line (`bash running 1.2s`).
 - CtrlO opens a recent tool-output list; Enter shows the full result in the
@@ -163,9 +164,11 @@ values right-aligned at the panel edge.
 **Background jobs and watchers**
 - `job_start` launches a shell command in the background (multiple at once),
   `job_output` peeks, `job_wait` blocks up to a timeout, `job_kill` stops it.
-- `watcher_start` runs a command and delivers every line it prints to the agent
-  as a `[watcher <id>]` user message on the next idle tick; `watcher_list` /
-  `watcher_stop` manage them. Jobs/watchers are killed when dst exits.
+- `watcher_start` runs a command and delivers its lines to the agent as
+  `[watcher <id>]` user messages on the next idle tick; a chatty watcher is
+  coalesced (last 5 lines + "+N more lines") and auto-turns are rate-limited to
+  at most one per 1.2 s. `watcher_list` / `watcher_stop` manage them.
+  Jobs/watchers are killed when dst exits.
 
 **Sessions and task titles**
 - Every turn is saved to `~/.dst/sessions/<timestamp>.json` with a `title`.

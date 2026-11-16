@@ -337,6 +337,10 @@ pub fn sessions_dir() -> PathBuf {
 pub fn skills_dir() -> PathBuf {
     home().join("skills")
 }
+pub fn history_path() -> PathBuf {
+    home().join("history")
+}
+
 pub fn mcp_path() -> PathBuf {
     home().join("mcp.json")
 }

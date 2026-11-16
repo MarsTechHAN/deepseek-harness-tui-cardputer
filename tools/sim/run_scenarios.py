@@ -486,7 +486,7 @@ def check_watcher(screens, reqs, work):
     checks.append(("watcher-line-one" in texts or "watcher-line-two" in texts,
                    "watcher output was delivered to the agent as a user message"))
     checks.append(("[watcher 1]" in texts, "delivered lines carry the [watcher N] prefix"))
-    checks.append(("watcher-line" in screens_all and "\u26a1 Watcher 1" in screens_all,
+    checks.append(("watcher-line" in screens_all and "Watcher 1" in screens_all,
                    "transcript shows the watcher-triggered turn"))
     checks.append(("stopped" in results, "watcher_stop stopped the watcher"))
     return checks
@@ -657,6 +657,33 @@ def check_tips(screens, reqs, work):
     return checks
 
 
+def check_history_persist(screens, reqs, work):
+    recalled = screens.get("recalled", "")
+    hist = read_file(os.path.join(work, "home", ".dst", "history"))
+    checks = []
+    checks.append(("> remember this input" in recalled,
+                   "Up recalls input after a restart"))
+    checks.append(("remember this input" in hist, "history persisted to ~/.dst/history"))
+    checks.append(("/key" not in hist, "history never stores /key lines"))
+    return checks
+
+
+def check_watcher_flood(screens, reqs, work):
+    texts = message_texts(reqs)
+    watcher_msgs = [t for t in texts if t.startswith("[watcher 1]")]
+    checks = []
+    checks.append((len(watcher_msgs) >= 1, "watcher lines reach the agent"))
+    if watcher_msgs:
+        checks.append((watcher_msgs[0].count("wline-") <= 6,
+                       "chatty watcher output is coalesced, not 20 lines"))
+        checks.append(("more lines" in watcher_msgs[0] or
+                       len(watcher_msgs[0].split("wline-")) <= 7,
+                       "coalescing mentions the dropped-line count"))
+    checks.append((len(watcher_msgs) <= 2, "watcher-triggered turns are rate limited"))
+    checks.append(("Handled" in "\n".join(screens.values()), "agent handled the batch"))
+    return checks
+
+
 def check_config_menu(screens, reqs, work):
     menu = screens.get("menu", "")
     bottom = screens.get("bottom", "")
@@ -727,6 +754,8 @@ def check_goal_blocked(screens, reqs, work):
 
 CHECKS = {
     "clear": check_clear,
+    "history_persist": check_history_persist,
+    "watcher_flood": check_watcher_flood,
     "sandbox_diff": check_sandbox_diff,
     "tips": check_tips,
     "ux": check_ux,

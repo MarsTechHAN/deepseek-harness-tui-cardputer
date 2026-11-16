@@ -1,0 +1,39 @@
+{
+ "phases": [
+  [
+   {
+    "wait_for": {
+     "text": "dst",
+     "timeout_ms": 10000
+    }
+   },
+   {
+    "send": "remember this input"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_stable": {
+     "stable_ms": 700,
+     "timeout_ms": 20000
+    }
+   }
+  ],
+  [
+   {
+    "wait_for": {
+     "text": "dst",
+     "timeout_ms": 10000
+    }
+   },
+   {
+    "key": "Up"
+   },
+   {
+    "wait_ms": 300,
+    "snap": "recalled"
+   }
+  ]
+ ]
+}

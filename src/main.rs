@@ -101,6 +101,10 @@ pub struct Scr {
     last_esc: Option<std::time::Instant>,
     /// Recent tool outputs (name, content, is_error, seconds), for CtrlO.
     tool_log: Vec<(String, String, bool, f32)>,
+    /// Raw watcher lines waiting for the next auto-turn window.
+    watch_buffer: Vec<(String, String)>,
+    /// Last time a watcher turn was triggered (rate limit).
+    last_watch_trigger: Option<std::time::Instant>,
     /// Submitted input history (newest last), for ↑/↓ recall.
     history: Vec<String>,
     /// Position while browsing history; None = editing fresh input.
@@ -198,6 +202,8 @@ impl Scr {
             auto_label: None,
             last_esc: None,
             tool_log: Vec::new(),
+            watch_buffer: Vec::new(),
+            last_watch_trigger: None,
             history: Vec::new(),
             hist_pos: None,
             hist_draft: String::new(),
@@ -1114,6 +1120,15 @@ impl Scr {
         }
         self.hist_pos = None;
         self.hist_draft.clear();
+        // Persist across restarts (never API keys).
+        let text = format!("{}\n", self.history.join("\n"));
+        let path = crate::config::history_path();
+        let _ = std::fs::write(&path, text);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
     }
 
     fn hist_set(&mut self, text: &str) {
@@ -3482,6 +3497,14 @@ user you can search the web or speak.\n",
     }
 
     let mut scr = Scr::new();
+    if let Ok(text) = std::fs::read_to_string(config::history_path()) {
+        for line in text.lines().rev().take(60).collect::<Vec<_>>().into_iter().rev() {
+            let line = line.trim();
+            if !line.is_empty() && !line.starts_with("/key") {
+                scr.history.push(line.to_string());
+            }
+        }
+    }
     scr.speech_ok = config_rc.borrow().capabilities().speech;
     let mut session_path: Option<std::path::PathBuf> = None;
     raw_mode(true);
@@ -3507,11 +3530,38 @@ user you can search the web or speak.\n",
         scr.on_tick = Some(Box::new(move |s: &mut Scr| {
             let c = sc.borrow().clone();
             jobs::poll(&c, &tdefs2, &msgs2, s);
-            for (id, line) in crate::bg::poll_watchers() {
-                s.auto_queue.push((
-                    format!("[watcher {id}] {line}"),
-                    format!("\u{26a1} Watcher {id}: {}", first_line_short(&line, 36)),
-                ));
+            s.watch_buffer.extend(crate::bg::poll_watchers());
+            // Coalesce a chatty watcher into one bounded message and rate-limit
+            // how often lines can start an unattended turn.
+            let due = s
+                .last_watch_trigger
+                .map(|t| t.elapsed().as_millis() >= 1200)
+                .unwrap_or(true);
+            if due && !s.watch_buffer.is_empty() {
+                let mut grouped: Vec<(String, Vec<String>)> = Vec::new();
+                for (id, line) in s.watch_buffer.drain(..) {
+                    match grouped.iter_mut().find(|(g, _)| *g == id) {
+                        Some((_, lines)) => lines.push(line),
+                        None => grouped.push((id, vec![line])),
+                    }
+                }
+                for (id, lines) in grouped {
+                    let total = lines.len();
+                    let shown: Vec<String> = lines.iter().rev().take(5).rev().cloned().collect();
+                    let mut text = format!("[watcher {id}] {}", shown.join("\n[watcher {id}] "));
+                    if total > shown.len() {
+                        text.push_str(&format!("\n(+{} more lines)", total - shown.len()));
+                    }
+                    s.auto_queue.push((
+                        text,
+                        format!(
+                            "* Watcher {id}: {} ({} lines)",
+                            first_line_short(shown.last().map(|x| x.as_str()).unwrap_or(""), 26),
+                            total
+                        ),
+                    ));
+                }
+                s.last_watch_trigger = Some(std::time::Instant::now());
             }
             let got = {
                 let b = lrx.borrow();
