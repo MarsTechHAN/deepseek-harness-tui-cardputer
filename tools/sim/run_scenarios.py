@@ -663,6 +663,8 @@ def check_tips(screens, reqs, work):
                    "tips are recorded as shown once"))
     checks.append(("deepseek-flash" in cfg and "test" in cfg,
                    "custom endpoint setup persisted the key/model"))
+    checks.append(("mode: \"full\"" in cfg or "mode: full" in cfg,
+                   "first-run sandbox picker persisted the chosen mode"))
     return checks
 
 

@@ -164,8 +164,9 @@ values right-aligned at the panel edge.
 
 **Permissions / sandbox**
 
-Onboarding explains the default `auto` sandbox on the endpoint-choice preview:
-safe commands run, risky ones are judged or refused, and `/config` changes it.
+Onboarding explains the default `auto` sandbox on the endpoint-choice preview,
+then offers a first-run picker (`auto` / `strict` / `full`) after the endpoint is
+configured; Esc keeps `auto`, and `/config` changes it later.
 - Every tool call passes a permission gate. `auto` (default) allows known-safe
   operations (read-only commands, `read_file`/`list_dir`, web reads, writes under
   the current workspace), refuses system-configuration changes (sudo, systemctl

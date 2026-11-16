@@ -219,6 +219,12 @@ const EN: &[(&str, &str)] = &[
 
     // sandbox judge help
     ("cfg_help_sandbox_judge", "model used to judge uncertain tool calls in auto mode"),
+    // EN sandbox pick keys
+    ("sandbox_pick_title", "Sandbox mode for tool calls"),
+    ("sandbox_auto_desc", "auto: safe commands run; risky calls are judged by a small LLM"),
+    ("sandbox_strict_desc", "strict: every non-safe call asks you first"),
+    ("sandbox_full_desc", "full: run everything, no prompts"),
+    ("sandbox_pick_hint", "↑↓ select · Enter confirm · Esc keep auto"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -378,6 +384,12 @@ const ZH: &[(&str, &str)] = &[
 
     // sandbox judge help
     ("cfg_help_sandbox_judge", "auto 模式下判定不确定工具调用的模型"),
+    // ZH sandbox pick keys
+    ("sandbox_pick_title", "工具调用的沙箱模式"),
+    ("sandbox_auto_desc", "auto：安全命令直接执行；风险调用由小模型判定"),
+    ("sandbox_strict_desc", "strict：每个非安全调用都先询问"),
+    ("sandbox_full_desc", "full：全部放行，不询问"),
+    ("sandbox_pick_hint", "↑↓ 选择 · Enter 确认 · Esc 保持 auto"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -536,6 +548,12 @@ const ES: &[(&str, &str)] = &[
 
     // sandbox judge help
     ("cfg_help_sandbox_judge", "modelo que juzga llamadas inciertas en auto"),
+    // ES sandbox pick keys
+    ("sandbox_pick_title", "Modo sandbox para llamadas"),
+    ("sandbox_auto_desc", "auto: lo seguro se ejecuta; lo riesgoso lo juzga un LLM"),
+    ("sandbox_strict_desc", "strict: cada llamada no segura te pregunta"),
+    ("sandbox_full_desc", "full: todo se ejecuta sin preguntar"),
+    ("sandbox_pick_hint", "↑↓ elegir · Enter confirmar · Esc mantener auto"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -695,6 +713,12 @@ const JA: &[(&str, &str)] = &[
 
     // sandbox judge help
     ("cfg_help_sandbox_judge", "auto で不確実なツール呼び出しを判定するモデル"),
+    // JA sandbox pick keys
+    ("sandbox_pick_title", "ツール呼び出しのサンドボックス"),
+    ("sandbox_auto_desc", "auto: 安全なものは実行、危険なものは LLM が判定"),
+    ("sandbox_strict_desc", "strict: 非安全な呼び出しは確認"),
+    ("sandbox_full_desc", "full: すべて実行、確認なし"),
+    ("sandbox_pick_hint", "↑↓ 選択 · Enter 確定 · Esc は auto のまま"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -854,6 +878,12 @@ const DE: &[(&str, &str)] = &[
 
     // sandbox judge help
     ("cfg_help_sandbox_judge", "Modell zur Bewertung unklarer Tool-Aufrufe (auto)"),
+    // DE sandbox pick keys
+    ("sandbox_pick_title", "Sandbox-Modus für Tool-Aufrufe"),
+    ("sandbox_auto_desc", "auto: Sichere Befehle laufen, riskante prüft ein LLM"),
+    ("sandbox_strict_desc", "strict: jede nicht-sichere Aktion fragt nach"),
+    ("sandbox_full_desc", "full: alles läuft ohne Nachfrage"),
+    ("sandbox_pick_hint", "↑↓ wählen · Enter bestätigen · Esc behält auto"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -1013,6 +1043,12 @@ const IT: &[(&str, &str)] = &[
 
     // sandbox judge help
     ("cfg_help_sandbox_judge", "modello che giudica le chiamate incerte in auto"),
+    // IT sandbox pick keys
+    ("sandbox_pick_title", "Modalità sandbox per i tool"),
+    ("sandbox_auto_desc", "auto: i comandi sicuri girano, i rischiosi li giudica un LLM"),
+    ("sandbox_strict_desc", "strict: ogni chiamata non sicura chiede conferma"),
+    ("sandbox_full_desc", "full: tutto senza conferme"),
+    ("sandbox_pick_hint", "↑↓ scegli · Enter conferma · Esc mantiene auto"),
 ];
 
 

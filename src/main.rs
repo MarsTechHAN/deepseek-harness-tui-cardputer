@@ -2479,6 +2479,58 @@ fn apply_login(c: &mut config::Config, sub: login::Submitted) -> String {
     }
 }
 
+/// First-run sandbox choice after the endpoint is configured. Esc keeps the
+/// current (default auto) mode.
+fn onboarding_sandbox(scr: &mut Scr, config_rc: &ConfigRc) {
+    let modes = [
+        ("auto", crate::sandbox::Mode::Auto),
+        ("strict", crate::sandbox::Mode::Strict),
+        ("full", crate::sandbox::Mode::Full),
+    ];
+    let current = crate::sandbox::Mode::parse(&config_rc.borrow().sandbox_mode)
+        .unwrap_or(crate::sandbox::Mode::Auto);
+    let mut sel = modes.iter().position(|(_, m)| *m == current).unwrap_or(0);
+    loop {
+        let preview = Some(vec![match modes[sel].1 {
+            crate::sandbox::Mode::Auto => i18n::t("sandbox_auto_desc").to_string(),
+            crate::sandbox::Mode::Strict => i18n::t("sandbox_strict_desc").to_string(),
+            crate::sandbox::Mode::Full => i18n::t("sandbox_full_desc").to_string(),
+        }]);
+        let items = modes
+            .iter()
+            .map(|(name, _)| MenuItem { label: name.to_string(), value: String::new() })
+            .collect();
+        scr.menu = Some(Menu {
+            title: i18n::t("sandbox_pick_title").into(),
+            items,
+            sel,
+            hint: i18n::t("sandbox_pick_hint").into(),
+            preview,
+        });
+        scr.draw();
+        let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
+        if k == 0x1b {
+            match scr.read_key_timeout() {
+                Some(b'[') => match scr.read_key_timeout() {
+                    Some(b'A') => sel = sel.saturating_sub(1),
+                    Some(b'B') => sel = (sel + 1).min(modes.len() - 1),
+                    _ => {}
+                },
+                _ => { scr.menu = None; scr.draw(); return; }
+            }
+            continue;
+        }
+        if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return; }
+        if k == 0x0d || k == 0x0a {
+            config_rc.borrow_mut().sandbox_mode = modes[sel].1.as_str().to_string();
+            let _ = config_rc.borrow().save();
+            scr.menu = None;
+            scr.draw();
+            return;
+        }
+    }
+}
+
 /// First-run guide: ask DeepSeek official (QR) or a custom endpoint.
 fn onboarding(scr: &mut Scr, config_rc: &ConfigRc, login_rx: &LoginRx) {
     if config_rc.borrow().configured {
@@ -2580,6 +2632,7 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc, login_rx: &LoginRx) {
                 Err(e) => scr.push(&format!("保存失败: {e}"), K_ERR),
             }
         }
+        onboarding_sandbox(scr, config_rc);
     } else {
         start_login(scr, login_rx);
         let t0 = std::time::Instant::now();
@@ -2592,6 +2645,7 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc, login_rx: &LoginRx) {
                 *login_rx.borrow_mut() = None;
                 let msg = apply_login(&mut config_rc.borrow_mut(), sub);
                 scr.push(&msg, K_NORM);
+                onboarding_sandbox(scr, config_rc);
                 return;
             }
             if let Some(k) = scr.read_key_timeout() {
