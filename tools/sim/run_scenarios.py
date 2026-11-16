@@ -794,6 +794,18 @@ def check_login_type_token(screens, reqs, work):
     return checks
 
 
+def check_login_wechat_status(screens, reqs, work):
+    scanned = screens.get("scanned", "")
+    done = screens.get("done", "")
+    cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+    checks = []
+    checks.append(("scanned — confirm on the phone" in scanned,
+                   "device QR screen shows the scanned status"))
+    checks.append(("Logged in" in done, "flow completes after confirmation"))
+    checks.append(("dsh_token:" in cfg, "token persisted"))
+    return checks
+
+
 def check_login_wechat(screens, reqs, work):
     done = screens.get("done", "")
     cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
@@ -921,6 +933,7 @@ CHECKS = {
     "login_menu": check_login_menu,
     "login_type_token": check_login_type_token,
     "login_wechat": check_login_wechat,
+    "login_wechat_status": check_login_wechat_status,
     "extensions_toggle": check_extensions_toggle,
     "queue_edit": check_queue_edit,
     "sandbox_es": check_sandbox_es,

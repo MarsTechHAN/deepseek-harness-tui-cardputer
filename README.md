@@ -250,8 +250,10 @@ official or a custom OpenAI-compatible endpoint, then pick the sandbox mode.
 1. **WeChat QR on this screen** — dst runs the same nine-step flow as the DSH
    desktop client (WeChat QR from `open.weixin.qq.com`, callback nonce, web
    session token, PKCE `auth_init`/`auth_approve`/`auth_exchange`) and shows the
-   real WeChat QR on the panel: a numbered text guide on the left, QR on the
-   right. The DSH token is stored under `api.dsh_token` and sent to the model
+   real WeChat QR on the panel: a compact numbered text guide on the left
+   (title / steps / page / Esc) and the QR on the right, with a live status
+   line that updates to "scanned — confirm on the phone" and "finishing login"
+   as the phone proceeds. The DSH token is stored under `api.dsh_token` and sent to the model
    API as `x-dsh-auth-token` (no Bearer). Requires `python3` + Pillow only to
    convert the WeChat JPEG QR into panel modules; without a framebuffer the same
    QR and live progress are shown on the phone page.
@@ -401,6 +403,8 @@ tools/sim/mock_login.py  mock of the nine-step DSH login chain (host tests)
 tools/sim/qr_scan.js     jsQR decoder for the panel QR image
 tools/sim/check_qr_scan.py  renders the panel QR and proves it decodes
 tools/sim/check_login_page_i18n.py  starts the login page in all six languages
+tools/sim/render_login_i18n.py  renders the QR login screen in all six languages
+                               and asserts the text never overlaps the QR
 tools/deploy/    scp/build/install and systemd-ordering fix for the device
 ```
 

@@ -247,6 +247,9 @@ const EN: &[(&str, &str)] = &[
     ("login_qr_step1", "1 Scan with WeChat"),
     ("login_qr_step2", "2 Confirm on phone"),
     ("login_qr_step3", "3 Device finishes"),
+    // EN login status keys
+    ("login_status_scanned", "scanned — confirm on the phone"),
+    ("login_status_finishing", "authorized — finishing login…"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -434,6 +437,9 @@ const ZH: &[(&str, &str)] = &[
     ("login_qr_step1", "1 微信扫码"),
     ("login_qr_step2", "2 手机确认"),
     ("login_qr_step3", "3 自动完成"),
+    // ZH login status keys
+    ("login_status_scanned", "已扫码 — 请在手机上确认"),
+    ("login_status_finishing", "已授权 — 正在完成登录…"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -620,6 +626,9 @@ const ES: &[(&str, &str)] = &[
     ("login_qr_step1", "1 Escanea con WeChat"),
     ("login_qr_step2", "2 Confirma en el móvil"),
     ("login_qr_step3", "3 El dispositivo termina"),
+    // ES login status keys
+    ("login_status_scanned", "escaneado — confirma en el móvil"),
+    ("login_status_finishing", "autorizado — terminando el login…"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -807,6 +816,9 @@ const JA: &[(&str, &str)] = &[
     ("login_qr_step1", "1 WeChat でスキャン"),
     ("login_qr_step2", "2 スマホで確認"),
     ("login_qr_step3", "3 自動で完了"),
+    // JA login status keys
+    ("login_status_scanned", "スキャン済み — スマホで確認"),
+    ("login_status_finishing", "認証済み — ログインを完了中…"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -994,6 +1006,9 @@ const DE: &[(&str, &str)] = &[
     ("login_qr_step1", "1 Mit WeChat scannen"),
     ("login_qr_step2", "2 Am Handy bestätigen"),
     ("login_qr_step3", "3 Gerät schließt ab"),
+    // DE login status keys
+    ("login_status_scanned", "gescannt — am Handy bestätigen"),
+    ("login_status_finishing", "autorisiert — Login wird abgeschlossen…"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -1181,6 +1196,9 @@ const IT: &[(&str, &str)] = &[
     ("login_qr_step1", "1 Scansiona con WeChat"),
     ("login_qr_step2", "2 Conferma sul telefono"),
     ("login_qr_step3", "3 Il dispositivo completa"),
+    // IT login status keys
+    ("login_status_scanned", "scansionato — conferma sul telefono"),
+    ("login_status_finishing", "autorizzato — completamento login…"),
 ];
 
 

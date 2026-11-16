@@ -22,6 +22,7 @@ EXCHANGE_CODE = "EXCHANGECODE123"
 DSH_TOKEN = "dsh" + "x" * 61
 STATE = {"state": "s" * 43}
 LOG = []
+SCAN_COUNT = [0]
 
 
 class H(BaseHTTPRequestHandler):
@@ -66,9 +67,13 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
         elif path == "/connect/l/qrconnect":
+            errcode = 405
+            if os.environ.get("MOCK_LOGIN_SCANNED") and SCAN_COUNT[0] == 0:
+                SCAN_COUNT[0] = 1
+                errcode = 404
             self.send_response(200)
             self.send_header("content-type", "text/javascript")
-            body = f"window.wx_errcode=405;window.wx_code='{WX_CODE}';".encode()
+            body = f"window.wx_errcode={errcode};window.wx_code='{'' if errcode == 404 else WX_CODE}';".encode()
             self.send_header("content-length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

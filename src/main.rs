@@ -2506,16 +2506,48 @@ fn push_wrapped(guide: &mut Vec<String>, text: &str, width: usize) {
     }
 }
 
+fn wechat_guide(text_cols: usize, url: &str, status: Option<String>) -> Vec<String> {
+    let mut guide: Vec<String> = Vec::new();
+    push_wrapped(&mut guide, i18n::t("login_wechat_title"), text_cols);
+    guide.push("-".repeat(text_cols.min(23)));
+    push_wrapped(&mut guide, i18n::t("login_qr_step1"), text_cols);
+    push_wrapped(&mut guide, i18n::t("login_qr_step2"), text_cols);
+    push_wrapped(&mut guide, i18n::t("login_qr_step3"), text_cols);
+    if let Some(st) = status {
+        push_wrapped(&mut guide, &format!("\u{2192} {st}"), text_cols);
+    }
+    guide.push(String::new());
+    let page_label = i18n::tf("login_wechat_page", &[""]).trim_end().to_string();
+    push_wrapped(&mut guide, &page_label, text_cols);
+    push_wrapped(&mut guide, url.trim_end_matches('/'), text_cols);
+    guide.push(String::new());
+    push_wrapped(&mut guide, i18n::t("artifact_back"), text_cols);
+    guide
+}
+
+fn login_status_text(message: &str, phase: &str) -> Option<String> {
+    if phase == "exchanging" {
+        Some(i18n::t("login_status_finishing").to_string())
+    } else if message.to_ascii_lowercase().contains("scanned") {
+        Some(i18n::t("login_status_scanned").to_string())
+    } else {
+        None
+    }
+}
+
 fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, String> {
     let session = login::start(port, lang)?;
     let port = session.port;
     login::start_wechat(&session.shared, port);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
     let mut shown = false;
+    let mut blit_ok = false;
+    let mut matrix: Option<Vec<String>> = None;
+    let mut last_status: Option<String> = None;
     while std::time::Instant::now() < deadline {
-        let (qr_version, qr, err, token, message) = {
+        let (qr_version, qr, err, token, message, phase) = {
             let st = session.shared.lock().unwrap();
-            (st.qr_version, st.qr.clone(), st.error.clone(), st.token.clone(), st.message.clone())
+            (st.qr_version, st.qr.clone(), st.error.clone(), st.token.clone(), st.message.clone(), st.phase.clone())
         };
         if let Some(e) = err {
             close_qr(scr);
@@ -2526,50 +2558,50 @@ fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, S
             return Ok(t);
         }
         if !shown && qr_version > 0 && !qr.is_empty() {
-            let matrix = crate::dsh_login::qr_matrix_from_jpeg(&qr);
+            let m = crate::dsh_login::qr_matrix_from_jpeg(&qr);
+            matrix = m.clone().ok();
             let (r, c) = term_size();
             scr.rows = r;
             scr.cols = c;
             // QR on the right (164px), a compact numbered guide on the left.
             const QR_PX: usize = 164;
             let text_cols = c.saturating_sub(QR_PX / 6 + 1).max(10);
-            let mut guide: Vec<String> = Vec::new();
-            push_wrapped(&mut guide, i18n::t("login_wechat_title"), text_cols);
-            guide.push("-".repeat(text_cols.min(23)));
-            push_wrapped(&mut guide, i18n::t("login_qr_step1"), text_cols);
-            push_wrapped(&mut guide, i18n::t("login_qr_step2"), text_cols);
-            push_wrapped(&mut guide, i18n::t("login_qr_step3"), text_cols);
-            guide.push(String::new());
-            let page_label = i18n::tf("login_wechat_page", &[""]).trim_end().to_string();
-            push_wrapped(&mut guide, &page_label, text_cols);
-            push_wrapped(&mut guide, session.url.trim_end_matches('/'), text_cols);
-            guide.push(String::new());
-            push_wrapped(&mut guide, i18n::t("artifact_back"), text_cols);
+            let guide = wechat_guide(text_cols, &session.url, login_status_text(&message, "waiting"));
             scr.qr = Some(guide);
             scr.draw();
-            let blit = matrix
+            blit_ok = matrix
                 .as_ref()
                 .map(|m| login::draw_matrix_fb(m, Some((156, 0, 164, 170))).is_ok())
                 .unwrap_or(false);
-            scr.qr_blit = blit;
-            if !blit {
-                let mut lines = vec![i18n::t("login_wechat_title").to_string()];
-                lines.push("-".repeat(23));
-                lines.push(i18n::t("login_qr_step1").to_string());
-                lines.push(i18n::t("login_qr_step2").to_string());
-                lines.push(i18n::t("login_qr_step3").to_string());
-                lines.push(String::new());
-                let page_label = i18n::tf("login_wechat_page", &[""]).trim_end().to_string();
-                push_wrapped(&mut lines, &page_label, c);
-                push_wrapped(&mut lines, session.url.trim_end_matches('/'), c);
-                lines.push(String::new());
-                lines.push(i18n::t("artifact_back").to_string());
+            scr.qr_blit = blit_ok;
+            if !blit_ok {
+                let lines = wechat_guide(c, &session.url, login_status_text(&message, "waiting"));
                 scr.qr = Some(lines);
                 scr.draw();
             }
             shown = true;
+            last_status = login_status_text(&message, "waiting");
+        } else if shown {
+            // Show progress on the panel while the phone is scanned/confirmed.
+            let status = login_status_text(&message, &phase);
+            if status != last_status {
+                let lines = if blit_ok {
+                    wechat_guide(24, &session.url, status.clone())
+                } else {
+                    wechat_guide(scr.cols, &session.url, status.clone())
+                };
+                scr.qr_blit = false;
+                scr.qr = Some(lines);
+                scr.draw();
+                if blit_ok {
+                    if let Some(m) = matrix.as_ref() {
+                        let _ = login::draw_matrix_fb(m, Some((156, 0, 164, 170)));
+                    }
+                    scr.qr_blit = true;
+                }
+                last_status = status;
+            }
         }
-        let _ = message;
         if let Some(k) = scr.read_key_timeout() {
             if k == 0x1b || k == 0x03 {
                 close_qr(scr);
