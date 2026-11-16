@@ -256,8 +256,8 @@ official or a custom OpenAI-compatible endpoint, then pick the sandbox mode.
    convert the WeChat JPEG QR into panel modules; without a framebuffer the same
    QR and live progress are shown on the phone page.
 2. **Phone page** — a LAN page with the WeChat QR, live steps, and a manual
-   API-key form (`http://<device-ip>:8787/`). The page is bilingual EN/中文 for
-   the phone.
+   API-key form (`http://<device-ip>:8787/`). The page follows the device UI
+   language (en/zh/es/ja/de/it).
 3. **Type directly** — menuconfig-style typing for either a DSH token or an
    OpenAI-compatible base URL + API key + model.
 
@@ -400,6 +400,7 @@ docs/UX-AUDIT.md 12-row screen-by-screen UX audit checklist and known limits
 tools/sim/mock_login.py  mock of the nine-step DSH login chain (host tests)
 tools/sim/qr_scan.js     jsQR decoder for the panel QR image
 tools/sim/check_qr_scan.py  renders the panel QR and proves it decodes
+tools/sim/check_login_page_i18n.py  starts the login page in all six languages
 tools/deploy/    scp/build/install and systemd-ordering fix for the device
 ```
 

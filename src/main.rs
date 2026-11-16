@@ -2506,8 +2506,8 @@ fn push_wrapped(guide: &mut Vec<String>, text: &str, width: usize) {
     }
 }
 
-fn login_wechat_device(scr: &mut Scr, port: u16) -> Result<String, String> {
-    let session = login::start(port)?;
+fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, String> {
+    let session = login::start(port, lang)?;
     let port = session.port;
     login::start_wechat(&session.shared, port);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
@@ -2581,8 +2581,8 @@ fn login_wechat_device(scr: &mut Scr, port: u16) -> Result<String, String> {
     Err(i18n::t("onboard_timeout").into())
 }
 
-fn login_web(scr: &mut Scr, port: u16) -> Result<LoginResult, String> {
-    let session = login::start(port)?;
+fn login_web(scr: &mut Scr, port: u16, lang: &str) -> Result<LoginResult, String> {
+    let session = login::start(port, lang)?;
     show_page_qr(scr, &session.url);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
     loop {
@@ -2720,9 +2720,10 @@ fn start_login(scr: &mut Scr, config_rc: &ConfigRc) -> bool {
         }
     };
     let port = login::DEFAULT_PORT;
+    let lang = config_rc.borrow().language.clone();
     let result = match choice {
-        0 => login_wechat_device(scr, port).map(LoginResult::Token),
-        1 => login_web(scr, port),
+        0 => login_wechat_device(scr, port, &lang).map(LoginResult::Token),
+        1 => login_web(scr, port, &lang),
         _ => match login_type(scr) {
             Some(r) => Ok(r),
             None => Err(i18n::t("login_cancel").to_string()),
@@ -3989,7 +3990,8 @@ fn main() {
     }
     if argv.get(1).map(|s| s.as_str()) == Some("--login-server-test") {
         let port: u16 = argv.get(2).and_then(|p| p.parse().ok()).unwrap_or(8899);
-        match login::start(port) {
+        let lang = argv.get(3).map(|s| s.as_str()).unwrap_or("en");
+        match login::start(port, lang) {
             Ok(session) => {
                 println!("URL {}", session.url);
                 let t0 = std::time::Instant::now();

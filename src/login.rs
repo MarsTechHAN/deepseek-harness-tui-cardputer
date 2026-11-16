@@ -140,84 +140,100 @@ fn state_json(st: &LoginState) -> String {
     )
 }
 
-fn page() -> String {
-    r#"<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
+fn page(lang: &str) -> String {
+    const T: &str = r#"{"en": {"title": "dst login", "sub": "Sign in to DeepSeek — or paste an API key. The device saves it locally; nothing is uploaded elsewhere.", "wechat_h2": "WeChat QR login", "wechat_hint": "Scan with WeChat — the device completes the DeepSeek Platform login by itself. The QR expires after about 5 minutes.", "start_btn": "Start WeChat login", "api_h2": "API key", "api_hint": "Use this if you already have a platform API key, or for a self-hosted OpenAI-compatible endpoint.", "label_provider": "Provider", "opt_official": "DeepSeek official (api.deepseek.com)", "opt_custom": "Other / self-hosted (OpenAI-compatible)", "label_custom": "Custom base URL", "label_key": "API key", "label_model": "Model (optional)", "save_btn": "Save to device", "foot1": "Device page · for phones on the same LAN", "foot2": "Token stored locally on the device only (mode 600)", "pill_idle": "idle", "pill_starting": "starting…", "pill_done": "logged in", "pill_failed": "failed", "pill_offline": "offline", "qr_alt": "WeChat login QR", "msg_done": "DSH token saved to the device", "msg_start": "requesting WeChat QR", "msg_scan": "scan the QR with WeChat", "msg_scanned": "scanned, confirm on the phone", "msg_exchanging": "authorized, exchanging token"}, "zh": {"title": "dst 登录", "sub": "登录 DeepSeek，或粘贴 API key。凭据只保存在设备本地，不会上传到别处。", "wechat_h2": "微信扫码登录", "wechat_hint": "用微信扫码，设备会自动完成 DeepSeek 平台登录。二维码约 5 分钟后过期。", "start_btn": "开始微信登录", "api_h2": "API Key", "api_hint": "已有平台 API key，或使用自建 OpenAI 兼容 endpoint 时使用。", "label_provider": "服务商", "opt_official": "DeepSeek 官方（api.deepseek.com）", "opt_custom": "其他 / 自建（OpenAI 兼容）", "label_custom": "自定义 base URL", "label_key": "API key", "label_model": "模型（可选）", "save_btn": "保存到设备", "foot1": "设备页面 · 仅供同一局域网的手机访问", "foot2": "Token 只保存在设备本地（mode 600）", "pill_idle": "未开始", "pill_starting": "正在启动…", "pill_done": "已登录", "pill_failed": "失败", "pill_offline": "未连接", "qr_alt": "微信登录二维码", "msg_done": "DSH token 已保存到设备", "msg_start": "正在申请微信二维码", "msg_scan": "用微信扫一扫二维码", "msg_scanned": "已扫码，请在手机上确认", "msg_exchanging": "已授权，正在换取 token"}, "es": {"title": "Acceso dst", "sub": "Inicia sesión en DeepSeek o pega una API key. El dispositivo la guarda localmente; no se sube a ningún sitio.", "wechat_h2": "Acceso con QR de WeChat", "wechat_hint": "Escanea con WeChat: el dispositivo completa el login de DeepSeek Platform. El QR caduca en unos 5 minutos.", "start_btn": "Iniciar login con WeChat", "api_h2": "API key", "api_hint": "Úsalo si ya tienes una API key o para un endpoint propio compatible con OpenAI.", "label_provider": "Proveedor", "opt_official": "DeepSeek oficial (api.deepseek.com)", "opt_custom": "Otro / propio (compatible OpenAI)", "label_custom": "Base URL personalizada", "label_key": "API key", "label_model": "Modelo (opcional)", "save_btn": "Guardar en el dispositivo", "foot1": "Página del dispositivo · solo para móviles de la misma LAN", "foot2": "Token guardado solo en el dispositivo (modo 600)", "pill_idle": "inactivo", "pill_starting": "iniciando…", "pill_done": "sesión iniciada", "pill_failed": "fallido", "pill_offline": "sin conexión", "qr_alt": "QR de login WeChat", "msg_done": "Token DSH guardado en el dispositivo", "msg_start": "solicitando QR de WeChat", "msg_scan": "escanea el QR con WeChat", "msg_scanned": "escaneado, confirma en el móvil", "msg_exchanging": "autorizado, intercambiando token"}, "ja": {"title": "dst ログイン", "sub": "DeepSeek にログインするか API キーを貼り付けます。認証情報は端末内だけに保存されます。", "wechat_h2": "WeChat QR ログイン", "wechat_hint": "WeChat でスキャンすると、端末が DeepSeek Platform のログインを自動で完了します。QR は約 5 分で失効します。", "start_btn": "WeChat ログインを開始", "api_h2": "API キー", "api_hint": "既存の API キー、または OpenAI 互換の独自 endpoint を使う場合に。", "label_provider": "プロバイダー", "opt_official": "DeepSeek 公式（api.deepseek.com）", "opt_custom": "その他 / 独自（OpenAI 互換）", "label_custom": "カスタム base URL", "label_key": "API キー", "label_model": "モデル（任意）", "save_btn": "端末に保存", "foot1": "端末ページ · 同じ LAN のスマホ用", "foot2": "Token は端末内のみに保存（mode 600）", "pill_idle": "待機中", "pill_starting": "開始中…", "pill_done": "ログイン済み", "pill_failed": "失敗", "pill_offline": "未接続", "qr_alt": "WeChat ログイン QR", "msg_done": "DSH トークンを端末に保存しました", "msg_start": "WeChat QR を取得中", "msg_scan": "WeChat で QR をスキャン", "msg_scanned": "スキャン済み。スマホで確認してください", "msg_exchanging": "認証済み、トークン交換中"}, "de": {"title": "dst Anmeldung", "sub": "Bei DeepSeek anmelden oder einen API-Key einfügen. Das Gerät speichert ihn lokal; nichts wird hochgeladen.", "wechat_h2": "WeChat-QR-Login", "wechat_hint": "Mit WeChat scannen — das Gerät schließt den DeepSeek-Platform-Login selbst ab. Der QR läuft nach ca. 5 Minuten ab.", "start_btn": "WeChat-Login starten", "api_h2": "API-Key", "api_hint": "Für einen vorhandenen API-Key oder einen eigenen OpenAI-kompatiblen Endpoint.", "label_provider": "Anbieter", "opt_official": "DeepSeek official (api.deepseek.com)", "opt_custom": "Andere / eigener (OpenAI-kompatibel)", "label_custom": "Eigene Base-URL", "label_key": "API-Key", "label_model": "Modell (optional)", "save_btn": "Auf Gerät speichern", "foot1": "Geräteseite · nur für Handys im selben LAN", "foot2": "Token nur lokal auf dem Gerät (Modus 600)", "pill_idle": "inaktiv", "pill_starting": "startet…", "pill_done": "eingeloggt", "pill_failed": "fehlgeschlagen", "pill_offline": "offline", "qr_alt": "WeChat-Login-QR", "msg_done": "DSH-Token auf dem Gerät gespeichert", "msg_start": "WeChat-QR wird angefordert", "msg_scan": "QR mit WeChat scannen", "msg_scanned": "gescannt, am Handy bestätigen", "msg_exchanging": "autorisiert, Token wird getauscht"}, "it": {"title": "Accesso dst", "sub": "Accedi a DeepSeek o incolla una API key. Il dispositivo la salva localmente; nulla viene caricato altrove.", "wechat_h2": "Accesso con QR WeChat", "wechat_hint": "Scansiona con WeChat: il dispositivo completa da solo il login a DeepSeek Platform. Il QR scade dopo circa 5 minuti.", "start_btn": "Avvia login WeChat", "api_h2": "API key", "api_hint": "Usala se hai già una API key o per un endpoint proprio compatibile OpenAI.", "label_provider": "Provider", "opt_official": "DeepSeek official (api.deepseek.com)", "opt_custom": "Altro / proprio (compatibile OpenAI)", "label_custom": "Base URL personalizzata", "label_key": "API key", "label_model": "Modello (opzionale)", "save_btn": "Salva sul dispositivo", "foot1": "Pagina del dispositivo · solo per telefoni nella stessa LAN", "foot2": "Token salvato solo sul dispositivo (mode 600)", "pill_idle": "inattivo", "pill_starting": "avvio…", "pill_done": "accesso effettuato", "pill_failed": "fallito", "pill_offline": "offline", "qr_alt": "QR login WeChat", "msg_done": "Token DSH salvato sul dispositivo", "msg_start": "richiesta QR WeChat", "msg_scan": "scansiona il QR con WeChat", "msg_scanned": "scansionato, conferma sul telefono", "msg_exchanging": "autorizzato, scambio token"}}"#;
+    let l = match lang {
+        "zh" | "es" | "ja" | "de" | "it" => lang,
+        _ => "en",
+    };
+    let doc = crate::json::parse(T).unwrap_or_else(|| crate::json::parse("{}").unwrap());
+    let tr = |k: &str| -> String {
+        doc.get(l).and_then(|v| v.get(k)).and_then(|v| v.as_str())
+            .or_else(|| doc.get("en").and_then(|v| v.get(k)).and_then(|v| v.as_str()))
+            .unwrap_or(k).to_string()
+    };
+    let mut out = r#"<!doctype html>
+<html lang="@LANG@"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>dst login · Cardputer Zero</title>
+<title>@TITLE@</title>
 <style>
 :root{--bg:#0b0f14;--card:#121924;--line:#223044;--text:#e6edf3;--dim:#8b98a9;--accent:#4f9cf9;--ok:#3fb950;--err:#f85149}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
 .wrap{max-width:840px;margin:0 auto;padding:24px 18px 40px}
-h1{font-size:22px;margin:0 0 4px}.sub{color:var(--dim);font-size:14px;margin:0 0 20px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:var(--dim);font-size:14px;margin:0 0 20px;line-height:1.5}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media(max-width:720px){.grid{grid-template-columns:1fr}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
-.card h2{font-size:16px;margin:0 0 6px}.card .hint{color:var(--dim);font-size:13px;margin:0 0 12px;line-height:1.4}
+.card h2{font-size:16px;margin:0 0 8px}.card .hint{color:var(--dim);font-size:13px;margin:0 0 12px;line-height:1.5}
 .pill{display:inline-block;font-size:12px;padding:4px 10px;border-radius:999px;background:#1d2a3c;color:var(--dim);margin-bottom:10px}
 .pill.ok{background:#12361f;color:var(--ok)}.pill.err{background:#3b1517;color:var(--err)}
 #qr{width:100%;max-width:280px;aspect-ratio:1/1;object-fit:contain;background:#fff;border-radius:12px;display:block;margin:8px auto 4px}
-#qrmsg{text-align:center;color:var(--dim);font-size:13px;min-height:20px}
+#qrmsg{text-align:center;color:var(--dim);font-size:13px;min-height:20px;line-height:1.4}
 button{width:100%;padding:13px;border:0;border-radius:10px;background:var(--accent);color:#fff;font-size:15px;font-weight:600;margin-top:10px;cursor:pointer}
 button.ghost{background:#1a2534;color:var(--text);font-weight:500}
 label{display:block;margin:14px 0 6px;font-size:13px;color:var(--dim)}
 input,select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0d141d;color:var(--text);font-size:16px}
 .steps{margin:10px 0 0;padding-left:18px;color:var(--dim);font-size:12px;line-height:1.7;min-height:20px}
-.ok{color:var(--ok)}.err{color:var(--err)}code{background:#0d141d;padding:2px 6px;border-radius:4px}
-.foot{margin-top:22px;color:var(--dim);font-size:12px;text-align:center;line-height:1.6}
+.foot{margin-top:22px;color:var(--dim);font-size:12px;text-align:center;line-height:1.7}
 </style></head><body><div class="wrap">
-<h1>dst on Cardputer Zero</h1>
-<p class="sub">Sign in to DeepSeek — or paste an API key. The device saves it locally; nothing is uploaded elsewhere.</p>
+<h1>dst · Cardputer Zero</h1>
+<p class="sub">@SUB@</p>
 <div class="grid">
  <section class="card">
-  <h2>WeChat QR login · 微信扫码登录</h2>
-  <p class="hint">Scan with WeChat — the device completes the DeepSeek Platform login by itself. QR expires after ~5 min.</p>
-  <div id="pill" class="pill">idle · 未开始</div>
-  <img id="qr" alt="WeChat login QR" src="/api/qr" style="display:none">
+  <h2>@WECHAT_H2@</h2>
+  <p class="hint">@WECHAT_HINT@</p>
+  <div id="pill" class="pill">@PILL_IDLE@</div>
+  <img id="qr" alt="@QR_ALT@" src="/api/qr" style="display:none">
   <div id="qrmsg"></div>
   <ul id="steps" class="steps"></ul>
-  <button id="start">Start WeChat login · 开始扫码</button>
+  <button id="start">@START_BTN@</button>
  </section>
  <section class="card">
-  <h2>API key · 直接粘贴 API Key</h2>
-  <p class="hint">Use this if you already have a platform API key, or for a self-hosted OpenAI-compatible endpoint.</p>
+  <h2>@API_H2@</h2>
+  <p class="hint">@API_HINT@</p>
   <form method="POST" action="/save">
-   <label>Provider · 服务商</label>
+   <label>@LABEL_PROVIDER@</label>
    <select name="base">
-    <option value="https://api.deepseek.com/v1">DeepSeek official (api.deepseek.com)</option>
-    <option value="custom">Other / self-hosted (OpenAI-compatible)</option>
+    <option value="https://api.deepseek.com/v1">@OPT_OFFICIAL@</option>
+    <option value="custom">@OPT_CUSTOM@</option>
    </select>
-   <label>Custom base URL · 自定义地址</label>
+   <label>@LABEL_CUSTOM@</label>
    <input name="custom_base" placeholder="https://your.endpoint/v1" autocomplete="off">
-   <label>API key</label>
+   <label>@LABEL_KEY@</label>
    <input name="key" type="password" placeholder="sk-..." autocomplete="off" required>
-   <label>Model · 模型（可选）</label>
+   <label>@LABEL_MODEL@</label>
    <input name="model" placeholder="deepseek-flash" autocomplete="off">
-   <button class="ghost" type="submit">Save to device · 保存</button>
+   <button class="ghost" type="submit">@SAVE_BTN@</button>
   </form>
  </section>
 </div>
-<p class="foot">Device page · 本页仅供同一局域网的手机访问<br>Token 只在设备本地保存（mode 600）</p>
+<p class="foot">@FOOT1@<br>@FOOT2@</p>
 </div>
 <script>
 const $=id=>document.getElementById(id);
+const phaseText=p=>({qr:"@MSG_START@",waiting:"@MSG_SCAN@",scanned:"@MSG_SCANNED@",exchanging:"@MSG_EXCHANGING@",done:"@PILL_DONE@",failed:"@PILL_FAILED@"}[p]||p||"@PILL_IDLE@");
 const setPill=(t,cls)=>{$('pill').textContent=t;$('pill').className='pill '+(cls||'')};
 async function poll(){
  try{
   const r=await fetch('/api/state',{cache:'no-store'});
   const s=await r.json();
   if(s.qrVersion>0){$('qr').style.display='block';$('qr').src='/api/qr?v='+s.qrVersion;}
-  $('qrmsg').textContent=s.message||'';
-  setPill(s.phase||'idle',s.phase==='done'?'ok':(s.phase==='failed'?'err':''));
+  $('qrmsg').textContent=phaseText(s.phase)||s.message||'';
+  setPill(phaseText(s.phase),s.phase==='done'?'ok':(s.phase==='failed'?'err':''));
   if(s.steps&&s.steps.length)$('steps').innerHTML=s.steps.map(x=>'<li>'+x.replace(/</g,'&lt;')+'</li>').join('');
-  if(s.token){setPill('logged in · 登录完成','ok');$('qrmsg').textContent='DSH token saved to the device ('+s.token+')';}
-  if(s.error){setPill('failed · 失败','err');$('qrmsg').textContent=s.error;}
- }catch(e){setPill('offline · 未连接','err')}
+  if(s.token){setPill("@PILL_DONE@",'ok');$('qrmsg').textContent="@MSG_DONE@ ("+s.token+")";}
+  if(s.error){setPill("@PILL_FAILED@",'err');$('qrmsg').textContent=s.error;}
+ }catch(e){setPill("@PILL_OFFLINE@",'err')}
 }
-$('start').onclick=async()=>{setPill('starting…');await fetch('/api/login',{method:'POST'});poll();};
+$('start').onclick=async()=>{setPill("@PILL_STARTING@");await fetch('/api/login',{method:'POST'});poll();};
 fetch('/api/login',{method:'POST'}).catch(()=>{});
 poll();setInterval(poll,1200);
-</script></body></html>"#.to_string()
+</script></body></html>"#.to_string();
+    out = out.replace("@LANG@", l);
+    for key in ["TITLE","SUB","WECHAT_H2","WECHAT_HINT","START_BTN","API_H2","API_HINT","LABEL_PROVIDER","OPT_OFFICIAL","OPT_CUSTOM","LABEL_CUSTOM","LABEL_KEY","LABEL_MODEL","SAVE_BTN","FOOT1","FOOT2","PILL_IDLE","PILL_STARTING","PILL_DONE","PILL_FAILED","PILL_OFFLINE","QR_ALT","MSG_DONE","MSG_START","MSG_SCAN","MSG_SCANNED","MSG_EXCHANGING"] {
+        out = out.replace(&format!("@{key}@"), &tr(&key.to_ascii_lowercase()));
+    }
+    out.replace("@@", "@")
 }
 
 fn urldecode(s: &str) -> String {
@@ -269,7 +285,7 @@ fn reply(stream: &mut std::net::TcpStream, status: &str, ctype: &str, body: &[u8
 
 /// Start the login server; returns the page URL, live state and the channel
 /// that yields manually submitted credentials.
-pub fn start(port: u16) -> Result<Session, String> {
+pub fn start(port: u16, lang: &str) -> Result<Session, String> {
     let ip = lan_ip();
     // Prefer the requested port; fall back to an ephemeral one when another
     // login page is still winding down (Drop stops the previous listener).
@@ -291,6 +307,7 @@ pub fn start(port: u16) -> Result<Session, String> {
     let tx = Arc::new(Mutex::new(tx));
     let shared: Shared = Arc::new(Mutex::new(LoginState::default()));
     let state_for_server = shared.clone();
+    let page_lang = lang.to_string();
     let _ = listener.set_nonblocking(true);
     std::thread::spawn(move || {
         loop {
@@ -328,7 +345,7 @@ pub fn start(port: u16) -> Result<Session, String> {
             let body = text.get(headers_len..).unwrap_or("");
 
             if method == "GET" && (path == "/" || path.starts_with("/?")) {
-                reply(&mut s, "200 OK", "text/html; charset=utf-8", page().as_bytes());
+                reply(&mut s, "200 OK", "text/html; charset=utf-8", page(&page_lang).as_bytes());
             } else if method == "GET" && path.starts_with("/api/state") {
                 let body = { let st = state_for_server.lock().unwrap(); state_json(&st) };
                 reply(&mut s, "200 OK", "application/json", body.as_bytes());
