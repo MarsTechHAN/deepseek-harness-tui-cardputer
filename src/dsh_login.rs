@@ -474,11 +474,18 @@ fn wechat_qr() -> Result<(String, Vec<u8>), String> {
 fn poll_scan(
     uuid: &str,
     emit: &mut dyn FnMut(Event),
+    cancelled: &mut dyn FnMut() -> bool,
 ) -> Result<String, String> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
     let mut scanned = false;
     while std::time::Instant::now() < deadline {
+        if cancelled() {
+            return Err("login cancelled".into());
+        }
         std::thread::sleep(std::time::Duration::from_millis(1500));
+        if cancelled() {
+            return Err("login cancelled".into());
+        }
         let url = format!(
             "{}/connect/l/qrconnect?uuid={uuid}&_={}",
             wechat_lp_base(),
@@ -638,7 +645,11 @@ fn auth_exchange(flow: &Flow, code: &str) -> Result<String, String> {
 }
 
 /// Run the whole flow. `port` is only used for the loopback redirect URI.
-pub fn run(port: u16, emit: &mut dyn FnMut(Event)) -> Result<String, String> {
+pub fn run(
+    port: u16,
+    emit: &mut dyn FnMut(Event),
+    cancelled: &mut dyn FnMut() -> bool,
+) -> Result<String, String> {
     let flow = Flow::new(port)?;
     emit(Event::Phase("qr".into()));
     emit(Event::Message("requesting WeChat QR".into()));
@@ -648,7 +659,10 @@ pub fn run(port: u16, emit: &mut dyn FnMut(Event)) -> Result<String, String> {
     emit(Event::Phase("waiting".into()));
     emit(Event::Message("scan the QR with WeChat".into()));
 
-    let wx_code = poll_scan(&uuid, emit)?;
+    if cancelled() {
+        return Err("login cancelled".into());
+    }
+    let wx_code = poll_scan(&uuid, emit, cancelled)?;
     emit(Event::Phase("exchanging".into()));
     emit(Event::Message("authorized, exchanging token".into()));
 

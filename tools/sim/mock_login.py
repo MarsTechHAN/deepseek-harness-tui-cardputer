@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -69,6 +70,9 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
         elif path == "/connect/l/qrconnect":
+            delay = float(os.environ.get("MOCK_LOGIN_POLL_DELAY", "0"))
+            if delay > 0:
+                time.sleep(delay)
             errcode = 405
             if os.environ.get("MOCK_LOGIN_EXPIRED") and EXPIRED_ONCE[0] == 0:
                 EXPIRED_ONCE[0] = 1

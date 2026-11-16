@@ -2607,6 +2607,7 @@ fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, S
                             continue 'retry;
                         }
                         Some(0x1b) | Some(0x03) => {
+                            session.shared.lock().unwrap().cancelled = true;
                             close_qr(scr);
                             return Err(i18n::t("login_cancel").into());
                         }
@@ -2665,6 +2666,7 @@ fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, S
             }
             if let Some(k) = scr.read_key_timeout() {
                 if k == 0x1b || k == 0x03 {
+                    session.shared.lock().unwrap().cancelled = true;
                     close_qr(scr);
                     return Err(i18n::t("login_cancel").into());
                 }
@@ -4062,6 +4064,7 @@ fn main() {
     let argv: Vec<String> = std::env::args().collect();
     if argv.iter().any(|a| a == "--dsh-login-test") {
         let port = 7788u16;
+        let mut never_cancel = || false;
         let result = dsh_login::run(port, &mut |ev| match ev {
             dsh_login::Event::Phase(p) => eprintln!("phase: {p}"),
             dsh_login::Event::Message(m) => eprintln!("msg: {m}"),
@@ -4074,7 +4077,7 @@ fn main() {
                     Err(e) => eprintln!("qr matrix: {e}"),
                 }
             }
-        });
+        }, &mut never_cancel);
         match result {
             Ok(token) => {
                 println!("TOKEN {}", dsh_login::mask(&token));
@@ -4097,6 +4100,7 @@ fn main() {
             Ok(session) => {
                 println!("URL {}", session.url);
                 let t0 = std::time::Instant::now();
+                let mut announced_cancel = false;
                 loop {
                     if let Ok(sub) = session.rx.try_recv() {
                         println!("MANUAL {} {}", sub.base, dsh_login::mask(&sub.key));
@@ -4111,8 +4115,15 @@ fn main() {
                         return;
                     }
                     if let Some(e) = err {
-                        println!("FAILED {e}");
-                        std::process::exit(1);
+                        if e.to_lowercase().contains("cancelled") {
+                            if !announced_cancel {
+                                println!("CANCELLED");
+                                announced_cancel = true;
+                            }
+                        } else {
+                            println!("FAILED {e}");
+                            std::process::exit(1);
+                        }
                     }
                     if t0.elapsed().as_secs() > 120 {
                         println!("TIMEOUT");

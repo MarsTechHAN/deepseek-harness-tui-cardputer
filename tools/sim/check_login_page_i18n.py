@@ -5,12 +5,12 @@ import os, subprocess, sys, tempfile, time, urllib.request
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 BIN = os.environ.get("DST_BIN", os.path.join(ROOT, "target", "debug", "dst"))
 EXPECT = {
-    "en": ["Sign in to DeepSeek", "Start WeChat login", "Save to device", "QR expired — refreshing"],
-    "zh": ["登录 DeepSeek", "开始微信登录", "保存到设备", "二维码过期 — 正在刷新"],
-    "es": ["Inicia sesión en DeepSeek", "Iniciar login con WeChat", "Guardar en el dispositivo", "QR caducado — renovando"],
-    "ja": ["DeepSeek にログイン", "WeChat ログインを開始", "端末に保存", "QR の期限切れ — 更新中"],
-    "de": ["Bei DeepSeek anmelden", "WeChat-Login starten", "Auf Gerät speichern", "QR abgelaufen — wird erneuert"],
-    "it": ["Accedi a DeepSeek", "Avvia login WeChat", "Salva sul dispositivo", "QR scaduto — aggiornamento"],
+    "en": ["Sign in to DeepSeek", "Start WeChat login", "Save to device", "QR expired — refreshing", "Cancel"],
+    "zh": ["登录 DeepSeek", "开始微信登录", "保存到设备", "二维码过期 — 正在刷新", "取消"],
+    "es": ["Inicia sesión en DeepSeek", "Iniciar login con WeChat", "Guardar en el dispositivo", "QR caducado — renovando", "Cancelar"],
+    "ja": ["DeepSeek にログイン", "WeChat ログインを開始", "端末に保存", "QR の期限切れ — 更新中", "キャンセル"],
+    "de": ["Bei DeepSeek anmelden", "WeChat-Login starten", "Auf Gerät speichern", "QR abgelaufen — wird erneuert", "Abbrechen"],
+    "it": ["Accedi a DeepSeek", "Avvia login WeChat", "Salva sul dispositivo", "QR scaduto — aggiornamento", "Annulla"],
 }
 
 def main():
