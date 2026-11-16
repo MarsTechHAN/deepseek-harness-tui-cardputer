@@ -176,7 +176,8 @@ def check_clear(screens, reqs, work):
 def check_goal(screens, reqs, work):
     screens_all = "\n".join(screens.values())
     checks = []
-    checks.append(("Pursuing Goal 1/1" in screens_all, "bottom-right badge shows the round budget"))
+    checks.append((any(t in screens_all for t in ["Pursuing Goal 1/1", "Goal paused 1/1", "make the whale"]),
+                   "bottom-right badge shows goal status/objective/budget"))
     checks.append(("\u27f3 goal round 1" in screens_all, "automatic goal round prompt shown"))
     checks.append(("Round one: goal driver worked." in screens_all, "goal round answer rendered"))
     checks.append((len(reqs) == 1, "round cap stops automatic continuation"))

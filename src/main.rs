@@ -2488,9 +2488,9 @@ fn model_menu(scr: &mut Scr, config_rc: &ConfigRc) {
         .map(|(id, name, efforts)| MenuItem {
             label: id.clone(),
             value: if efforts.is_empty() {
-                name.clone()
+                String::new()
             } else {
-                format!("{name}  effort: {}", efforts.join("/"))
+                format!("effort {}", efforts.join("/"))
             },
         })
         .collect();
@@ -2771,7 +2771,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                     loop {
                         let its: Vec<MenuItem> = models
                             .iter()
-                            .map(|(id, name, _)| MenuItem { label: id.clone(), value: name.clone() })
+                            .map(|(id, name, _)| MenuItem { label: id.clone(), value: fit(name, 18) })
                             .collect();
                         scr.menu = Some(Menu {
                             title: i18n::t("menu_model").into(),
