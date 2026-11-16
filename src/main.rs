@@ -2914,6 +2914,7 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc) {
                 c.base = base;
             }
             c.api_key = key;
+            c.dsh_token.clear();
             if !model.is_empty() {
                 c.model = model;
             }
@@ -3627,7 +3628,9 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             c.model.clone(),
             c.effort.clone(),
             c.base.clone(),
-            if c.api_key.is_empty() {
+            if !c.dsh_token.is_empty() {
+                i18n::t("dsh_token_set").to_string()
+            } else if c.api_key.is_empty() {
                 i18n::t("unset").to_string()
             } else {
                 i18n::t("set").to_string()
@@ -3843,10 +3846,11 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                 }
             }
             3 => {
-                if let Some(k) = menu_prompt(scr, "API key (not echoed):", true) {
+                if let Some(k) = menu_prompt(scr, i18n::t("onboard_key"), true) {
                     if !k.is_empty() {
                         let mut c = config_rc.borrow_mut();
                         c.api_key = k;
+                        c.dsh_token.clear();
                         c.configured = true;
                         let _ = c.save();
                     }

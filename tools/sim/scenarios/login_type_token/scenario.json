@@ -48,6 +48,22 @@
     "timeout_ms": 10000
    },
    "snap": "done"
+  },
+  {
+   "send": "/config"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 600,
+   "snap": "config"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 200
   }
  ]
 }

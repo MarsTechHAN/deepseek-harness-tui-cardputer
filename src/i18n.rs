@@ -177,7 +177,7 @@ const EN: &[(&str, &str)] = &[
     ("cfg_help_model", "which model /model uses"),
     ("cfg_help_effort", "reasoning effort tier sent to the API"),
     ("cfg_help_endpoint", "official DeepSeek or a compatible base URL"),
-    ("cfg_help_key", "API key (stored in config.yml, mode 600)"),
+    ("cfg_help_key", "API key or DSH token (config.yml, mode 600)"),
     ("cfg_help_voice", "TTS voice used by the speak tool"),
     ("cfg_help_autosend", "submit the transcript automatically after push-to-talk"),
     ("cfg_help_queue", "Enter queues while busy; off = send immediately"),
@@ -250,6 +250,8 @@ const EN: &[(&str, &str)] = &[
     // EN login status keys
     ("login_status_scanned", "scanned — confirm on the phone"),
     ("login_status_finishing", "authorized — finishing login…"),
+    // dsh token display
+    ("dsh_token_set", "DSH token"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -360,7 +362,7 @@ const ZH: &[(&str, &str)] = &[
     ("cfg_help_model", "/model 使用的模型"),
     ("cfg_help_effort", "发送给 API 的推理强度"),
     ("cfg_help_endpoint", "DeepSeek 官方或兼容的 base URL"),
-    ("cfg_help_key", "API key（保存在 config.yml，权限 600）"),
+    ("cfg_help_key", "API key 或 DSH token（config.yml，权限 600）"),
     ("cfg_help_voice", "speak 工具使用的 TTS 音色"),
     ("cfg_help_autosend", "按住 Tab 说话后自动发送转写"),
     ("cfg_help_queue", "忙时 Enter 排队；关闭则立即发送"),
@@ -440,6 +442,8 @@ const ZH: &[(&str, &str)] = &[
     // ZH login status keys
     ("login_status_scanned", "已扫码 — 请在手机上确认"),
     ("login_status_finishing", "已授权 — 正在完成登录…"),
+    // dsh token display
+    ("dsh_token_set", "DSH token"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -501,7 +505,7 @@ const ES: &[(&str, &str)] = &[
     ("cfg_help_model", "modelo que usa /model"),
     ("cfg_help_effort", "nivel de razonamiento enviado a la API"),
     ("cfg_help_endpoint", "DeepSeek oficial o URL compatible"),
-    ("cfg_help_key", "API key (en config.yml, modo 600)"),
+    ("cfg_help_key", "API key o token DSH (config.yml, modo 600)"),
     ("cfg_help_voice", "voz TTS del tool speak"),
     ("cfg_help_autosend", "enviar la transcripción automáticamente tras hablar"),
     ("cfg_help_queue", "Enter encola mientras trabaja; off = envía ya"),
@@ -629,6 +633,8 @@ const ES: &[(&str, &str)] = &[
     // ES login status keys
     ("login_status_scanned", "escaneado — confirma en el móvil"),
     ("login_status_finishing", "autorizado — terminando el login…"),
+    // dsh token display
+    ("dsh_token_set", "token DSH"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -691,7 +697,7 @@ const JA: &[(&str, &str)] = &[
     ("cfg_help_model", "/model が使うモデル"),
     ("cfg_help_effort", "API に送る推論強度"),
     ("cfg_help_endpoint", "DeepSeek 公式または互換 URL"),
-    ("cfg_help_key", "API キー（config.yml、mode 600）"),
+    ("cfg_help_key", "API キーまたは DSH トークン（config.yml、mode 600）"),
     ("cfg_help_voice", "speak ツールの TTS 音声"),
     ("cfg_help_autosend", "話した内容を自動送信"),
     ("cfg_help_queue", "ビジー時 Enter でキュー、off で即送信"),
@@ -819,6 +825,8 @@ const JA: &[(&str, &str)] = &[
     // JA login status keys
     ("login_status_scanned", "スキャン済み — スマホで確認"),
     ("login_status_finishing", "認証済み — ログインを完了中…"),
+    // dsh token display
+    ("dsh_token_set", "DSH トークン"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -881,7 +889,7 @@ const DE: &[(&str, &str)] = &[
     ("cfg_help_model", "Modell für /model"),
     ("cfg_help_effort", "Reasoning-Stufe für die API"),
     ("cfg_help_endpoint", "DeepSeek official oder kompatible URL"),
-    ("cfg_help_key", "API-Key (config.yml, Modus 600)"),
+    ("cfg_help_key", "API-Key oder DSH-Token (config.yml, Modus 600)"),
     ("cfg_help_voice", "TTS-Stimme des speak-Tools"),
     ("cfg_help_autosend", "Transkript nach dem Sprechen automatisch senden"),
     ("cfg_help_queue", "Enter reiht ein; off = sofort senden"),
@@ -1009,6 +1017,8 @@ const DE: &[(&str, &str)] = &[
     // DE login status keys
     ("login_status_scanned", "gescannt — am Handy bestätigen"),
     ("login_status_finishing", "autorisiert — Login wird abgeschlossen…"),
+    // dsh token display
+    ("dsh_token_set", "DSH-Token"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -1071,7 +1081,7 @@ const IT: &[(&str, &str)] = &[
     ("cfg_help_model", "modello usato da /model"),
     ("cfg_help_effort", "livello di ragionamento inviato all'API"),
     ("cfg_help_endpoint", "DeepSeek official o URL compatibile"),
-    ("cfg_help_key", "API key (in config.yml, modo 600)"),
+    ("cfg_help_key", "API key o token DSH (config.yml, mode 600)"),
     ("cfg_help_voice", "voce TTS del tool speak"),
     ("cfg_help_autosend", "invia la trascrizione dopo la dettatura"),
     ("cfg_help_queue", "Enter accoda; off = invia subito"),
@@ -1199,6 +1209,8 @@ const IT: &[(&str, &str)] = &[
     // IT login status keys
     ("login_status_scanned", "scansionato — conferma sul telefono"),
     ("login_status_finishing", "autorizzato — completamento login…"),
+    // dsh token display
+    ("dsh_token_set", "token DSH"),
 ];
 
 

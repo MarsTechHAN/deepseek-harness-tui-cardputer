@@ -319,6 +319,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             } else {
                 // Never echo the key back.
                 cfg.api_key = arg.to_string();
+                cfg.dsh_token.clear();
                 cfg.configured = true;
                 let saved = if persist { cfg.save() } else { Ok(()) };
                 match saved {
@@ -508,7 +509,11 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
 /// is present it shows how to replace it.
 fn login_hint(cfg: &mut Config) -> Outcome {
     let mut lines = vec![("login".to_string(), KIND_DIM)];
-    if cfg.configured {
+    if !cfg.dsh_token.is_empty() {
+        lines.push(("a DSH token (WeChat login) is configured".into(), KIND_NORMAL));
+        lines.push(("re-run the guided login to replace it: /login".into(), KIND_DIM));
+        lines.push(("or switch to an API key: /key <api-key>".into(), KIND_DIM));
+    } else if cfg.configured {
         lines.push(("an API key is already configured".into(), KIND_NORMAL));
         lines.push(("replace it: /key <api-key>".into(), KIND_DIM));
         lines.push(("re-run guided setup: delete ~/.dst/api_key then /login".into(), KIND_DIM));
@@ -526,6 +531,16 @@ mod tests {
 
     fn cfg() -> Config {
         Config::default()
+    }
+
+    #[test]
+    fn setting_an_api_key_clears_the_dsh_token() {
+        let mut c = cfg();
+        c.dsh_token = "dsh-token".into();
+        c.api_key.clear();
+        let _ = evaluate("/key sk-test", &mut c, false);
+        assert_eq!(c.api_key, "sk-test");
+        assert!(c.dsh_token.is_empty());
     }
 
     #[test]

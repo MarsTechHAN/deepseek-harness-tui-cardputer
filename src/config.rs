@@ -811,7 +811,9 @@ impl Config {
 
     /// One-line summary for `/config`.
     pub fn summary(&self) -> Vec<String> {
-        let shown = if self.api_key.is_empty() {
+        let shown = if !self.dsh_token.is_empty() {
+            "已配置 (DSH token)".to_string()
+        } else if self.api_key.is_empty() {
             "未配置".to_string()
         } else {
             "已配置".to_string()

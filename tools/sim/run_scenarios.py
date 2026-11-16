@@ -791,6 +791,20 @@ def check_login_type_token(screens, reqs, work):
     checks.append(("Logged in" in done, "typing a DSH token completes login"))
     checks.append(("dsh_token:" in cfg, "DSH token persisted to config.yml"))
     checks.append(("api.deepseek.com" in cfg, "official API base selected for the DSH token"))
+    checks.append(("DSH token" in screens.get("config", ""),
+                   "config shows the DSH token credential type"))
+    return checks
+
+
+def check_key_overrides_token(screens, reqs, work):
+    menu = screens.get("menu_token", "")
+    after = screens.get("config_after", "")
+    cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+    checks = []
+    checks.append(("DSH token" in menu, "config shows DSH token before /key"))
+    checks.append(("dsh_token" not in cfg and "sk-new-test" in cfg,
+                   "/key replaces the DSH token with the API key"))
+    checks.append(("DSH token" not in after, "config no longer shows DSH token"))
     return checks
 
 
@@ -934,6 +948,7 @@ CHECKS = {
     "login_type_token": check_login_type_token,
     "login_wechat": check_login_wechat,
     "login_wechat_status": check_login_wechat_status,
+    "key_overrides_token": check_key_overrides_token,
     "extensions_toggle": check_extensions_toggle,
     "queue_edit": check_queue_edit,
     "sandbox_es": check_sandbox_es,
