@@ -42,7 +42,8 @@ repository.
 - `/help`, `/model [name]` (lists models from `/v1/models`), `/effort
   [auto|low|high|max]`, `/config` (interactive wizard: options everywhere, text
   input only for the API key and a custom base URL), `/login` (full-screen QR code for a
-  phone), `/usage`, `/key`, `/resume [n]`, `/compact`, `/goal`, `/clear`, `/quit`.
+  phone), `/usage`, `/key`, `/resume` (menu picker), `/rename <title>`,
+  `/compact`, `/goal`, `/clear`, `/quit`.
 - `/goal <objective>` starts a long-running goal; `/goal` shows it, and
   `/goal edit|pause|resume|clear` manages it. `/compact` summarises older
   history immediately with the same method automatic compaction uses.
@@ -117,9 +118,15 @@ repository.
   and the model is told they are unavailable; the wizard warns first. `dst --tools`
   prints the effective tool set for diagnosis.
 
-**Sessions**
-- Every turn is saved to `~/.dst/sessions/<timestamp>.json`; `/resume` lists and
-  restores them.
+**Sessions and task titles**
+- Every turn is saved to `~/.dst/sessions/<timestamp>.json` with a `title`.
+- The model keeps that title current through the `rename` tool (the system
+  prompt tells it to call `rename` as soon as it understands the task and when
+  the task changes); `/rename <title>` lets the human set it too. The title is
+  shown in the header and is what `/resume` lists.
+- `/resume` is a menuconfig-style picker: Up/Down select, Right/Tab expands the
+  highlighted session into a preview (title, model, turn count, last user and
+  last reply), Enter resumes it, Esc cancels. There are no numbered lists.
 
 **Skills** (DSH-style progressive disclosure)
 - `~/.dst/skills/<name>/SKILL.md` with YAML frontmatter (`name`,
@@ -257,12 +264,13 @@ python3 run_scenarios.py          # /clear, /goal round driver, automatic compac
 ```
 
 `run_demo.py` writes snapshots and a contact sheet under `screenshots/`;
-`run_scenarios.py` runs 18 feature scenarios (thinking panel, tool call ordering,
+`run_scenarios.py` runs 20 feature scenarios (thinking panel, tool call ordering,
 tool timeout, Esc interrupt, step limits, repeat/time context injection,
 auto+manual compaction, all `/goal` flows, `/clear`, `/config`, command palette,
-artifact panel) and asserts on captured screens *and* on the request log (e.g.
-that a `<goal_round>` prompt was sent, or that a checkpoint message reached the
-next request). `check_memory.py` samples RSS across a 20-turn session, and
+artifact panel, `rename`+`/resume` session menu across a restart, onboarding
+menu) and asserts on captured screens *and* on the request log (e.g. that a
+`<goal_round>` prompt was sent, or that a checkpoint message reached the next
+request). `check_memory.py` samples RSS across a 20-turn session, and
 `run_all.py` runs the three together. Everything binds the mock API to
 127.0.0.1 only.
 
@@ -281,6 +289,7 @@ src/tools.rs     built-in tool registry
 src/compact.rs   automatic/manual context compaction (DSH compaction-basic port)
 src/context.rs   in-progress context injection (clock, repeat-call reminder)
 src/goal.rs      goals: state machine, tools, round driver prompt (DSH goal port)
+src/session.rs   saved-session title: rename tool, /resume menu previews
 src/api.rs       streaming chat client over a curl subprocess
 src/config.rs    ~/.dst home, DSH-dialect YAML config
 src/cmd.rs       human commands (/model, /compact, /goal, /resume, ...)

@@ -1,0 +1,3 @@
+model: deepseek-flash
+api:
+  key: test

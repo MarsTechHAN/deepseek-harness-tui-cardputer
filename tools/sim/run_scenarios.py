@@ -102,6 +102,19 @@ def run_scenario(name, binary, timeout=90):
     out = os.path.join(work, "out")
     os.makedirs(os.path.join(home, ".dst"), exist_ok=True)
     os.makedirs(out, exist_ok=True)
+    # A scenario may declare `"phases": [[steps…], [steps…]]`: dst is restarted
+    # between phases with the same HOME (used by /resume checks).
+    doc = json.load(open(scenario, encoding="utf-8"))
+    phases = doc.get("phases")
+    scenario_paths = []
+    if phases:
+        for i, steps in enumerate(phases, 1):
+            path = os.path.join(work, f"phase{i}.json")
+            json.dump({"steps": steps}, open(path, "w", encoding="utf-8"),
+                      ensure_ascii=False, indent=1)
+            scenario_paths.append((path, os.path.join(out, f"phase{i}")))
+    else:
+        scenario_paths.append((scenario, out))
     # A scenario may ship a pre-populated HOME tree (e.g. goal.json or
     # mcp.json) under scenarios/<name>/home/. Copy it in first.
     overlay = os.path.join(base, "home")
@@ -112,23 +125,31 @@ def run_scenario(name, binary, timeout=90):
 
     proc, url, _state = start_mock(0, script, log_path, env)
     try:
-        # url is like http://127.0.0.1:PORT/v1
-        cfg = open(os.path.join(base, "config.yml"), encoding="utf-8").read()
-        cfg = cfg.replace("  key: test", f"  base: {url}\n  key: test")
-        cfg_path = os.path.join(home, ".dst", "config.yml")
-        open(cfg_path, "w", encoding="utf-8").write(cfg)
-        os.chmod(cfg_path, 0o600)
-        cmd = [sys.executable, SIM, "--bin", binary, "--home", home,
-               "--cwd", work, "--out", out, "--scenario", scenario,
-               "--text-only"]
-        r = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True,
-                           text=True, timeout=timeout)
-        if r.returncode != 0:
-            raise AssertionError(f"simulator failed: {r.stderr[-800:]}")
+        # `no_config` scenarios deliberately start unconfigured (onboarding).
+        if not os.path.exists(os.path.join(base, "no_config")):
+            # url is like http://127.0.0.1:PORT/v1
+            cfg = open(os.path.join(base, "config.yml"), encoding="utf-8").read()
+            cfg = cfg.replace("  key: test", f"  base: {url}\n  key: test")
+            cfg_path = os.path.join(home, ".dst", "config.yml")
+            open(cfg_path, "w", encoding="utf-8").write(cfg)
+            os.chmod(cfg_path, 0o600)
+        for scen_path, phase_out in scenario_paths:
+            cmd = [sys.executable, SIM, "--bin", binary, "--home", home,
+                   "--cwd", work, "--out", phase_out, "--scenario", scen_path]
+            # Text snapshots are enough for assertions; PNG rendering is only
+            # needed when a contact sheet is being produced.
+            if not os.environ.get("DST_SCENARIO_PNG"):
+                cmd.append("--text-only")
+            r = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True,
+                               text=True, timeout=timeout)
+            if r.returncode != 0:
+                raise AssertionError(f"simulator failed: {r.stderr[-800:]}")
     finally:
         stop_mock(proc)
 
-    screens = read_screens(out)
+    screens = {}
+    for _path, phase_out in scenario_paths:
+        screens.update(read_screens(phase_out))
     reqs = chat_requests(log_path)
     return screens, reqs, work
 
@@ -331,6 +352,60 @@ def check_goal_manage(screens, reqs, work):
     return checks
 
 
+def check_session_menu(screens, reqs, work):
+    import glob
+    import re
+    numbered = re.compile(r"(?m)^\s*\d+[\).]\s")
+    session_files = glob.glob(os.path.join(work, "home", ".dst", "sessions", "*.json"))
+    title = ""
+    if session_files:
+        try:
+            title = json.load(open(session_files[0], encoding="utf-8")).get("title", "")
+        except (OSError, json.JSONDecodeError):
+            title = ""
+    resume = screens.get("resume", "")
+    expanded = screens.get("expanded", "")
+    resumed = screens.get("resumed", "")
+    model_menu = screens.get("model_menu", "")
+    all_screens = "\n".join(screens.values())
+    checks = []
+    checks.append(('Session renamed to "Whale splash task"' in screens.get("t1", ""),
+                   "rename tool renamed the session during the turn"))
+    checks.append(("Whale splash task" in screens.get("t1", ""),
+                   "session title shown in the header"))
+    checks.append(("Resume session" in resume and "Whale splash task" in resume,
+                   "/resume opens a menu listing session titles"))
+    checks.append(("expand" in resume, "menu hints the expand gesture"))
+    checks.append(("last reply:" in expanded or "title:" in expanded,
+                   "Right expands the selected session preview"))
+    checks.append(("resumed: Whale splash task" in resumed and
+                   "First answer with enough context." in resumed,
+                   "Enter resumes the selected session with its transcript"))
+    checks.append(("deepseek-flash" in model_menu, "/model opens a model menu"))
+    renamed = screens.get("renamed", "")
+    checks.append(("session renamed to human renamed" in renamed,
+                   "/rename updates the human-facing title"))
+    checks.append((title == "human renamed",
+                   "the human rename is the persisted title"))
+    checks.append((not numbered.search(all_screens),
+                   "no numbered option lists anywhere in these screens"))
+    return checks
+
+
+def check_onboarding(screens, reqs, work):
+    menu = screens.get("menu", "")
+    moved = screens.get("moved", "")
+    checks = []
+    checks.append(("Choose how to connect" in menu and
+                   "DeepSeek official" in menu and "Custom" in menu,
+                   "onboarding is a menu with both connection options"))
+    checks.append(("Enter confirm" in menu, "menu hint explains the keys"))
+    checks.append(("Type 1 or 2" not in menu, "no \"type 1 or 2\" prompt left"))
+    checks.append(("\u25b8" in moved, "arrow keys move the selection"))
+    checks.append((len(reqs) == 0, "onboarding made no model request"))
+    return checks
+
+
 def check_config_menu(screens, reqs, work):
     menu = screens.get("menu", "")
     bottom = screens.get("bottom", "")
@@ -399,6 +474,8 @@ def check_goal_blocked(screens, reqs, work):
 
 CHECKS = {
     "clear": check_clear,
+    "session_menu": check_session_menu,
+    "onboarding": check_onboarding,
     "goal_manage": check_goal_manage,
     "commands": check_commands,
     "artifact": check_artifact,

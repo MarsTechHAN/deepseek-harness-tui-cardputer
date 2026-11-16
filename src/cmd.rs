@@ -62,8 +62,13 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "resume",
-        description: "list or resume a previous session",
-        input_hint: Some("[n]"),
+        description: "pick a previous session from a menu (expand to preview)",
+        input_hint: None,
+    },
+    Command {
+        name: "rename",
+        description: "name the current saved session (shown in /resume)",
+        input_hint: Some("<title>"),
     },
     Command {
         name: "config",
@@ -123,8 +128,10 @@ pub struct Outcome {
     pub login: bool,
     /// Open the interactive configuration wizard.
     pub config_wizard: bool,
-    /// Resume flow: `Some(None)` lists sessions, `Some(Some(n))` picks one.
-    pub resume: Option<Option<usize>>,
+    /// Open the menuconfig-style /resume picker (main owns the screen).
+    pub resume_menu: bool,
+    /// Open the model picker menu (main owns /v1/models fetch and the screen).
+    pub model_menu: bool,
     /// Run the manual compaction flow (main owns the transcript).
     pub compact: bool,
 }
@@ -137,7 +144,8 @@ impl Outcome {
             clear: false,
             login: false,
             config_wizard: false,
-            resume: None,
+            resume_menu: false,
+            model_menu: false,
             compact: false,
         }
     }
@@ -148,21 +156,13 @@ impl Outcome {
             clear: false,
             login: false,
             config_wizard: false,
-            resume: None,
+            resume_menu: false,
+            model_menu: false,
             compact: false,
         }
     }
 }
 
-fn api_cfg_of(c: &Config) -> crate::api::Cfg {
-    crate::api::Cfg {
-        base: c.base.clone(),
-        key: c.api_key.clone(),
-        model: c.model.clone(),
-        max_tokens: c.max_tokens,
-        effort: c.effort.clone(),
-    }
-}
 
 fn usage(prefix: &str) -> Outcome {
     let mut lines = vec![(format!("{prefix}"), KIND_ERR)];
@@ -203,21 +203,16 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
         }
         "model" => {
             if arg.is_empty() {
-                let mut lines = vec![(format!("model  {}", cfg.model), KIND_NORMAL)];
-                match crate::api::list_models(&api_cfg_of(cfg)) {
-                    Ok(models) if !models.is_empty() => {
-                        lines.push(("可选（/model <name>）:".into(), KIND_DIM));
-                        for (id, name, efforts) in models {
-                            lines.push((
-                                format!("  {id}  {name}{}", if efforts.is_empty() { String::new() } else { format!("  effort: {}", efforts.join("/")) }),
-                                KIND_TOOL,
-                            ));
-                        }
-                    }
-                    Ok(_) => lines.push(("未取得模型列表".into(), KIND_DIM)),
-                    Err(e) => lines.push((format!("模型列表不可用: {e}"), KIND_DIM)),
+                Outcome {
+                    lines: Vec::new(),
+                    quit: false,
+                    clear: false,
+                    login: false,
+                    config_wizard: false,
+                    resume_menu: false,
+                    model_menu: true,
+                    compact: false,
                 }
-                Outcome::many(lines)
             } else if arg.len() > 120 {
                 usage("/model <name>")
             } else {
@@ -305,28 +300,28 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             Outcome::many(lines)
         }
         "resume" => {
-            let sessions = config::list_sessions();
-            if sessions.is_empty() {
-                Outcome::many(vec![("还没有可恢复的会话".into(), KIND_DIM)])
-            } else if arg.is_empty() {
-                let mut lines = vec![("最近的会话（/resume <n> 恢复）:".to_string(), KIND_DIM)];
-                for (i, (_p, label, _t)) in sessions.iter().take(5).enumerate() {
-                    lines.push((format!("  {}) {}", i + 1, label), KIND_TOOL));
-                }
-                let mut o = Outcome::many(lines);
-                o.resume = Some(None);
-                o
+            if config::list_sessions().is_empty() {
+                Outcome::many(vec![(crate::i18n::t("resume_empty").to_string(), KIND_DIM)])
             } else {
-                match arg.parse::<usize>() {
-                    Ok(n) if n >= 1 && n <= sessions.len() => {
-                        let mut o = Outcome::many(vec![(
-                            format!("恢复会话 {}", sessions[n - 1].1),
-                            KIND_DIM,
-                        )]);
-                        o.resume = Some(Some(n - 1));
-                        o
-                    }
-                    _ => usage("/resume <n>"),
+                Outcome {
+                    lines: Vec::new(),
+                    quit: false,
+                    clear: false,
+                    login: false,
+                    config_wizard: false,
+                    resume_menu: true,
+                    model_menu: false,
+                    compact: false,
+                }
+            }
+        }
+        "rename" => {
+            if arg.is_empty() {
+                usage("/rename <title>")
+            } else {
+                match crate::session::rename(arg) {
+                    Ok(title) => Outcome::text(format!("session renamed to {title}"), KIND_NORMAL),
+                    Err(e) => Outcome::text(format!("rename failed: {e}"), KIND_ERR),
                 }
             }
         }
@@ -336,7 +331,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             clear: false,
             login: false,
             config_wizard: false,
-            resume: None,
+            resume_menu: false,
+            model_menu: false,
             compact: true,
         },
         "goal" => {
@@ -394,7 +390,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             clear: true,
             login: false,
             config_wizard: false,
-            resume: None,
+            resume_menu: false,
+            model_menu: false,
             compact: false,
         },
         "quit" | "exit" | "q" => Outcome {
@@ -403,7 +400,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             clear: false,
             login: false,
             config_wizard: false,
-            resume: None,
+            resume_menu: false,
+            model_menu: false,
             compact: false,
         },
         "" => usage("/"),
@@ -425,9 +423,8 @@ fn login_hint(cfg: &mut Config) -> Outcome {
         lines.push(("re-run guided setup: delete ~/.dst/api_key then /login".into(), KIND_DIM));
     } else {
         lines.push(("no API key configured yet".into(), KIND_ERR));
-        lines.push(("1) DeepSeek official: create a key at platform.deepseek.com".into(), KIND_NORMAL));
-        lines.push(("2) send it here with: /key <api-key>".into(), KIND_NORMAL));
-        lines.push(("QR login (scan from your phone) is available via /login qr".into(), KIND_DIM));
+        lines.push(("Create a key at platform.deepseek.com, then send it with /key <api-key>".into(), KIND_NORMAL));
+        lines.push(("Or use the QR flow: /login starts a login page for your phone".into(), KIND_DIM));
     }
     Outcome::many(lines)
 }

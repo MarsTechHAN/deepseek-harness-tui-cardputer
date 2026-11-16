@@ -1,0 +1,23 @@
+{
+ "responses": [
+  {
+   "reasoning": "Name the task first.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_rename_1",
+     "name": "rename",
+     "arguments": {
+      "name": "Whale splash task"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "Answer after renaming.",
+   "content": "First answer with enough context.",
+   "finish_reason": "stop"
+  }
+ ]
+}

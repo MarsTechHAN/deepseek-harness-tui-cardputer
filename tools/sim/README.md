@@ -417,10 +417,12 @@ request log:
 | `config_menu` | `/config` | new settings (max steps, auto compact, goal rounds) are reachable, Enter cycles the compaction threshold, the value is persisted to `config.yml` |
 | `commands` | commands/palette | help lists `/goal` `/compact`, palette completes `/g` to `/goal`, `/usage` renders, `/model` lists endpoint models |
 | `artifact` | artifact panel | the model panel replaces the screen, Esc dismisses it and the conversation continues |
+| `session_menu` | rename + `/resume` | the `rename` tool persists a session title, it appears in the header, `/resume` lists titles in a menu, Right expands a preview, Enter resumes the transcript, `/model` is a menu, and no numbered option lists appear |
+| `onboarding` | first-run flow | an unconfigured start shows a menu (official vs custom endpoint), arrows move, no "type 1 or 2" prompt, Esc cancels |
 
 ```bash
 cd tools/sim
-python3 run_scenarios.py               # all 18 scenarios (~2 min)
+python3 run_scenarios.py               # all 20 scenarios (~3 min)
 python3 run_scenarios.py goal compact  # just some
 python3 check_memory.py                # 20-turn session, samples dst RSS
 python3 run_all.py                     # demo + scenarios + memory in one go

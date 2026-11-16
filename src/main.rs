@@ -22,6 +22,7 @@ mod i18n;
 mod jobs;
 mod login;
 mod mcp;
+mod session;
 mod skills;
 mod usage;
 mod json;
@@ -123,6 +124,8 @@ struct Menu {
     items: Vec<MenuItem>,
     sel: usize,
     hint: String,
+    /// Expanded detail lines for the selected item (/resume previews a session).
+    preview: Option<Vec<String>>,
 }
 
 /// A full-screen panel composed by the agent (`artifact` tool).
@@ -292,7 +295,7 @@ impl Scr {
         if !self.art_on
             || !self.input.is_empty()
             || self.scroll != 0
-            || self.lines.len() > art::ART_ROWS + 1
+            || self.lines.len() != art::ART_ROWS + 1
         {
             return;
         }
@@ -381,7 +384,13 @@ impl Scr {
             );
             let right_w = dw(&right);
             let left_w = self.cols.saturating_sub(right_w);
-            let mut status = fit(" dst", left_w);
+            let title = crate::session::title();
+            let head = if title.is_empty() {
+                " dst".to_string()
+            } else {
+                format!(" dst \u{00b7} {title}")
+            };
+            let mut status = fit(&head, left_w);
             let pad = left_w.saturating_sub(dw(&status));
             status.push_str(&" ".repeat(pad));
             status.push_str(&right);
@@ -552,7 +561,12 @@ impl Scr {
         s.push_str("\x1b[1;36m");
         s.push_str(&fit(&format!(" {} ", m.title), self.cols));
         s.push_str("\x1b[0m\x1b[K\r\n");
-        let rows = self.rows.saturating_sub(2).max(1);
+        let preview_rows = m.preview.as_ref().map(|p| p.len()).unwrap_or(0);
+        let rows = self
+            .rows
+            .saturating_sub(2)
+            .max(1)
+            .saturating_sub(preview_rows);
         // Window the list around the selection (menuconfig behaviour).
         let start = if m.sel >= rows { m.sel + 1 - rows } else { 0 };
         for i in 0..rows {
@@ -573,6 +587,13 @@ impl Scr {
                 s.push_str("\x1b[0m\x1b[K\r\n");
             } else {
                 s.push_str("\x1b[K\r\n");
+            }
+        }
+        if let Some(preview) = &m.preview {
+            for line in preview {
+                s.push_str("\x1b[0;36m");
+                s.push_str(&fit(line, self.cols));
+                s.push_str("\x1b[0m\x1b[K\r\n");
             }
         }
         s.push_str("\x1b[90m");
@@ -1258,6 +1279,15 @@ RULES
 - ALWAYS reply in the language the user writes in. A Chinese question\n  gets a Chinese answer, including inside artifacts.
 - Show the result rather than describing the process.";
 
+/// What the model should know about saved-session titles (`/resume` names).
+const SESSION_GUIDANCE: &str = "\
+This conversation is saved and appears in the user's /resume menu. Keep its \
+title current with the `rename` tool: call it as soon as you understand the \
+task, and again whenever the task changes substantially (new sub-task, \
+different bug, finished phase). The title is what the user picks the session \
+by, so make it a few concrete words about the work, not a greeting or a copy \
+of the message.";
+
 /// `--once`: the same driver, printing events instead of drawing them.
 struct OnceUi;
 
@@ -1783,9 +1813,9 @@ fn start_login(scr: &mut Scr, login_rx: &LoginRx) {
                     guide.push(chunk);
                 }
                 guide.push(String::new());
-                guide.push("1. 手机扫码".to_string());
-                guide.push("2. 打开页面并粘贴 key".to_string());
-                guide.push("3. 本机自动完成".to_string());
+                guide.push("· 手机扫码".to_string());
+                guide.push("· 打开页面并粘贴 key".to_string());
+                guide.push("· 本机自动完成".to_string());
                 guide.push(String::new());
                 guide.push("Esc 取消".to_string());
                 let mut lines: Vec<String> = Vec::new();
@@ -1834,16 +1864,57 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc, login_rx: &LoginRx) {
     if config_rc.borrow().configured {
         return;
     }
-    scr.push(i18n::t("onboard_welcome"), K_NORM);
-    scr.push(i18n::t("onboard_choose"), K_NORM);
-    scr.push(i18n::t("onboard_opt1"), K_TOOL);
-    scr.push(i18n::t("onboard_opt2"), K_TOOL);
-    scr.push(i18n::t("onboard_prompt"), K_DIM);
-    let choice = match scr.edit() {
-        Some(l) => l.trim().to_string(),
-        None => return,
-    };
-    if choice == "2" {
+    let items = vec![
+        MenuItem {
+            label: i18n::t("onboard_opt1").into(),
+            value: "platform.deepseek.com".into(),
+        },
+        MenuItem {
+            label: i18n::t("onboard_opt2").into(),
+            value: "OpenAI-compatible".into(),
+        },
+    ];
+    let mut sel = 0usize;
+    loop {
+        scr.menu = Some(Menu {
+            title: i18n::t("onboard_choose").into(),
+            items: items.clone(),
+            sel,
+            hint: i18n::t("onboard_hint").into(),
+            preview: None,
+        });
+        scr.draw();
+        let k = match scr.read_key_timeout() {
+            Some(k) => k,
+            None => continue,
+        };
+        if k == 0x1b {
+            match scr.read_key_timeout() {
+                Some(b'[') => match scr.read_key_timeout() {
+                    Some(b'A') => sel = sel.saturating_sub(1),
+                    Some(b'B') => sel = (sel + 1).min(items.len() - 1),
+                    _ => {}
+                },
+                _ => {
+                    scr.menu = None;
+                    scr.draw();
+                    return;
+                }
+            }
+            continue;
+        }
+        if k == 0x03 || k == b'q' {
+            scr.menu = None;
+            scr.draw();
+            return;
+        }
+        if k == 0x0d || k == 0x0a {
+            scr.menu = None;
+            scr.draw();
+            break;
+        }
+    }
+    if sel == 1 {
         scr.push(i18n::t("onboard_base"), K_DIM);
         let base = match scr.edit() {
             Some(l) => l.trim().to_string(),
@@ -1924,6 +1995,7 @@ fn new_session_path() -> std::path::PathBuf {
 
 fn save_session(msgs: &jobs::Msgs, cfg: &config::Config, path: &std::path::Path) {
     let doc = json::J::o(vec![
+        ("title", json::J::s(&crate::session::title())),
         ("model", json::J::s(&cfg.model)),
         ("effort", json::J::s(&cfg.effort)),
         ("messages", json::J::Arr(msgs.borrow().clone())),
@@ -1931,17 +2003,29 @@ fn save_session(msgs: &jobs::Msgs, cfg: &config::Config, path: &std::path::Path)
     let _ = std::fs::write(path, doc.dump());
 }
 
-fn resume_session(scr: &mut Scr, msgs: &jobs::Msgs, idx: usize) -> Option<std::path::PathBuf> {
-    let sessions = config::list_sessions();
-    let (path, label, _) = sessions.get(idx)?.clone();
+fn resume_session_path(
+    scr: &mut Scr,
+    msgs: &jobs::Msgs,
+    path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let path = path.to_path_buf();
+    let label = path
+        .file_stem()
+        .and_then(|x| x.to_str())
+        .unwrap_or("session")
+        .to_string();
     let txt = std::fs::read_to_string(&path).ok()?;
     let v = json::parse(&txt)?;
     let arr = v.get("messages")?.as_arr()?.clone();
     *msgs.borrow_mut() = arr.clone();
+    crate::session::set_current(path.clone());
     scr.lines.clear();
     scr.scroll = 0;
     scr.splash_done = true;
-    scr.push(&format!("已恢复会话 {label}"), K_DIM);
+    scr.art_on = false;
+    let shown = crate::session::title();
+    let shown = if shown.is_empty() { label } else { shown };
+    scr.push(&format!("resumed: {shown}"), K_DIM);
     for m in arr.iter().rev() {
         if m.get("role").and_then(|r| r.as_str()) == Some("assistant") {
             if let Some(t) = m.get("content").and_then(|c| c.as_str()) {
@@ -1953,6 +2037,170 @@ fn resume_session(scr: &mut Scr, msgs: &jobs::Msgs, idx: usize) -> Option<std::p
         }
     }
     Some(path)
+}
+
+// ---------------------------------------------------------- session picker
+
+/// Turn a session filename stem (`YYYYMMDD-HHMMSS`) into a short stamp.
+fn session_stamp(stem: &str) -> String {
+    if stem.len() >= 13 {
+        format!(
+            "{}-{} {}:{}",
+            &stem[4..6],
+            &stem[6..8],
+            &stem[9..11],
+            &stem[11..13]
+        )
+    } else {
+        stem.to_string()
+    }
+}
+
+/// Menuconfig-style `/resume`: a list of saved sessions by their `rename`
+/// title. Up/Down move, Right/Tab expands the selected session into a preview
+/// block, Enter resumes it, Esc cancels.
+fn resume_menu(scr: &mut Scr) -> Option<std::path::PathBuf> {
+    let sessions = config::list_sessions();
+    if sessions.is_empty() {
+        scr.push(i18n::t("resume_empty"), K_DIM);
+        return None;
+    }
+    let items: Vec<MenuItem> = sessions
+        .iter()
+        .map(|(p, stem, _mtime)| MenuItem {
+            label: crate::session::title_of(p).unwrap_or_else(|| "(untitled)".to_string()),
+            value: session_stamp(stem),
+        })
+        .collect();
+    let mut sel = 0usize;
+    let mut preview: Option<Vec<String>> = None;
+    loop {
+        scr.menu = Some(Menu {
+            title: i18n::t("resume_title").into(),
+            items: items.clone(),
+            sel,
+            hint: i18n::t("resume_hint").into(),
+            preview: preview.clone(),
+        });
+        scr.draw();
+        let k = match scr.read_key_timeout() {
+            Some(k) => k,
+            None => continue,
+        };
+        if k == 0x1b {
+            match scr.read_key_timeout() {
+                Some(b'[') => match scr.read_key_timeout() {
+                    Some(b'A') => {
+                        sel = sel.saturating_sub(1);
+                        preview = None;
+                    }
+                    Some(b'B') => {
+                        sel = (sel + 1).min(items.len() - 1);
+                        preview = None;
+                    }
+                    Some(b'C') => preview = Some(crate::session::preview(&sessions[sel].0)),
+                    Some(b'D') => preview = None,
+                    _ => {}
+                },
+                _ => {
+                    scr.menu = None;
+                    scr.draw();
+                    return None;
+                }
+            }
+            continue;
+        }
+        match k {
+            0x03 | b'q' => {
+                scr.menu = None;
+                scr.draw();
+                return None;
+            }
+            b'\t' => preview = Some(crate::session::preview(&sessions[sel].0)),
+            0x0d | 0x0a => {
+                scr.menu = None;
+                scr.draw();
+                return Some(sessions[sel].0.clone());
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Menuconfig-style `/model`: pick from the endpoint's advertised models with
+/// arrows/Enter instead of printing a numbered list.
+fn model_menu(scr: &mut Scr, config_rc: &ConfigRc) {
+    let cfg = api_cfg(&config_rc.borrow());
+    let models = match crate::api::list_models(&cfg) {
+        Ok(m) => m,
+        Err(e) => {
+            scr.push(&format!("model list unavailable: {e}"), K_ERR);
+            return;
+        }
+    };
+    if models.is_empty() {
+        scr.push(i18n::t("model_none"), K_ERR);
+        return;
+    }
+    let items: Vec<MenuItem> = models
+        .iter()
+        .map(|(id, name, efforts)| MenuItem {
+            label: id.clone(),
+            value: if efforts.is_empty() {
+                name.clone()
+            } else {
+                format!("{name}  effort: {}", efforts.join("/"))
+            },
+        })
+        .collect();
+    let mut sel = items
+        .iter()
+        .position(|it| it.label == cfg.model)
+        .unwrap_or(0);
+    loop {
+        scr.menu = Some(Menu {
+            title: i18n::t("menu_model").into(),
+            items: items.clone(),
+            sel,
+            hint: i18n::t("menu_model_hint").into(),
+            preview: None,
+        });
+        scr.draw();
+        let k = match scr.read_key_timeout() {
+            Some(k) => k,
+            None => continue,
+        };
+        if k == 0x1b {
+            match scr.read_key_timeout() {
+                Some(b'[') => match scr.read_key_timeout() {
+                    Some(b'A') => sel = sel.saturating_sub(1),
+                    Some(b'B') => sel = (sel + 1).min(items.len() - 1),
+                    _ => {}
+                },
+                _ => {
+                    scr.menu = None;
+                    scr.draw();
+                    return;
+                }
+            }
+            continue;
+        }
+        if k == 0x03 || k == b'q' {
+            scr.menu = None;
+            scr.draw();
+            return;
+        }
+        if k == 0x0d || k == 0x0a {
+            let id = items[sel].label.clone();
+            let mut c = config_rc.borrow_mut();
+            c.model = id.clone();
+            let _ = c.save();
+            drop(c);
+            scr.menu = None;
+            scr.push(&format!("model set to {id}"), K_NORM);
+            return;
+        }
+    }
 }
 
 // ---------------------------------------------------------- config wizard
@@ -2021,7 +2269,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
         } else {
             i18n::t("menu_hint_gated").to_string()
         };
-        scr.menu = Some(Menu { title: i18n::t("menu_title").into(), items: items.clone(), sel, hint });
+        scr.menu = Some(Menu { title: i18n::t("menu_title").into(), items: items.clone(), sel, hint, preview: None });
         scr.draw();
         let k = match scr.read_key_timeout() {
             Some(k) => k,
@@ -2073,6 +2321,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                             items: its,
                             sel: msel,
                             hint: i18n::t("menu_model_hint").into(),
+                            preview: None,
                         });
                         scr.draw();
                         let kk = match scr.read_key_timeout() { Some(k) => k, None => continue };
@@ -2115,7 +2364,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                         MenuItem { label: i18n::t("menu_official").into(), value: "api.deepseek.com".into() },
                         MenuItem { label: i18n::t("menu_custom").into(), value: config_rc.borrow().base.clone() },
                     ];
-                    scr.menu = Some(Menu { title: i18n::t("menu_endpoint").into(), items: its, sel: esel, hint: i18n::t("menu_endpoint_hint").into() });
+                    scr.menu = Some(Menu { title: i18n::t("menu_endpoint").into(), items: its, sel: esel, hint: i18n::t("menu_endpoint_hint").into(), preview: None });
                     scr.draw();
                     let kk = match scr.read_key_timeout() { Some(k) => k, None => continue };
                     if kk == 0x1b {
@@ -2265,13 +2514,15 @@ fn main() {
     mcp::install(mcp::start_all());
     let mut reg = tools::registry(config_rc.borrow().capabilities());
     reg.extend(goal::tool_defs());
+    reg.extend(session::tool_defs());
     reg.extend(mcp::tool_defs());
     let mut caps_at_start = config_rc.borrow().capabilities();
     let mut system_prompt = format!(
-        "{}{}\n\nGOALS\n{}\n",
+        "{}{}\n\nGOALS\n{}\n\nSESSION\n{}",
         SYSTEM_PROMPT,
         skills::catalog_prompt(&skill_list),
-        goal::guidance()
+        goal::guidance(),
+        SESSION_GUIDANCE
     );
     if !caps_at_start.web_tools {
         system_prompt.push_str(
@@ -2461,9 +2712,12 @@ user you can search the web or speak.\n",
                 if out.config_wizard {
                     config_menu(&mut scr, &config_rc);
                 }
-                if let Some(pick) = out.resume {
-                    if let Some(n) = pick {
-                        if let Some(p) = resume_session(&mut scr, &msgs, n) {
+                if out.model_menu {
+                    model_menu(&mut scr, &config_rc);
+                }
+                if out.resume_menu {
+                    if let Some(path) = resume_menu(&mut scr) {
+                        if let Some(p) = resume_session_path(&mut scr, &msgs, &path) {
                             session_path = Some(p);
                         }
                     }
@@ -2473,6 +2727,7 @@ user you can search the web or speak.\n",
                 if caps_now.web_tools != caps_at_start.web_tools || caps_now.speech != caps_at_start.speech {
                     reg = tools::registry(caps_now);
                     reg.extend(goal::tool_defs());
+                    reg.extend(session::tool_defs());
                     reg.extend(mcp::tool_defs());
                     scr.speech_ok = caps_now.speech;
                     caps_at_start = caps_now;
@@ -2527,6 +2782,14 @@ user you can search the web or speak.\n",
                 None => scr.push(&format!("> {submit}"), K_USER),
             }
             turn_no += 1;
+            // A session must exist before the turn so `rename` works inside
+            // the very first turn and the file is there for /resume.
+            if session_path.is_none() {
+                let p = new_session_path();
+                session::set_current(p.clone());
+                let _ = save_session(&msgs, &config_rc.borrow(), &p);
+                session_path = Some(p);
+            }
             cfg = api_cfg(&config_rc.borrow());
             refresh_ctx_window(&mut scr, &cfg);
             let mut opts = harness::RunOpts::from_config(&config_rc.borrow(), scr.ctx_window);
@@ -2566,11 +2829,24 @@ user you can search the web or speak.\n",
                     scr.queue.insert(0, line);
                 }
             }
-            if session_path.is_none() {
-                session_path = Some(new_session_path());
-            }
             if let Some(p) = &session_path {
                 save_session(&msgs, &config_rc.borrow(), p);
+            }
+            // First human message becomes a fallback title until the model
+            // calls `rename`; goal-round prompts are not human messages.
+            if session::title().is_empty() {
+                let fallback = if label.is_none() {
+                    // First human message becomes a fallback title.
+                    submit.split_whitespace().collect::<Vec<_>>().join(" ")
+                } else {
+                    // An autonomous goal round names the session after the goal.
+                    goal::current()
+                        .map(|g| g.objective)
+                        .unwrap_or_default()
+                };
+                if !fallback.is_empty() {
+                    let _ = session::rename(&fallback);
+                }
             }
             if scr.quit {
                 break;

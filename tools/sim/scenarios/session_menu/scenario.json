@@ -1,0 +1,103 @@
+{
+ "phases": [
+  [
+   {
+    "wait_for": {
+     "text": "dst",
+     "timeout_ms": 10000
+    }
+   },
+   {
+    "send": "please fix the whale splash"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_stable": {
+     "stable_ms": 900,
+     "timeout_ms": 20000
+    },
+    "snap": "t1"
+   }
+  ],
+  [
+   {
+    "wait_for": {
+     "text": "dst",
+     "timeout_ms": 10000
+    }
+   },
+   {
+    "send": "/help"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_ms": 400,
+    "snap": "help"
+   },
+   {
+    "send": "/resume"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_for": {
+     "text": "Resume session",
+     "timeout_ms": 15000
+    },
+    "snap": "resume"
+   },
+   {
+    "key": "Right"
+   },
+   {
+    "wait_ms": 500,
+    "snap": "expanded"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_stable": {
+     "stable_ms": 800,
+     "timeout_ms": 15000
+    },
+    "snap": "resumed"
+   },
+   {
+    "send": "/model"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_for": {
+     "text": "deepseek-flash",
+     "timeout_ms": 15000
+    },
+    "snap": "model_menu"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_ms": 500,
+    "snap": "model_set"
+   },
+   {
+    "send": "/rename human renamed"
+   },
+   {
+    "key": "Enter"
+   },
+   {
+    "wait_ms": 400,
+    "snap": "renamed"
+   }
+  ]
+ ]
+}

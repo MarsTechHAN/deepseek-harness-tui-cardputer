@@ -32,7 +32,7 @@ def main(argv):
     quick = "--quick" in argv
     results = [
         run("demo (screens + mock streaming)", ["run_demo.py"]),
-        run("feature scenarios (18)", ["run_scenarios.py"]),
+        run("feature scenarios (20)", ["run_scenarios.py"]),
         run("memory (20-turn long session)", ["check_memory.py"], quick_skip=quick),
     ]
     failed = [label for label, ok in zip(["demo", "scenarios", "memory"], results) if not ok]

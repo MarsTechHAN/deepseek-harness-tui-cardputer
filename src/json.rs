@@ -14,6 +14,17 @@ pub enum J {
 }
 
 impl J {
+    /// Insert or replace a field of an object (no-op on other variants).
+    pub fn set(&mut self, key: &str, value: J) {
+        if let J::Obj(kv) = self {
+            if let Some(slot) = kv.iter_mut().find(|(k, _)| k == key) {
+                slot.1 = value;
+                return;
+            }
+            kv.push((key.to_string(), value));
+        }
+    }
+
     pub fn get(&self, key: &str) -> Option<&J> {
         match self {
             J::Obj(kv) => kv.iter().find(|(k, _)| k == key).map(|(_, v)| v),

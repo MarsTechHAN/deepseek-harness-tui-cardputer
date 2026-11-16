@@ -404,10 +404,14 @@ class ScreenRenderer:
                 fg = resolve_color(cell.fg, DEFAULT_FG, bold=cell.bold)
                 bg = resolve_color(cell.bg, DEFAULT_BG)
                 if cell.reverse:
-                    fg, bg = (bg if bg != DEFAULT_BG else DEFAULT_FG), DEFAULT_BG
-                    fg, bg = bg, fg  # swap: text takes old bg, fill takes old fg
-                    if bg == DEFAULT_FG:
-                        bg = DEFAULT_BG
+                    # Swap foreground/background. With default colours that
+                    # means a light fill with dark text, not dark-on-dark.
+                    if bg == DEFAULT_BG:
+                        fg, bg = DEFAULT_BG, DEFAULT_FG
+                    elif fg == DEFAULT_BG:
+                        fg, bg = DEFAULT_FG, bg
+                    else:
+                        fg, bg = bg, fg
                 x0, y0 = c * cw, r * ch
                 if bg != DEFAULT_BG:
                     draw.rectangle([x0, y0, x0 + cw - 1, y0 + ch - 1], fill=bg)

@@ -1,0 +1,25 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "Choose how to connect",
+    "timeout_ms": 15000
+   },
+   "snap": "menu"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "moved"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "cancelled"
+  }
+ ]
+}
