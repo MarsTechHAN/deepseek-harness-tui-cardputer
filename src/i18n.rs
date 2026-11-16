@@ -256,6 +256,14 @@ const EN: &[(&str, &str)] = &[
     ("login_status_failed", "login failed — press r to retry"),
     ("login_retry_hint", "r retry · t type · Esc cancel"),
     ("login_status_countdown", "QR valid for {}"),
+    ("config_prompt_steps", "Max steps per turn (0 = unlimited):"),
+    ("config_prompt_compact", "Compaction threshold in tokens (0 disables auto compaction):"),
+    ("config_prompt_goal", "Goal continuation rounds (0 = unlimited):"),
+    ("config_prompt_judge", "Judge model for auto sandbox (empty = session model):"),
+    ("config_prompt_model", "Model name:"),
+    ("config_expected_number", "expected a whole number"),
+    ("config_expected_tokens", "expected a token count"),
+    ("ext_empty", "no skills or MCP servers configured"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -452,6 +460,14 @@ const ZH: &[(&str, &str)] = &[
     ("login_status_failed", "登录失败 — 按 r 重试"),
     ("login_retry_hint", "r 重试 · t 直接输入 · Esc 取消"),
     ("login_status_countdown", "二维码有效期 {}"),
+    ("config_prompt_steps", "每轮最大步数（0 = 无限）:"),
+    ("config_prompt_compact", "自动压缩阈值 tokens（0 = 关闭自动压缩）:"),
+    ("config_prompt_goal", "Goal 自动续跑轮数（0 = 无限）:"),
+    ("config_prompt_judge", "auto 沙箱判定模型（空 = 使用当前模型）:"),
+    ("config_prompt_model", "模型名:"),
+    ("config_expected_number", "请输入整数"),
+    ("config_expected_tokens", "请输入 token 数"),
+    ("ext_empty", "未配置 skill 或 MCP 服务器"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -647,6 +663,14 @@ const ES: &[(&str, &str)] = &[
     ("login_status_failed", "login fallido — pulsa r para reintentar"),
     ("login_retry_hint", "r reintentar · t escribir · Esc cancelar"),
     ("login_status_countdown", "QR válido {}"),
+    ("config_prompt_steps", "Pasos máximos por turno (0 = ilimitado):"),
+    ("config_prompt_compact", "Umbral de compactación en tokens (0 desactiva):"),
+    ("config_prompt_goal", "Rondas de continuación del objetivo (0 = ilimitado):"),
+    ("config_prompt_judge", "Modelo juez del sandbox auto (vacío = modelo de sesión):"),
+    ("config_prompt_model", "Nombre del modelo:"),
+    ("config_expected_number", "se esperaba un número entero"),
+    ("config_expected_tokens", "se esperaba un número de tokens"),
+    ("ext_empty", "sin skills ni servidores MCP configurados"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -843,6 +867,14 @@ const JA: &[(&str, &str)] = &[
     ("login_status_failed", "ログイン失敗 — r で再試行"),
     ("login_retry_hint", "r 再試行 · t 直接入力 · Esc キャンセル"),
     ("login_status_countdown", "QR 有効 {}"),
+    ("config_prompt_steps", "1ターンの最大ステップ数（0 = 無制限）:"),
+    ("config_prompt_compact", "圧縮しきい値トークン数（0 で自動圧縮オフ）:"),
+    ("config_prompt_goal", "ゴール継続ラウンド数（0 = 無制限）:"),
+    ("config_prompt_judge", "auto サンドボックスの判定モデル（空 = セッションモデル）:"),
+    ("config_prompt_model", "モデル名:"),
+    ("config_expected_number", "整数を入力してください"),
+    ("config_expected_tokens", "トークン数を入力してください"),
+    ("ext_empty", "skills / MCP サーバーが設定されていません"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -1039,6 +1071,14 @@ const DE: &[(&str, &str)] = &[
     ("login_status_failed", "Login fehlgeschlagen — r zum Wiederholen"),
     ("login_retry_hint", "r wiederholen · t eingeben · Esc abbrechen"),
     ("login_status_countdown", "QR gültig {}"),
+    ("config_prompt_steps", "Max. Schritte pro Turn (0 = unbegrenzt):"),
+    ("config_prompt_compact", "Komprimierungsschwelle in Tokens (0 deaktiviert):"),
+    ("config_prompt_goal", "Ziel-Fortsetzungsrunden (0 = unbegrenzt):"),
+    ("config_prompt_judge", "Sandbox-Prüfmodell (leer = Sitzungsmodell):"),
+    ("config_prompt_model", "Modellname:"),
+    ("config_expected_number", "ganze Zahl erwartet"),
+    ("config_expected_tokens", "Token-Anzahl erwartet"),
+    ("ext_empty", "keine Skills oder MCP-Server konfiguriert"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -1235,6 +1275,14 @@ const IT: &[(&str, &str)] = &[
     ("login_status_failed", "login fallito — premi r per riprovare"),
     ("login_retry_hint", "r riprova · t digita · Esc annulla"),
     ("login_status_countdown", "QR valido {}"),
+    ("config_prompt_steps", "Passi massimi per turno (0 = illimitato):"),
+    ("config_prompt_compact", "Soglia di compattazione in token (0 disattiva):"),
+    ("config_prompt_goal", "Round di continuazione obiettivo (0 = illimitato):"),
+    ("config_prompt_judge", "Modello giudice sandbox auto (vuoto = modello sessione):"),
+    ("config_prompt_model", "Nome modello:"),
+    ("config_expected_number", "atteso un numero intero"),
+    ("config_expected_tokens", "atteso un numero di token"),
+    ("ext_empty", "nessuna skill o server MCP configurato"),
 ];
 
 

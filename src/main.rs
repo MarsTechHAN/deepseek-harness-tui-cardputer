@@ -3309,7 +3309,7 @@ fn model_menu(scr: &mut Scr, config_rc: &ConfigRc) {
         Ok(m) => m,
         Err(e) => {
             scr.push(&format!("model list unavailable: {e}"), K_DIM);
-            if let Some(name) = menu_prompt(scr, "Model name:", false) {
+            if let Some(name) = menu_prompt(scr, i18n::t("config_prompt_model"), false) {
                 if !name.is_empty() {
                     config_rc.borrow_mut().model = name.clone();
                     let _ = config_rc.borrow().save();
@@ -3502,7 +3502,7 @@ fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             kinds.push(None);
         }
         if items.is_empty() {
-            scr.push("no skills or MCP servers configured", K_DIM);
+            scr.push(i18n::t("ext_empty"), K_DIM);
             return;
         }
         if sel >= items.len() {
@@ -3838,7 +3838,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                 let cfg = api_cfg(&config_rc.borrow());
                 let models = crate::api::list_models(&cfg).unwrap_or_default();
                 if models.is_empty() {
-                    if let Some(v) = menu_prompt(scr, "Model name:", false) {
+                    if let Some(v) = menu_prompt(scr, i18n::t("config_prompt_model"), false) {
                         if !v.is_empty() {
                             config_rc.borrow_mut().model = v;
                             let _ = config_rc.borrow().save();
@@ -3980,20 +3980,20 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                 let _ = config_rc.borrow().save();
             }
             8 => {
-                if let Some(v) = menu_prompt(scr, "Max steps per turn (0 = unlimited):", false) {
+                if let Some(v) = menu_prompt(scr, i18n::t("config_prompt_steps"), false) {
                     match v.parse::<u32>() {
                         Ok(n) => {
                             config_rc.borrow_mut().max_steps = n;
                             let _ = config_rc.borrow().save();
                         }
-                        Err(_) => scr.push("expected a whole number", K_ERR),
+                        Err(_) => scr.push(i18n::t("config_expected_number"), K_ERR),
                     }
                 }
             }
             9 => {
                 if let Some(v) = menu_prompt(
                     scr,
-                    "Compaction threshold in tokens (0 disables auto compaction):",
+                    i18n::t("config_prompt_compact"),
                     false,
                 ) {
                     match v.parse::<u64>() {
@@ -4003,25 +4003,25 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                             c.compact_enabled = n > 0;
                             let _ = c.save();
                         }
-                        Err(_) => scr.push("expected a token count", K_ERR),
+                        Err(_) => scr.push(i18n::t("config_expected_tokens"), K_ERR),
                     }
                 }
             }
             10 => {
-                if let Some(v) = menu_prompt(scr, "Goal continuation rounds (0 = unlimited):", false) {
+                if let Some(v) = menu_prompt(scr, i18n::t("config_prompt_goal"), false) {
                     match v.parse::<u32>() {
                         Ok(n) => {
                             config_rc.borrow_mut().goal_max_rounds = n;
                             let _ = config_rc.borrow().save();
                         }
-                        Err(_) => scr.push("expected a whole number", K_ERR),
+                        Err(_) => scr.push(i18n::t("config_expected_number"), K_ERR),
                     }
                 }
             }
             12 => {
                 if let Some(v) = menu_prompt(
                     scr,
-                    "Judge model for auto sandbox (empty = session model):",
+                    i18n::t("config_prompt_judge"),
                     false,
                 ) {
                     let mut c = config_rc.borrow_mut();
