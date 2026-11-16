@@ -12,6 +12,8 @@ dst 支持两种凭据，都保存在 `~/.dst/config.yml`（权限 600）：
 
 ![设备微信登录屏](login-qr-screen.png)
 
+![手机登录页面](login-page.png)
+
 ## 三种登录方式
 
 执行 `/login`（或在首次引导中选择 DeepSeek 官方）：

@@ -13,6 +13,8 @@ replaces the token, so the new key is not shadowed.
 
 ![Device WeChat login screen](login-qr-screen.png)
 
+![Phone login page](login-page.png)
+
 ## Three ways to sign in
 
 Run `/login` (or pick *DeepSeek official* during onboarding):

@@ -42,6 +42,8 @@ inspected visually, not only asserted in code.
   exact panel QR image.
 - `docs/LOGIN.md` / `docs/LOGIN.zh.md` — user-facing login guide with states,
   requirements and a troubleshooting table.
+- `tools/sim/screenshot_login_page.py` — Chrome-headless screenshot of the LAN
+  page (minimum headless viewport is 500px; the CSS is responsive below that).
 
 ## Known limitations
 

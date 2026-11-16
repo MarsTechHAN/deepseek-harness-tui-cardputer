@@ -181,21 +181,23 @@ fn page(lang: &str) -> String {
 <title>@TITLE@</title>
 <style>
 :root{--bg:#0b0f14;--card:#121924;--line:#223044;--text:#e6edf3;--dim:#8b98a9;--accent:#4f9cf9;--ok:#3fb950;--err:#f85149}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
-.wrap{max-width:840px;margin:0 auto;padding:24px 18px 40px}
+*{box-sizing:border-box;min-width:0}html,body{max-width:100%;overflow-x:hidden}body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{width:100%;max-width:840px;margin:0 auto;padding:24px 18px 40px}
 h1{font-size:22px;margin:0 0 4px}.sub{color:var(--dim);font-size:14px;margin:0 0 20px;line-height:1.5}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-@media(max-width:720px){.grid{grid-template-columns:1fr}}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;min-width:0}
+.grid>*{min-width:0}
+@media(max-width:720px){.grid{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;min-width:0}
+.card .hint,.sub{overflow-wrap:anywhere}
 .card h2{font-size:16px;margin:0 0 8px}.card .hint{color:var(--dim);font-size:13px;margin:0 0 12px;line-height:1.5}
 .pill{display:inline-block;font-size:12px;padding:4px 10px;border-radius:999px;background:#1d2a3c;color:var(--dim);margin-bottom:10px}
 .pill.ok{background:#12361f;color:var(--ok)}.pill.err{background:#3b1517;color:var(--err)}
 #qr{width:100%;max-width:280px;aspect-ratio:1/1;object-fit:contain;background:#fff;border-radius:12px;display:block;margin:8px auto 4px}
 #qrmsg{text-align:center;color:var(--dim);font-size:13px;min-height:20px;line-height:1.4}
-button{width:100%;padding:13px;border:0;border-radius:10px;background:var(--accent);color:#fff;font-size:15px;font-weight:600;margin-top:10px;cursor:pointer}
+button{width:100%;max-width:100%;padding:13px;border:0;border-radius:10px;background:var(--accent);color:#fff;font-size:15px;font-weight:600;margin-top:10px;cursor:pointer}
 button.ghost{background:#1a2534;color:var(--text);font-weight:500}
 label{display:block;margin:14px 0 6px;font-size:13px;color:var(--dim)}
-input,select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0d141d;color:var(--text);font-size:16px}
+input,select{width:100%;max-width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0d141d;color:var(--text);font-size:16px}
 .steps{margin:10px 0 0;padding-left:18px;color:var(--dim);font-size:12px;line-height:1.7;min-height:20px}
 .foot{margin-top:22px;color:var(--dim);font-size:12px;text-align:center;line-height:1.7}
 </style></head><body><div class="wrap">
