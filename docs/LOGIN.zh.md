@@ -53,7 +53,7 @@ auth_init(PKCE) → auth_approve → auth_exchange → DSH token`。
 | --- | --- |
 | 二维码扫不出来 | 二维码来自微信且按像素绘制；确认设备有 `python3`+Pillow、屏幕未被遮挡；网页端有同一二维码。 |
 | 连续两次 `QR expired` | 网络或时钟不稳定；检查 Wi-Fi 与系统时间后按 `r` 或 Retry。 |
-| `login failed` 带 HTTP/biz code | 平台接口变化或请求被拒；稍后重试，或暂时改用 API key。 |
+| `login failed` 带 HTTP/biz code | 网页会显示本地化摘要 + 技术细节；多为平台接口变化或请求被拒。稍后重试，或暂时改用 API key。 |
 | `50005 PAYLOAD_SCHEMA_MISMATCH` | redirect URI 必须为 `http://127.0.0.1:<端口>/oauth/callback`，正常由 dst 处理。 |
 | `invalid dsh token` / `auth failed: use /key or /login` | token 已失效；重新 `/login`，或用 `/key` 切换 API key。 |
 | 手机打不开网页 | 手机与设备需在同一局域网，且 8787 端口可达（以设备屏幕显示的 URL 为准）。 |
