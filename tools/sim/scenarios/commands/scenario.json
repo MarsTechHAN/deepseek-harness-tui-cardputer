@@ -13,18 +13,48 @@
    "key": "Enter"
   },
   {
-   "wait_ms": 500,
-   "snap": "help"
+   "send": "/g"
   },
   {
-   "key": "Up"
+   "wait_ms": 400,
+   "snap": "palette_g"
   },
   {
-   "key": "Up"
+   "key": "CtrlU"
   },
   {
-   "wait_ms": 300,
-   "snap": "help_more"
+   "send": "/c"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "palette_c"
+  },
+  {
+   "key": "CtrlU"
+  },
+  {
+   "wait_ms": 100
+  },
+  {
+   "wait_ms": 100
+  },
+  {
+   "wait_ms": 100
+  },
+  {
+   "wait_ms": 100
+  },
+  {
+   "wait_ms": 100
+  },
+  {
+   "wait_ms": 100
+  },
+  {
+   "wait_ms": 100
+  },
+  {
+   "wait_ms": 100
   },
   {
    "send": "/usage"

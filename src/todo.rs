@@ -24,7 +24,7 @@ fn parse(args: &J) -> Vec<Item> {
                 if text.is_empty() { None } else { Some(Item { text, done }) }
             } else {
                 let text = v.get("text").and_then(|t| t.as_str())?.to_string();
-                let done = v.get("done").and_then(|d| d.as_bool()).unwrap_or(false)
+                let done = matches!(v.get("done"), Some(J::Bool(true)))
                     || v.get("status").and_then(|s| s.as_str()) == Some("completed");
                 Some(Item { text, done })
             }

@@ -13,6 +13,7 @@
 mod api;
 mod art;
 mod bg;
+mod checkpoint;
 mod cmd;
 mod compact;
 mod config;
@@ -20,12 +21,14 @@ mod context;
 mod goal;
 mod harness;
 mod i18n;
+mod instructions;
 mod jobs;
 mod login;
 mod mcp;
 mod sandbox;
 mod session;
 mod skills;
+mod todo;
 mod usage;
 mod json;
 mod tool;
@@ -94,6 +97,8 @@ pub struct Scr {
     auto_queue: Vec<(String, String)>,
     /// Label for the auto message edit() is about to return.
     auto_label: Option<String>,
+    /// Last bare-Esc instant, for the double-Esc rewind gesture.
+    last_esc: Option<std::time::Instant>,
     on_tick: Option<Box<dyn FnMut(&mut Scr)>>,
 }
 
@@ -181,6 +186,7 @@ impl Scr {
             approval: None,
             auto_queue: Vec::new(),
             auto_label: None,
+            last_esc: None,
             on_tick: None,
         }
     }
@@ -497,11 +503,15 @@ impl Scr {
         } else {
             String::new()
         };
-        let ring = match crate::goal::badge() {
+        let mut right = match crate::goal::badge_cycle() {
             Some(badge) if ring.is_empty() => badge,
             Some(badge) => format!("{ring} {badge}"),
             None => ring,
         };
+        if let Some(t) = crate::todo::progress() {
+            right = format!("{right} \u{2630} {t}");
+        }
+        let ring = right;
         let ring_w = dw(&ring);
         s.push_str("\x1b[1;33m> \x1b[0m");
         let avail = self.cols.saturating_sub(2 + if ring_w > 0 { ring_w + 1 } else { 0 });
@@ -1066,6 +1076,19 @@ impl Scr {
                     let b1 = match self.read_key_timeout() {
                         Some(b) => b,
                         None => {
+                            // Double Esc within 600 ms opens the rewind picker
+                            // (the physical reset button maps to this gesture
+                            // until a device-side GPIO hook exists).
+                            let now = std::time::Instant::now();
+                            let dbl = self
+                                .last_esc
+                                .map(|t| now.duration_since(t).as_millis() < 600)
+                                .unwrap_or(false);
+                            self.last_esc = Some(now);
+                            if dbl {
+                                self.last_esc = None;
+                                return Some("/rewind".to_string());
+                            }
                             crate::voice::request_stop();
                             continue;
                         }
@@ -1498,6 +1521,8 @@ struct TermUi<'a> {
     /// was quadratic and made the panel lag behind the stream).
     think_cur: String,
     think_wrapped: Vec<String>,
+    /// Messages typed while busy, injected at the next step boundary (steer).
+    steer: Vec<String>,
     tools: std::collections::HashMap<String, (String, String, std::time::Instant)>,
     spin: usize,
 }
@@ -1681,6 +1706,14 @@ impl<'a> harness::Ui for TermUi<'a> {
         }
     }
 
+    fn steer(&mut self) -> Option<String> {
+        if self.steer.is_empty() {
+            None
+        } else {
+            Some(self.steer.remove(0))
+        }
+    }
+
     fn confirm(&mut self, request: &crate::sandbox::Approval) -> bool {
         self.scr.approval = Some(ApprovalView {
             tool: request.tool.clone(),
@@ -1735,10 +1768,19 @@ impl<'a> harness::Ui for TermUi<'a> {
                     // the interrupt has to reach the speaker too.
                     match self.scr.read_key_timeout() {
                         Some(b'\r') => {
-                            crate::voice::request_stop();
-                            self.force_now();
+                            // Steering: deliver at the next step boundary.
+                            let line: String = self.scr.input.iter().collect();
+                            let line = line.trim().to_string();
+                            if !line.is_empty() {
+                                self.scr.input.clear();
+                                self.scr.cursor = 0;
+                                self.scr.push(
+                                    &format!("\u{21b3} steer: {line} (next step)"),
+                                    K_DIM,
+                                );
+                                self.steer.push(line);
+                            }
                             poll_mode(true);
-                            return Action::Cancel;
                         }
                         Some(b) if b == b'[' || b == b'O' => {
                             let mut seq = String::new();
@@ -1763,6 +1805,9 @@ impl<'a> harness::Ui for TermUi<'a> {
                         }
                         _ => {
                             crate::voice::request_stop();
+                            if !self.scr.input.is_empty() {
+                                self.force_now();
+                            }
                             return Action::Cancel;
                         }
                     }
@@ -2263,20 +2308,35 @@ fn resume_menu(scr: &mut Scr) -> Option<std::path::PathBuf> {
     let mut preview: Option<Vec<String>> = None;
     let mut query = String::new();
     loop {
-        let shown: Vec<&(std::path::PathBuf, String, String, u64)> = entries
+        // Search names first; when nothing matches, fall back to searching the
+        // session bodies (Claude-Code-style memory of past conversations).
+        let mut content_hits: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut shown: Vec<&(std::path::PathBuf, String, String, u64)> = entries
             .iter()
-            .filter(|e| {
-                query.is_empty()
-                    || e.1.to_lowercase().contains(&query.to_lowercase())
-            })
+            .filter(|e| query.is_empty() || e.1.to_lowercase().contains(&query.to_lowercase()))
             .collect();
+        if shown.is_empty() && !query.is_empty() {
+            let q = query.to_lowercase();
+            for e in entries.iter() {
+                let text = std::fs::read_to_string(&e.0).unwrap_or_default().to_lowercase();
+                if text.contains(&q) {
+                    content_hits.insert(e.1.clone());
+                    shown.push(e);
+                }
+            }
+        }
         if sel >= shown.len() {
             sel = shown.len().saturating_sub(1);
         }
         let items: Vec<MenuItem> = shown
             .iter()
             .map(|e| MenuItem {
-                label: format!("{:>4}  {}", rel_time(now, e.3), e.1),
+                label: format!(
+                    "{:>4}  {}{}",
+                    rel_time(now, e.3),
+                    e.1,
+                    if content_hits.contains(&e.1) { "  (content match)" } else { "" }
+                ),
                 value: if e.2 == here {
                     "this folder".to_string()
                 } else if e.2.is_empty() {
@@ -2448,6 +2508,115 @@ fn model_menu(scr: &mut Scr, config_rc: &ConfigRc) {
     }
 }
 
+/// Checkpoint picker: restore the transcript of an earlier turn. Opened by
+/// `/rewind` or by double-Esc.
+fn rewind_menu(scr: &mut Scr, msgs: &jobs::Msgs) {
+    let mut list = crate::checkpoint::list();
+    if list.is_empty() {
+        scr.push(i18n::t("rewind_empty"), K_DIM);
+        return;
+    }
+    list.truncate(20);
+    let now = now_epoch();
+    let mut sel = 0usize;
+    loop {
+let items: Vec<MenuItem> = list.iter().enumerate().map(|(i, c)| MenuItem {
+            label: format!("{}. {}", i + 1, c.label.chars().take(42).collect::<String>()),
+            value: if c.preview.is_empty() { String::new() } else { c.preview.chars().take(18).collect() },
+        }).collect();
+        scr.menu = Some(Menu { title: i18n::t("rewind_title").into(), items, sel,
+            hint: i18n::t("rewind_hint").into(), preview: None });
+        scr.draw();
+        let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
+        if k == 0x1b {
+            match scr.read_key_timeout() {
+                Some(b'[') => match scr.read_key_timeout() {
+                    Some(b'A') => sel = sel.saturating_sub(1),
+                    Some(b'B') => sel = (sel + 1).min(list.len() - 1),
+                    _ => {}
+                },
+                _ => { scr.menu = None; scr.draw(); return; }
+            }
+            continue;
+        }
+        if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return; }
+        if k == 0x0d || k == 0x0a {
+            let path = list[sel].path.clone();
+            scr.menu = None;
+            if let Some((title, messages)) = crate::checkpoint::load(&path) {
+                *msgs.borrow_mut() = messages.clone();
+                scr.lines.clear();
+                scr.scroll = 0;
+                scr.splash_done = true;
+                scr.art_on = false;
+                scr.push(&format!("rewound to checkpoint: {}", title), K_DIM);
+                for m in &messages {
+                    let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("");
+                    let text = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                    if text.trim().is_empty() {
+                        continue;
+                    }
+                    match role {
+                        "user" => scr.push(&format!("> {text}"), K_USER),
+                        "assistant" => scr.push_md(text),
+                        _ => {}
+                    }
+                }
+            } else {
+                scr.push("checkpoint file is unreadable", K_ERR);
+            }
+            scr.draw();
+            return;
+        }
+    }
+}
+
+/// Skills and MCP inspection menu.
+fn extensions_menu(scr: &mut Scr) {
+    let skills = crate::skills::load_all();
+    let servers = crate::mcp::server_summary();
+    let mut items: Vec<MenuItem> = Vec::new();
+    let mut details: Vec<Vec<String>> = Vec::new();
+    for sk in &skills {
+        items.push(MenuItem { label: format!("skill  {}", sk.name), value: sk.description.chars().take(20).collect() });
+        details.push(vec![format!("skill: {}", sk.name), format!("path: {}", sk.dir.display()), String::new(),
+                          sk.description.clone()]);
+    }
+    for (server, tools) in &servers {
+        items.push(MenuItem { label: format!("mcp    {}", server), value: format!("{} tools", tools.len()) });
+        let mut d = vec![format!("MCP server: {server}"), format!("tools: {}", tools.len()), String::new()];
+        d.extend(tools.iter().map(|t| format!("- {t}")));
+        details.push(d);
+    }
+    if items.is_empty() {
+        scr.push("no skills or MCP servers configured", K_DIM);
+        return;
+    }
+    let mut sel = 0usize;
+    let mut preview: Option<Vec<String>> = None;
+    loop {
+        scr.menu = Some(Menu { title: i18n::t("ext_title").into(), items: items.clone(), sel,
+            hint: i18n::t("ext_hint").into(), preview: preview.clone() });
+        scr.draw();
+        let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
+        if k == 0x1b {
+            match scr.read_key_timeout() {
+                Some(b'[') => match scr.read_key_timeout() {
+                    Some(b'A') => { sel = sel.saturating_sub(1); preview = None; }
+                    Some(b'B') => { sel = (sel + 1).min(items.len() - 1); preview = None; }
+                    _ => {}
+                },
+                _ => { scr.menu = None; scr.draw(); return; }
+            }
+            continue;
+        }
+        if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return; }
+        if k == 0x0d || k == 0x0a {
+            preview = Some(details[sel].clone());
+        }
+    }
+}
+
 // ---------------------------------------------------------- config wizard
 
 /// prompt inside the menu screens (menu is hidden while typing)
@@ -2509,6 +2678,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             MenuItem { label: i18n::t("menu_compact").into(), value: compact },
             MenuItem { label: i18n::t("menu_goalrounds").into(), value: goalr },
             MenuItem { label: i18n::t("menu_sandbox").into(), value: sandbox_mode },
+            MenuItem { label: i18n::t("menu_extensions").into(), value: String::new() },
             MenuItem { label: i18n::t("menu_save").into(), value: String::new() },
         ];
         let hint = if caps.web_tools && caps.speech {
@@ -2725,6 +2895,11 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                 };
                 let _ = c.save();
             }
+            12 => {
+                scr.menu = None;
+                scr.draw();
+                extensions_menu(scr);
+            }
             11 => {
                 let mut c = config_rc.borrow_mut();
                 c.sandbox_mode = crate::sandbox::Mode::parse(&c.sandbox_mode)
@@ -2776,6 +2951,8 @@ fn main() {
     reg.extend(goal::tool_defs());
     reg.extend(session::tool_defs());
     reg.extend(bg::tool_defs());
+    reg.extend(instructions::tool_defs());
+    reg.extend(todo::tool_defs());
     reg.extend(mcp::tool_defs());
     let mut caps_at_start = config_rc.borrow().capabilities();
     let mut system_prompt = format!(
@@ -2785,6 +2962,10 @@ fn main() {
         goal::guidance(),
         TOOL_SAFETY_GUIDANCE,
         SESSION_GUIDANCE
+    );
+    system_prompt.push_str(&instructions::prompt_section());
+    system_prompt.push_str(
+        "\nTODO AND MEMORY\n- Track multi-step work with todo_write; mark items done as you finish them.\n- Save durable user preferences and project conventions with memory_write (scope=project for workspace rules, global for cross-project). Read them with memory_read / memory_search before changing conventions. Never store secrets in memory.\n",
     );
     if !caps_at_start.web_tools {
         system_prompt.push_str(
@@ -2955,6 +3136,7 @@ user you can search the web or speak.\n",
                             acc: String::new(),
                             think_cur: String::new(),
                             think_wrapped: Vec::new(),
+                            steer: Vec::new(),
                             tools: std::collections::HashMap::new(),
                             spin: 0,
                         };
@@ -2982,6 +3164,12 @@ user you can search the web or speak.\n",
                 if out.model_menu {
                     model_menu(&mut scr, &config_rc);
                 }
+                if out.rewind_menu {
+                    rewind_menu(&mut scr, &msgs);
+                }
+                if out.extensions_menu {
+                    extensions_menu(&mut scr);
+                }
                 if out.resume_menu {
                     if let Some(path) = resume_menu(&mut scr) {
                         if let Some(p) = resume_session_path(&mut scr, &msgs, &path) {
@@ -2996,6 +3184,8 @@ user you can search the web or speak.\n",
                     reg.extend(goal::tool_defs());
                     reg.extend(session::tool_defs());
                     reg.extend(bg::tool_defs());
+                    reg.extend(instructions::tool_defs());
+                    reg.extend(todo::tool_defs());
                     reg.extend(mcp::tool_defs());
                     scr.speech_ok = caps_now.speech;
                     caps_at_start = caps_now;
@@ -3069,6 +3259,10 @@ user you can search the web or speak.\n",
                 // Goal rounds use their own step budget (0 = unlimited).
                 opts.max_steps = config_rc.borrow().goal_max_steps;
             }
+            {
+                let m = msgs.borrow();
+                crate::checkpoint::save(&m, &session::title());
+            }
             let in_goal_round = label.is_some();
             goal::set_in_round(in_goal_round);
             scr.busy = true;
@@ -3080,6 +3274,7 @@ user you can search the web or speak.\n",
                     acc: String::new(),
                     think_cur: String::new(),
                     think_wrapped: Vec::new(),
+                    steer: Vec::new(),
                     tools: std::collections::HashMap::new(),
                     spin: 0,
                 };

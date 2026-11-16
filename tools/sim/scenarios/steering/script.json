@@ -1,0 +1,1 @@
+{"responses": [{"reasoning": "work", "content": "", "tool_calls": [{"id": "s1", "name": "bash", "arguments": {"command": "sleep 1; echo step-one-done"}}], "finish_reason": "tool_calls"}, {"reasoning": "after steer", "content": "Steer received.", "finish_reason": "stop"}]}

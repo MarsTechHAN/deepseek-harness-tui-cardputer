@@ -474,6 +474,22 @@ pub fn badge() -> Option<String> {
     })
 }
 
+/// Alternating badge: status text vs the objective, so the bottom-right slot
+/// shows both the state and what is being pursued.
+pub fn badge_cycle() -> Option<String> {
+    let g = current()?;
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if g.is_active() && secs % 8 >= 4 {
+        let obj: String = g.objective.chars().take(26).collect();
+        Some(format!("\u{25ce} {obj}"))
+    } else {
+        badge()
+    }
+}
+
 /// One-line banner for the status area while a goal is active.
 pub fn banner() -> Option<String> {
     let g = current()?;

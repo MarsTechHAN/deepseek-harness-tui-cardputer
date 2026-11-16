@@ -165,6 +165,56 @@ Parent directories are created as needed. Read a file before overwriting it.",
             post: None,
         },
         ToolDef {
+            name: "glob",
+            description: "Find files by glob pattern (e.g. **/*.rs) under the current directory or a given path. Returns relative paths, bounded to 400 results.",
+            params: vec![
+                Param::req("pattern", "string", "Glob pattern; ** matches across directories."),
+                Param::opt("path", "string", "Directory to search (default: current directory)."),
+            ],
+            concurrency_safe: true,
+            timeout_ms: 20_000,
+            execute: glob_exec,
+            render: glob_render,
+            present: |a| format!("glob {}", short(&str_arg(a, "pattern").unwrap_or_default(), 30)),
+            post: None,
+            schema_override: None,
+            dynamic: None,
+        },
+        ToolDef {
+            name: "grep",
+            description: "Search file contents with an extended regex under a path. Returns file:line matches, bounded output; use it before editing a file.",
+            params: vec![
+                Param::req("pattern", "string", "Extended regular expression."),
+                Param::opt("path", "string", "File or directory to search (default: current directory)."),
+            ],
+            concurrency_safe: true,
+            timeout_ms: 30_000,
+            execute: grep_exec,
+            render: grep_render,
+            present: |a| format!("grep {}", short(&str_arg(a, "pattern").unwrap_or_default(), 30)),
+            post: None,
+            schema_override: None,
+            dynamic: None,
+        },
+        ToolDef {
+            name: "edit_file",
+            description: "Replace an exact string in a text file in place. Read the file first; old_string must be unique unless replace_all is true. Use write_file for new files.",
+            params: vec![
+                Param::req("path", "string", "File to edit."),
+                Param::req("old_string", "string", "Exact text to replace (must match verbatim)."),
+                Param::req("new_string", "string", "Replacement text."),
+                Param::opt("replace_all", "boolean", "Replace every occurrence (default false)."),
+            ],
+            concurrency_safe: false,
+            timeout_ms: 10_000,
+            execute: edit_exec,
+            render: edit_render,
+            present: |a| format!("edit {}", str_arg(a, "path").unwrap_or_default()),
+            post: None,
+            schema_override: None,
+            dynamic: None,
+        },
+        ToolDef {
             name: "speak",
             description: "Read text out loud through the device speaker. Use it when the \
 user asks to be told something aloud. Generate a SHORT spoken message (a sentence or \
@@ -565,6 +615,121 @@ fn list_render(_args: &J, v: &J) -> String {
             .join("\n"),
         _ => "(empty directory)".to_string(),
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// coding tools aligned with DSH/Claude Code: glob, grep, edit_file
+// ---------------------------------------------------------------------------
+
+fn glob_match(pattern: &str, name: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let n: Vec<char> = name.chars().collect();
+    fn go(p: &[char], n: &[char]) -> bool {
+        if p.is_empty() { return n.is_empty(); }
+        match p[0] {
+            '*' => {
+                if p.get(1) == Some(&'*') {
+                    return go(&p[2..], n) || (!n.is_empty() && go(p, &n[1..]));
+                }
+                go(&p[1..], n) || (!n.is_empty() && go(p, &n[1..]))
+            }
+            '?' => !n.is_empty() && go(&p[1..], &n[1..]),
+            c => !n.is_empty() && n[0] == c && go(&p[1..], &n[1..])
+        }
+    }
+    go(&p, &n)
+}
+
+fn glob_exec(args: &J) -> Result<J, Fail> {
+    let pattern = str_arg(args, "pattern").ok_or_else(|| Fail::new("missing 'pattern'"))?;
+    let base = str_arg(args, "path").unwrap_or_else(|| ".".into());
+    let mut out: Vec<String> = Vec::new();
+    fn walk(dir: &std::path::Path, base: &std::path::Path, pattern: &str, depth: usize, out: &mut Vec<String>) {
+        if depth > 6 || out.len() >= 400 { return; }
+        let rd = match std::fs::read_dir(dir) { Ok(r) => r, Err(_) => return };
+        for e in rd.flatten() {
+            let p = e.path();
+            let rel = p.strip_prefix(base).unwrap_or(&p).to_string_lossy().to_string();
+            if p.is_dir() {
+                if !rel.starts_with(".git") { walk(&p, base, pattern, depth + 1, out); }
+            } else if glob_match(pattern, &rel) || glob_match(pattern, p.file_name().and_then(|x| x.to_str()).unwrap_or("")) {
+                out.push(rel);
+                if out.len() >= 400 { return; }
+            }
+        }
+    }
+    let base = std::path::PathBuf::from(&base);
+    walk(&base, &base, &pattern, 0, &mut out);
+    Ok(obj(vec![
+        ("files", J::Arr(out.iter().map(|f| J::s(f)).collect())),
+        ("count", J::Num(out.len() as f64)),
+    ]))
+}
+
+fn glob_render(_a: &J, v: &J) -> String {
+    let files = v.get("files").and_then(|f| f.as_arr()).cloned().unwrap_or_default();
+    if files.is_empty() { return "(no files matched)".into(); }
+    files.iter().filter_map(|f| f.as_str()).collect::<Vec<_>>().join("\n")
+}
+
+fn grep_exec(args: &J) -> Result<J, Fail> {
+    let pattern = str_arg(args, "pattern").ok_or_else(|| Fail::new("missing 'pattern'"))?;
+    let path = str_arg(args, "path").unwrap_or_else(|| ".".into());
+    let out = Command::new("grep")
+        .args(["-rnE", "--exclude-dir=.git", "--exclude-dir=target", "-m", "200", &pattern, &path])
+        .output()
+        .map_err(|e| Fail::new(format!("grep: {e}")))?;
+    let mut text = String::from_utf8_lossy(&out.stdout).to_string();
+    if text.len() > 6000 {
+        text.truncate(6000);
+        text.push_str("\n... [truncated]");
+    }
+    Ok(obj(vec![
+        ("output", J::s(&text)),
+        ("matches", J::Num(text.lines().count() as f64)),
+        ("exit", J::Num(out.status.code().unwrap_or(-1) as f64)),
+    ]))
+}
+
+fn grep_render(_a: &J, v: &J) -> String {
+    let t = v.get("output").and_then(|x| x.as_str()).unwrap_or("");
+    if t.trim().is_empty() { "(no matches)".into() } else { t.trim_end().to_string() }
+}
+
+fn edit_exec(args: &J) -> Result<J, Fail> {
+    let path = str_arg(args, "path").ok_or_else(|| Fail::new("missing 'path'"))?;
+    let old = str_arg(args, "old_string").ok_or_else(|| Fail::new("missing 'old_string'"))?;
+    let new = str_arg(args, "new_string").ok_or_else(|| Fail::new("missing 'new_string'"))?;
+    let all = matches!(args.get("replace_all"), Some(J::Bool(true)));
+    if old.is_empty() {
+        return Err(Fail::new("old_string must not be empty (use write_file to create a file)"));
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| Fail::new(format!("{path}: {e}")))?;
+    let count = text.matches(&old).count();
+    if count == 0 {
+        return Err(Fail::new("old_string not found in file; read the file first"));
+    }
+    if count > 1 && !all {
+        return Err(Fail::new(format!(
+            "old_string occurs {count} times; pass replace_all=true or include more context"
+        )));
+    }
+    let out = if all { text.replace(&old, &new) } else { text.replacen(&old, &new, 1) };
+    std::fs::write(&path, out).map_err(|e| Fail::new(format!("{path}: {e}")))?;
+    Ok(obj(vec![
+        ("path", J::s(&path)),
+        ("replaced", J::Num(if all { count } else { 1 } as f64)),
+    ]))
+}
+
+fn edit_render(_a: &J, v: &J) -> String {
+    format!(
+        "updated {} ({} replacement{})",
+        v.get("path").and_then(|p| p.as_str()).unwrap_or("file"),
+        v.get("replaced").and_then(|n| n.as_num()).unwrap_or(1.0) as u64,
+        if v.get("replaced").and_then(|n| n.as_num()).unwrap_or(1.0) > 1.0 { "s" } else { "" }
+    )
 }
 
 // ---------------------------------------------------------------------------

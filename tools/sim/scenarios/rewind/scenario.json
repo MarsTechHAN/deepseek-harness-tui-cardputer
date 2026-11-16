@@ -1,0 +1,55 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "first task"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 700,
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "send": "second task"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 700,
+    "timeout_ms": 20000
+   },
+   "snap": "before"
+  },
+  {
+   "send": "/rewind"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Rewind to checkpoint",
+    "timeout_ms": 15000
+   },
+   "snap": "menu"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 500,
+   "snap": "restored"
+  }
+ ]
+}

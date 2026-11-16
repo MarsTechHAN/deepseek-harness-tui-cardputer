@@ -10,11 +10,120 @@
    "send": "/config"
   },
   {
-   "key": "Enter"
-  },
-  {
    "wait_ms": 800,
    "snap": "menu"
+  },
+  {
+   "wait_ms": 500
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "wait_ms": 300,
+   "snap": "bottom"
+  },
+  {
+   "key": "Up"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Up"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Up"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Up"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
   },
   {
    "key": "Down"
@@ -66,86 +175,7 @@
    "key": "Up"
   },
   {
-   "key": "Enter"
-  },
-  {
-   "wait_ms": 400,
-   "snap": "toggled"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
    "key": "Up"
-  },
-  {
-   "key": "Up"
-  },
-  {
-   "key": "Enter"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
-  },
-  {
-   "key": "Down"
   }
  ]
 }

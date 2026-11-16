@@ -451,6 +451,10 @@ pub struct Config {
     pub max_tokens: u32,
     pub base: String,
     pub api_key: String,
+    /// Transient-failure retries per request.
+    pub api_retries: u32,
+    /// Fallback models tried in order on transient failures.
+    pub api_fallbacks: Vec<String>,
     pub tts_voice: String,
     pub queued_default: bool,
     pub auto_send_voice: bool,
@@ -499,6 +503,8 @@ impl Default for Config {
             max_tokens: 4096,
             base: "https://api.deepseek.com/v1".into(),
             api_key: String::new(),
+            api_retries: 2,
+            api_fallbacks: Vec::new(),
             tts_voice: "stella".into(),
             queued_default: true,
             auto_send_voice: true,
@@ -585,6 +591,12 @@ impl Config {
             }
             if let Some(v) = api.get("key").and_then(|v| v.as_str()) {
                 self.api_key = v.to_string();
+            }
+            if let Some(v) = api.get("retries").and_then(|v| v.as_f64()) {
+                self.api_retries = v.max(0.0) as u32;
+            }
+            if let Some(seq) = api.get("fallback_models").and_then(|v| v.as_seq()) {
+                self.api_fallbacks = seq.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect();
             }
         }
         if let Some(tui) = doc.get("tui") {
@@ -691,6 +703,13 @@ impl Config {
         s.push_str(&format!("max_tokens: {}\n", self.max_tokens));
         s.push_str("api:\n");
         s.push_str(&format!("  base: {}\n", yaml_quote(&self.base)));
+        if !self.api_fallbacks.is_empty() {
+            s.push_str("  fallback_models:\n");
+            for m in &self.api_fallbacks {
+                s.push_str(&format!("    - {}\n", yaml_quote(m)));
+            }
+        }
+        s.push_str(&format!("  retries: {}\n", self.api_retries));
         if !self.api_key.is_empty() {
             s.push_str(&format!("  key: {}\n", yaml_quote(&self.api_key.trim())));
         }
@@ -785,6 +804,11 @@ impl Config {
                 if self.compact_enabled { "on" } else { "off" },
                 crate::compact::human_tokens(self.compact_threshold),
                 self.compact_keep
+            ),
+            format!(
+                "retries    {}   fallbacks {}",
+                self.api_retries,
+                if self.api_fallbacks.is_empty() { "-".to_string() } else { self.api_fallbacks.join(",") }
             ),
             format!(
                 "tool call  timeout {}ms   time-context {}",

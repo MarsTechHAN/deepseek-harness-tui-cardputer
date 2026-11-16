@@ -45,6 +45,9 @@ pub struct RunOpts {
     pub tool_timeout_ms: u64,
     /// Tool-call permission policy.
     pub sandbox: crate::sandbox::Settings,
+    /// Transient-failure retries and fallback models.
+    pub retries: u32,
+    pub fallbacks: Vec<String>,
 }
 
 impl Default for RunOpts {
@@ -58,6 +61,8 @@ impl Default for RunOpts {
             window: 0,
             tool_timeout_ms: 0,
             sandbox: crate::sandbox::Settings::default(),
+            retries: 0,
+            fallbacks: Vec::new(),
         }
     }
 }
@@ -73,6 +78,8 @@ impl RunOpts {
             window,
             tool_timeout_ms: c.tool_timeout_ms,
             sandbox: crate::sandbox::Settings::from_config(c),
+            retries: c.api_retries,
+            fallbacks: c.api_fallbacks.clone(),
         }
     }
 }
@@ -146,6 +153,11 @@ pub trait Ui {
     fn pump(&mut self) -> Action;
     /// Strict-mode permission pop-up. Returning false rejects the call.
     fn confirm(&mut self, request: &crate::sandbox::Approval) -> bool;
+    /// A message typed while busy that should be injected at the next step
+    /// boundary (DSH `steer`), not interrupt the turn.
+    fn steer(&mut self) -> Option<String> {
+        None
+    }
 }
 
 /// Bridges the tool executor's host callbacks back onto the UI, so a running
@@ -210,6 +222,22 @@ fn assistant_with_tools(text: &str, calls: &[ToolCall]) -> J {
 
 /// Whether a provider error is a context-window overflow (`dsh-agent-loop`
 /// treats this as an explicit compaction trigger).
+/// Transient network/provider failures worth retrying (and switching model).
+fn is_transient(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("curl")
+        || m.contains("connection")
+        || m.contains("timed out")
+        || m.contains("timeout")
+        || m.contains("502")
+        || m.contains("503")
+        || m.contains("504")
+        || m.contains("429")
+        || m.contains("network")
+        || m.contains("stream closed")
+        || m.contains("no data from api")
+}
+
 fn is_context_overflow(message: &str) -> bool {
     let m = message.to_ascii_lowercase();
     m.contains("context length")
@@ -409,6 +437,16 @@ pub fn run_turn(
         // message-count heuristic.
         crate::compact::maybe_compact(cfg, &opts.compact, msgs, opts.window, &defs, ui);
 
+        // Steering: messages typed while busy are injected at this step
+        // boundary, exactly like DSH `agent.steer` (next-step inbox).
+        while let Some(s) = ui.steer() {
+            let s = s.trim().to_string();
+            if !s.is_empty() {
+                ui.on(Ev::Context(s.clone()));
+                msgs.push(msg("user", &s));
+            }
+        }
+
         // additionalContexts: ambient state is refreshed per request and is
         // rate-limited like DSH's `dsh-time-context`.
         if opts.context_time {
@@ -423,12 +461,36 @@ pub fn run_turn(
         steps += 1;
         ui.on(Ev::StepStart(steps));
 
-        let snapshot = serialize_msgs(msgs);
-        let out = match stream_once(cfg, &snapshot, &defs, ui) {
-            Ok(o) => {
-                crate::usage::record_opt(o.usage.as_ref());
-                o
+        // Transient failures retry with backoff; if fallback models are
+        // configured they are tried in order (DSH llm-retry style).
+        let mut attempt = 0u32;
+        let mut active = cfg.clone();
+        let out = loop {
+            let snapshot = serialize_msgs(msgs);
+            match stream_once(&active, &snapshot, &defs, ui) {
+                Ok(o) => {
+                    crate::usage::record_opt(o.usage.as_ref());
+                    break Ok(o);
+                }
+                Err((partial, was_cancelled)) if !was_cancelled
+                    && attempt < opts.retries
+                    && is_transient(&partial.finish) =>
+                {
+                    attempt += 1;
+                    if let Some(m) = opts.fallbacks.get(attempt as usize - 1) {
+                        active.model = m.clone();
+                    }
+                    ui.on(Ev::Info(format!(
+                        "transient failure, retry {}/{} (model {})",
+                        attempt, opts.retries, active.model
+                    )));
+                    std::thread::sleep(std::time::Duration::from_millis(250 * attempt as u64));
+                }
+                Err((partial, was_cancelled)) => break Err((partial, was_cancelled)),
             }
+        };
+        let out = match out {
+            Ok(o) => o,
             Err((partial, was_cancelled)) => {
                 // DSH's `context-overflow` trigger: a provider-confirmed
                 // overflow bypasses the pressure threshold and forces one

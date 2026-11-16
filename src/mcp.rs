@@ -307,6 +307,30 @@ pub fn install(mgr: Manager) {
 }
 
 /// Dynamic executor shared by every MCP-backed tool definition.
+/// Server -> advertised tool names, for the extensions menu.
+pub fn server_summary() -> Vec<(String, Vec<String>)> {
+    let guard = match MANAGER.lock() {
+        Ok(g) => g,
+        Err(_) => return Vec::new(),
+    };
+    let mgr = match guard.as_ref() {
+        Some(m) => m,
+        None => return Vec::new(),
+    };
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    for t in &mgr.tools {
+        let rest = t.full_name.strip_prefix("mcp__").unwrap_or(&t.full_name);
+        let mut parts = rest.splitn(2, "__");
+        let server = parts.next().unwrap_or("?").to_string();
+        let tool = parts.next().unwrap_or("?").to_string();
+        match out.iter_mut().find(|(s, _)| *s == server) {
+            Some((_, tools)) => tools.push(tool),
+            None => out.push((server, vec![tool])),
+        }
+    }
+    out
+}
+
 pub fn call_entry(full_name: &str, args: &J) -> Result<J, crate::tool::Fail> {
     let mut guard = MANAGER
         .lock()

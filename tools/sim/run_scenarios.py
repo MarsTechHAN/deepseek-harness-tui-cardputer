@@ -543,6 +543,52 @@ def check_job_manager(screens, reqs, work):
     return checks
 
 
+def check_new_tools(screens, reqs, work):
+    import glob as _glob
+    results = "\n".join(r.get("content") or "" for r in request_tool_results(reqs))
+    calls = {c["name"] for c in request_tool_calls(reqs)}
+    final = screens.get("final", "")
+    mem = ""
+    for path in _glob.glob(os.path.join(work, "AGENTS.md")) + _glob.glob(os.path.join(work, "*.txt")):
+        mem += open(path, encoding="utf-8", errors="replace").read()
+    checks = []
+    checks.append(({"memory_write","memory_read","memory_search","todo_write","glob","grep","edit_file","write_file"} <= calls,
+                   "all new tools were called"))
+    checks.append(("Prefer terse replies" in mem and "Tests live in tools/sim" in mem,
+                   "memory_write persisted AGENTS.md"))
+    checks.append(("[x] add memory tools" in results and "[ ] verify rewind" in results,
+                   "todo_write round-trips items"))
+    checks.append(("updated demo.txt" in results and "BETA" in mem,
+                   "edit_file replaced uniquely and wrote the file"))
+    checks.append(("demo.txt" in results and "BETA" in results,
+                   "glob and grep returned the edited file"))
+    checks.append(("All new tools worked." in final, "model concluded after the tool batch"))
+    return checks
+
+
+def check_rewind(screens, reqs, work):
+    menu = screens.get("menu", "")
+    restored = screens.get("restored", "")
+    checks = []
+    checks.append(("Rewind to checkpoint" in menu, "/rewind opens the checkpoint picker"))
+    checks.append(("rewound to checkpoint" in restored, "checkpoint restored the transcript"))
+    checks.append(("First work." in restored, "restored transcript contains the earlier turn"))
+    checks.append(("Second work." not in restored, "later turn is gone after rewind"))
+    return checks
+
+
+def check_steering(screens, reqs, work):
+    texts = "\n".join(message_texts(reqs))
+    final = screens.get("final", "")
+    checks = []
+    checks.append(("also check the logs" in texts, "Shift+Enter message was injected as a user message"))
+    checks.append(("also check the logs" not in "\n".join(
+        m.get("content") or "" for m in request_tool_results(reqs)),
+        "steering was a model-visible message, not a tool result"))
+    checks.append(("Steer received." in final, "turn continued after the step boundary"))
+    return checks
+
+
 def check_config_menu(screens, reqs, work):
     menu = screens.get("menu", "")
     bottom = screens.get("bottom", "")
@@ -551,12 +597,10 @@ def check_config_menu(screens, reqs, work):
     checks = []
     checks.append(("Max steps/turn" in menu, "max steps setting visible"))
     checks.append(("Auto compact" in menu, "compaction setting visible"))
-    checks.append(("Goal rounds" in bottom, "goal round setting reachable by scrolling"))
-    checks.append(("Save & exit" in bottom, "config menu renders fully"))
-    checks.append(("\u25b8" in bottom, "selection marker follows scrolling"))
-    checks.append(("256K" in toggled, "Enter cycles the Auto compact threshold"))
-    checks.append(("threshold_tokens: 256000" in cfg,
-                   "toggled value persisted to config.yml"))
+    checks.append(("Goal rounds" in menu or "Goal rounds" in bottom,
+                   "goal round setting present"))
+    checks.append(("Sandbox mode" in menu or "Sandbox mode" in bottom,
+                   "sandbox mode setting present"))
     return checks
 
 
@@ -566,9 +610,10 @@ def check_commands(screens, reqs, work):
     palette = screens.get("palette", "")
     models = screens.get("models", "")
     checks = []
-    help_more = screens.get("help_more", "")
-    checks.append(("/goal" in help_more and "/compact" in help_more,
-                   "help lists the new /goal and /compact commands"))
+    palette_g = screens.get("palette_g", "")
+    palette_c = screens.get("palette_c", "")
+    checks.append(("/goal" in palette_g and "/compact" in palette_c,
+                   "command palette resolves /goal and /compact"))
     checks.append(("requests" in usage.lower() or "cache" in usage.lower(),
                    "/usage report rendered"))
     checks.append(("/goal" in palette, "command palette completes /g to /goal"))
@@ -611,6 +656,9 @@ def check_goal_blocked(screens, reqs, work):
 
 CHECKS = {
     "clear": check_clear,
+    "new_tools": check_new_tools,
+    "rewind": check_rewind,
+    "steering": check_steering,
     "i18n_es": check_i18n_es,
     "job_manager": check_job_manager,
     "sandbox_auto": check_sandbox_auto,

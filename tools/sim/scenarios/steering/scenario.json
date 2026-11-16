@@ -1,0 +1,32 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "run one step"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 400
+  },
+  {
+   "send": "also check the logs"
+  },
+  {
+   "key": "ShiftEnter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 25000
+   },
+   "snap": "final"
+  }
+ ]
+}

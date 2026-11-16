@@ -321,10 +321,21 @@ pub fn classify_command(cmd: &str) -> Class {
 /// Classify one tool call.
 pub fn classify(name: &str, args: &J) -> Class {
     match name {
-        "read_file" | "list_dir" | "search" | "fetch" | "ocr" | "skill" | "speak"
+        "read_file" | "list_dir" | "glob" | "grep" | "search" | "fetch" | "ocr" | "skill" | "speak"
+        | "memory_read" | "memory_search" | "todo_read" | "todo_write"
         | "artifact" | "rename" | "get_goal" | "create_goal" | "update_goal"
         | "job_list" | "job_output" | "job_wait" | "job_kill"
         | "watcher_list" | "watcher_stop" => Class::Safe,
+        "edit_file" => {
+            let path = crate::tool::str_arg(args, "path").unwrap_or_default();
+            if path_is_system(&path) { Class::Danger }
+            else if workspace_path(&path) { Class::Safe }
+            else { Class::Unknown }
+        }
+        "memory_write" => {
+            let scope = crate::tool::str_arg(args, "scope").unwrap_or_else(|| "project".into());
+            if scope == "project" { Class::Safe } else { Class::Unknown }
+        }
         "write_file" => {
             let path = crate::tool::str_arg(args, "path").unwrap_or_default();
             if path_is_system(&path) {

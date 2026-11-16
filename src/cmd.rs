@@ -66,6 +66,21 @@ pub const COMMANDS: &[Command] = &[
         input_hint: None,
     },
     Command {
+        name: "rewind",
+        description: "restore a checkpoint from an earlier turn (menu picker)",
+        input_hint: None,
+    },
+    Command {
+        name: "memory",
+        description: "show project and global memory files",
+        input_hint: None,
+    },
+    Command {
+        name: "extensions",
+        description: "inspect skills and MCP servers (menu)",
+        input_hint: None,
+    },
+    Command {
         name: "rename",
         description: "name the current saved session (shown in /resume)",
         input_hint: Some("<title>"),
@@ -134,6 +149,10 @@ pub struct Outcome {
     pub model_menu: bool,
     /// Run the manual compaction flow (main owns the transcript).
     pub compact: bool,
+    /// Open the checkpoint picker (main owns the transcript).
+    pub rewind_menu: bool,
+    /// Open the skills/MCP inspection menu.
+    pub extensions_menu: bool,
 }
 
 impl Outcome {
@@ -146,6 +165,8 @@ impl Outcome {
             config_wizard: false,
             resume_menu: false,
             model_menu: false,
+            rewind_menu: false,
+            extensions_menu: false,
             compact: false,
         }
     }
@@ -158,6 +179,8 @@ impl Outcome {
             config_wizard: false,
             resume_menu: false,
             model_menu: false,
+            rewind_menu: false,
+            extensions_menu: false,
             compact: false,
         }
     }
@@ -211,6 +234,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                     config_wizard: false,
                     resume_menu: false,
                     model_menu: true,
+            rewind_menu: false,
+            extensions_menu: false,
                     compact: false,
                 }
             } else if arg.len() > 120 {
@@ -311,10 +336,31 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                     config_wizard: false,
                     resume_menu: true,
                     model_menu: false,
+            rewind_menu: false,
+            extensions_menu: false,
                     compact: false,
                 }
             }
         }
+        "rewind" => Outcome {
+            lines: vec![("select a checkpoint to restore".to_string(), KIND_DIM)],
+            quit: false, clear: false, login: false, config_wizard: false,
+            resume_menu: false, model_menu: false, compact: false,
+            rewind_menu: true, extensions_menu: false,
+        },
+        "memory" => {
+            let mut lines = vec![(crate::i18n::t("memory_title").to_string(), KIND_DIM)];
+            for l in crate::instructions::summary() {
+                lines.push((l, KIND_NORMAL));
+            }
+            lines.push(("edit: AGENTS.md in the workspace or ~/.dst/AGENTS.md".into(), KIND_DIM));
+            Outcome::many(lines)
+        }
+        "extensions" => Outcome {
+            lines: Vec::new(), quit: false, clear: false, login: false,
+            config_wizard: false, resume_menu: false, model_menu: false,
+            compact: false, rewind_menu: false, extensions_menu: true,
+        },
         "rename" => {
             if arg.is_empty() {
                 usage("/rename <title>")
@@ -333,6 +379,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             config_wizard: false,
             resume_menu: false,
             model_menu: false,
+            rewind_menu: false,
+            extensions_menu: false,
             compact: true,
         },
         "goal" => {
@@ -392,6 +440,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             config_wizard: false,
             resume_menu: false,
             model_menu: false,
+            rewind_menu: false,
+            extensions_menu: false,
             compact: false,
         },
         "quit" | "exit" | "q" => Outcome {
@@ -402,6 +452,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             config_wizard: false,
             resume_menu: false,
             model_menu: false,
+            rewind_menu: false,
+            extensions_menu: false,
             compact: false,
         },
         "" => usage("/"),
