@@ -1,0 +1,1 @@
+{"responses": [{"reasoning": "answer", "content": "History answer.", "finish_reason": "stop"}, {"reasoning": "slow tool", "content": "", "tool_calls": [{"id": "u1", "name": "bash", "arguments": {"command": "sleep 2; echo slow-done"}}], "finish_reason": "tool_calls"}, {"reasoning": "done", "content": "Slow tool finished.", "finish_reason": "stop"}]}

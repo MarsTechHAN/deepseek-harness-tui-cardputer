@@ -63,6 +63,8 @@ const EN: &[(&str, &str)] = &[
     ("hints", "{} | hold Tab to talk | /help | /quit"),
     ("unconfigured", "No API configured - type /login to set up"),
     ("busy", "Enter queues \u{b7} Shift+Enter steers \u{b7} Esc interrupts"),
+    ("idle_hint", "Up/Down history \u{b7} PgUp/PgDn scroll \u{b7} /help"),
+    ("help_hint", "\u{2191}\u{2193} select \u{b7} Enter run \u{b7} Esc close"),
     ("queued", "{} queued"),
     ("force_sent", "\u{26a1} interrupted, sending now: {}"),
     ("voice_queued", "\u{1f3a4} recording queued (starts after this turn)"),

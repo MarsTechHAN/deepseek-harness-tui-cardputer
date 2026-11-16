@@ -99,6 +99,12 @@ pub struct Scr {
     auto_label: Option<String>,
     /// Last bare-Esc instant, for the double-Esc rewind gesture.
     last_esc: Option<std::time::Instant>,
+    /// Submitted input history (newest last), for ↑/↓ recall.
+    history: Vec<String>,
+    /// Position while browsing history; None = editing fresh input.
+    hist_pos: Option<usize>,
+    /// Draft preserved while browsing history.
+    hist_draft: String,
     on_tick: Option<Box<dyn FnMut(&mut Scr)>>,
 }
 
@@ -187,6 +193,9 @@ impl Scr {
             auto_queue: Vec::new(),
             auto_label: None,
             last_esc: None,
+            history: Vec::new(),
+            hist_pos: None,
+            hist_draft: String::new(),
             on_tick: None,
         }
     }
@@ -476,6 +485,11 @@ impl Scr {
         if self.busy && live_line.is_empty() {
             live_line = i18n::t("busy").to_string();
         }
+        // Idle status line doubles as a key-hint area.
+        if live_line.is_empty() && !self.busy && self.input.is_empty() && self.scroll == 0 {
+            live_line = i18n::t("idle_hint").to_string();
+            hot = false;
+        }
         if self.scroll > 0 {
             let hint = i18n::tf("scrolled", &[&self.scroll.to_string()]);
             if live_line.is_empty() {
@@ -623,14 +637,17 @@ impl Scr {
             if let Some(item) = m.items.get(idx) {
                 let selected = idx == m.sel;
                 let mark = if selected { "\u{25b8}" } else { " " };
-                let value_w = dw(&item.value);
+                // Reserve at least 12 cells for the label; long right-hand
+                // text is truncated instead of squeezing the label.
+                let value = fit_ellipsis(&item.value, self.cols / 2 - 2);
+                let value_w = dw(&value);
                 let label_room = self
                     .cols
                     .saturating_sub(2 + if value_w > 0 { value_w + 1 } else { 0 })
-                    .max(4);
-                let label = format!("{mark} {}", fit(&item.label, label_room));
+                    .max(12);
+                let label = format!("{mark} {}", fit_ellipsis(&item.label, label_room));
                 let gap = self.cols.saturating_sub(dw(&label) + value_w);
-                let line = format!("{label}{}{}", " ".repeat(gap), item.value);
+                let line = format!("{label}{}{}", " ".repeat(gap), value);
                 if selected {
                     s.push_str("\x1b[7m");
                 } else {
@@ -1008,6 +1025,61 @@ impl Scr {
         }
     }
 
+    /// Record a submitted line for ↑ recall (never secrets like /key).
+    fn history_push(&mut self, line: &str) {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("/key") {
+            return;
+        }
+        if self.history.last().map(|l| l == line).unwrap_or(false) {
+            return;
+        }
+        self.history.push(line.to_string());
+        if self.history.len() > 60 {
+            self.history.remove(0);
+        }
+        self.hist_pos = None;
+        self.hist_draft.clear();
+    }
+
+    fn hist_set(&mut self, text: &str) {
+        self.input = text.chars().collect();
+        self.cursor = self.input.len();
+        self.palette_sel = 0;
+    }
+
+    fn history_recall(&mut self, older: bool) -> bool {
+        if self.history.is_empty() {
+            return false;
+        }
+        let cur = match self.hist_pos {
+            None => {
+                if !older {
+                    return false;
+                }
+                self.hist_draft = self.input.iter().collect();
+                self.history.len() - 1
+            }
+            Some(p) => {
+                if older {
+                    if p == 0 { return true; }
+                    p - 1
+                } else if p + 1 < self.history.len() {
+                    p + 1
+                } else {
+                    self.hist_pos = None;
+                    let draft = self.hist_draft.clone();
+                    self.hist_set(&draft);
+                    return true;
+                }
+            }
+        };
+        self.hist_pos = Some(cur);
+        let text = self.history[cur].clone();
+        self.hist_set(&text);
+        true
+    }
+
     /// returns Some(line) when the user submits
     fn edit(&mut self) -> Option<String> {
         loop {
@@ -1148,6 +1220,17 @@ impl Scr {
                                     break;
                                 }
                             }
+                            // PageUp/PageDown arrive as ESC [ 5~ / 6~.
+                            if seq == "5~" {
+                                let page = self.rows.saturating_sub(3).max(5);
+                                self.scroll = (self.scroll + page).min(self.lines.len());
+                                continue;
+                            }
+                            if seq == "6~" {
+                                let page = self.rows.saturating_sub(3).max(5);
+                                self.scroll = self.scroll.saturating_sub(page);
+                                continue;
+                            }
                             if seq.starts_with("13;") && !self.input.is_empty() {
                                 let line: String = self.input.iter().collect();
                                 self.input.clear();
@@ -1161,6 +1244,10 @@ impl Scr {
                                 let n = self.palette_items().len();
                                 if n > 0 {
                                     self.palette_sel = self.palette_sel.saturating_sub(1);
+                                } else if self.input.is_empty()
+                                    && self.history_recall(true)
+                                {
+                                    // recalled history, nothing else to do
                                 } else {
                                     self.scroll = (self.scroll + 5).min(self.lines.len());
                                 }
@@ -1169,10 +1256,14 @@ impl Scr {
                                 let n = self.palette_items().len();
                                 if n > 0 {
                                     self.palette_sel = (self.palette_sel + 1).min(n - 1);
-                                } else if self.input.is_empty() && crate::bg::has_any() {
+                                } else if self.input.is_empty() && crate::bg::has_any()
+                                    && !self.history_recall(false)
+                                {
                                     // Down on an empty prompt opens the
                                     // background-task manager.
                                     self.jobs_panel();
+                                } else if self.hist_pos.is_some() {
+                                    self.history_recall(false);
                                 } else {
                                     self.scroll = self.scroll.saturating_sub(5);
                                 }
@@ -1181,7 +1272,15 @@ impl Scr {
                             b'D' => self.cursor = self.cursor.saturating_sub(1),
                             b'H' => self.cursor = 0,
                             b'F' => self.cursor = self.input.len(),
-                            b'5' | b'6' => { let _ = self.read_key(); }
+                            b'5' | b'6' => {
+                                let _ = self.read_key();
+                                let page = self.rows.saturating_sub(3).max(5);
+                                if b2 == b'5' {
+                                    self.scroll = (self.scroll + page).min(self.lines.len());
+                                } else {
+                                    self.scroll = self.scroll.saturating_sub(page);
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -1343,6 +1442,16 @@ fn strip_inline(s: &str) -> String {
 /// Display width in terminal cells (CJK counts as two).
 fn dw(s: &str) -> usize {
     s.chars().map(Scr::cw).sum()
+}
+
+/// Like `fit`, but marks visible truncation with an ellipsis.
+fn fit_ellipsis(s: &str, cols: usize) -> String {
+    if dw(s) <= cols {
+        return s.to_string();
+    }
+    let mut out = fit(s, cols.saturating_sub(1));
+    out.push('\u{2026}');
+    out
 }
 
 fn fit(s: &str, cols: usize) -> String {
@@ -1669,12 +1778,17 @@ impl<'a> harness::Ui for TermUi<'a> {
                 );
                 self.tools.insert(id, (name, title, std::time::Instant::now()));
             }
+            Ev::ToolTick { name, secs } => {
+                self.scr.live = Some((1, format!("{name} running {secs:.1}s")));
+                self.scr.draw();
+            }
             Ev::ToolResult {
                 id,
                 content,
                 is_error,
                 ..
             } => {
+                self.scr.live = None;
                 // The pending line was drawn when the call started; this one
                 // adds the outcome and a short preview of what came back.
                 let (name, title, took) = self
@@ -2485,7 +2599,7 @@ fn model_menu(scr: &mut Scr, config_rc: &ConfigRc) {
     }
     let items: Vec<MenuItem> = models
         .iter()
-        .map(|(id, name, efforts)| MenuItem {
+        .map(|(id, _name, efforts)| MenuItem {
             label: id.clone(),
             value: if efforts.is_empty() {
                 String::new()
@@ -2653,6 +2767,57 @@ fn extensions_menu(scr: &mut Scr) {
         if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return; }
         if k == 0x0d || k == 0x0a {
             preview = Some(details[sel].clone());
+        }
+    }
+}
+
+/// `/help`: a menu of commands (name left, one-line description right).
+/// Enter runs a no-argument command, or completes a command that needs input.
+fn help_menu(scr: &mut Scr) -> Option<String> {
+    let items: Vec<MenuItem> = cmd::COMMANDS
+        .iter()
+        .map(|c| MenuItem {
+            label: format!("/{}", c.name),
+            value: cmd::describe(c.name),
+        })
+        .collect();
+    if items.is_empty() {
+        return None;
+    }
+    let mut sel = 0usize;
+    loop {
+        scr.menu = Some(Menu {
+            title: i18n::t("cmd_help_title").into(),
+            items: items.clone(),
+            sel,
+            hint: i18n::t("help_hint").into(),
+            preview: None,
+        });
+        scr.draw();
+        let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
+        if k == 0x1b {
+            match scr.read_key_timeout() {
+                Some(b'[') => match scr.read_key_timeout() {
+                    Some(b'A') => sel = sel.saturating_sub(1),
+                    Some(b'B') => sel = (sel + 1).min(items.len() - 1),
+                    _ => {}
+                },
+                _ => { scr.menu = None; scr.draw(); return None; }
+            }
+            continue;
+        }
+        if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return None; }
+        if k == 0x0d || k == 0x0a {
+            let c = &cmd::COMMANDS[sel];
+            let needs_arg = c.input_hint.map(|h| h.starts_with('<')).unwrap_or(false);
+            let chosen = if needs_arg {
+                format!("/{} ", c.name)
+            } else {
+                format!("/{}", c.name)
+            };
+            scr.menu = None;
+            scr.draw();
+            return Some(chosen);
         }
     }
 }
@@ -3136,6 +3301,9 @@ user you can search the web or speak.\n",
         };
         // Slash commands are human commands: they run here and never become a
         // model message (the same contract as DSH's command registry).
+        if label.is_none() {
+            scr.history_push(&line);
+        }
         if label.is_none() && line.starts_with('/') {
             let goal_before = goal::current();
             // Bind the borrow before the if-let: a temporary RefMut in the
@@ -3203,6 +3371,11 @@ user you can search the web or speak.\n",
                 }
                 if out.model_menu {
                     model_menu(&mut scr, &config_rc);
+                }
+                if out.help_menu {
+                    if let Some(chosen) = help_menu(&mut scr) {
+                        pending_line = Some(chosen);
+                    }
                 }
                 if out.rewind_menu {
                     rewind_menu(&mut scr, &msgs);

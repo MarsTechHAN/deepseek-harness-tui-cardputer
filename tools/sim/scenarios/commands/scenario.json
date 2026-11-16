@@ -13,6 +13,16 @@
    "key": "Enter"
   },
   {
+   "wait_ms": 600,
+   "snap": "help_menu"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
    "send": "/g"
   },
   {
@@ -33,30 +43,6 @@
    "key": "CtrlU"
   },
   {
-   "wait_ms": 100
-  },
-  {
-   "wait_ms": 100
-  },
-  {
-   "wait_ms": 100
-  },
-  {
-   "wait_ms": 100
-  },
-  {
-   "wait_ms": 100
-  },
-  {
-   "wait_ms": 100
-  },
-  {
-   "wait_ms": 100
-  },
-  {
-   "wait_ms": 100
-  },
-  {
    "send": "/usage"
   },
   {
@@ -65,16 +51,6 @@
   {
    "wait_ms": 500,
    "snap": "usage"
-  },
-  {
-   "send": "/g"
-  },
-  {
-   "wait_ms": 300,
-   "snap": "palette"
-  },
-  {
-   "key": "CtrlU"
   },
   {
    "send": "/model"

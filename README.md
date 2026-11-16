@@ -118,6 +118,15 @@ repository.
   and the model is told they are unavailable; the wizard warns first. `dst --tools`
   prints the effective tool set for diagnosis.
 
+**Interaction polish**
+- `/help` is a command menu: arrows select, Enter runs a no-argument command or
+  completes one that needs input, Esc closes.
+- Up/Down on an empty prompt recall input history (60 entries, `/key` never
+  recorded); PgUp/PgDn scroll the transcript a page at a time.
+- The idle status line shows key hints; running tools report live progress on
+  the status line (`bash running 1.2s`).
+- Menu right-hand text truncates with `…` instead of silently cutting words.
+
 **No title/header row**: every row belongs to the transcript, status line and
 prompt; the session title appears in `/resume`, and goal state is shown as a
 bottom-right badge (`◎ Pursuing Goal 2/10`, `⏸ Goal paused`, `✓ Goal done`).

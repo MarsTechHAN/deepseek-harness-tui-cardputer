@@ -218,6 +218,8 @@ pub trait ToolHost {
     fn allow(&mut self, _name: &str, _args: &J) -> Result<(), String> {
         Ok(())
     }
+    /// Periodic progress ping while a tool body is still running.
+    fn tick(&mut self, _name: &str, _secs: f32) {}
 }
 
 /// Host for callers with no UI (background jobs).
@@ -330,6 +332,7 @@ pub fn run_batch_with(
         }
         let budget = std::time::Duration::from_millis(budget_ms.max(1));
         let started = std::time::Instant::now();
+        let mut last_tick = started;
         let mut settled: Option<Result<J, String>> = None;
         let mut timed_out = false;
         loop {
@@ -343,6 +346,10 @@ pub fn run_batch_with(
                     break;
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if last_tick.elapsed().as_millis() >= 200 {
+                        last_tick = std::time::Instant::now();
+                        host.tick(c.name.as_str(), started.elapsed().as_secs_f32());
+                    }
                     if host.cancel() {
                         cancelled = true;
                         break;

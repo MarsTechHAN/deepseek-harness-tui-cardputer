@@ -148,6 +148,8 @@ pub struct Outcome {
     pub rewind_menu: bool,
     /// Open the skills/MCP inspection menu.
     pub extensions_menu: bool,
+    /// Open the command palette menu (/help).
+    pub help_menu: bool,
 }
 
 impl Outcome {
@@ -162,6 +164,7 @@ impl Outcome {
             model_menu: false,
             rewind_menu: false,
             extensions_menu: false,
+            help_menu: false,
             compact: false,
         }
     }
@@ -176,6 +179,7 @@ impl Outcome {
             model_menu: false,
             rewind_menu: false,
             extensions_menu: false,
+            help_menu: false,
             compact: false,
         }
     }
@@ -206,19 +210,19 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
     let name = name.to_ascii_lowercase();
 
     let out = match name.as_str() {
-        "help" | "?" => {
-            let mut lines = vec![(crate::i18n::t("cmd_help_title").to_string(), KIND_DIM)];
-            for c in COMMANDS {
-                let hint = c
-                    .input_hint
-                    .map(|h| format!(" {h}"))
-                    .unwrap_or_default();
-                lines.push((format!("/{}{hint}", c.name), KIND_TOOL));
-                lines.push((format!("   {}", describe(c.name)), KIND_DIM));
-            }
-            lines.push(("Enter queues while busy; Shift+Enter interrupts".into(), KIND_DIM));
-            Outcome::many(lines)
-        }
+        "help" | "?" => Outcome {
+            lines: Vec::new(),
+            quit: false,
+            clear: false,
+            login: false,
+            config_wizard: false,
+            resume_menu: false,
+            model_menu: false,
+            compact: false,
+            rewind_menu: false,
+            extensions_menu: false,
+            help_menu: true,
+        },
         "model" => {
             if arg.is_empty() {
                 Outcome {
@@ -231,6 +235,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                     model_menu: true,
             rewind_menu: false,
             extensions_menu: false,
+            help_menu: false,
                     compact: false,
                 }
             } else if arg.len() > 120 {
@@ -333,6 +338,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                     model_menu: false,
             rewind_menu: false,
             extensions_menu: false,
+            help_menu: false,
                     compact: false,
                 }
             }
@@ -341,12 +347,12 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             lines: vec![("select a checkpoint to restore".to_string(), KIND_DIM)],
             quit: false, clear: false, login: false, config_wizard: false,
             resume_menu: false, model_menu: false, compact: false,
-            rewind_menu: true, extensions_menu: false,
+            rewind_menu: true, extensions_menu: false, help_menu: false,
         },
         "extensions" => Outcome {
             lines: Vec::new(), quit: false, clear: false, login: false,
             config_wizard: false, resume_menu: false, model_menu: false,
-            compact: false, rewind_menu: false, extensions_menu: true,
+            compact: false, rewind_menu: false, extensions_menu: true, help_menu: false,
         },
         "rename" => {
             if arg.is_empty() {
@@ -368,6 +374,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             model_menu: false,
             rewind_menu: false,
             extensions_menu: false,
+            help_menu: false,
             compact: true,
         },
         "goal" => {
@@ -429,6 +436,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             model_menu: false,
             rewind_menu: false,
             extensions_menu: false,
+            help_menu: false,
             compact: false,
         },
         "quit" | "exit" | "q" => Outcome {
@@ -441,6 +449,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             model_menu: false,
             rewind_menu: false,
             extensions_menu: false,
+            help_menu: false,
             compact: false,
         },
         "" => usage("/"),

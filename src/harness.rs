@@ -114,6 +114,8 @@ pub enum Ev {
     Thinking { secs: f32, chars: usize },
     /// A piece of the reasoning text, shown live and folded when content starts.
     ThinkingDelta(String),
+    /// A tool body has been running for `secs` seconds (live progress ping).
+    ToolTick { name: String, secs: f32 },
     /// Thinking finished; the UI should collapse it to one line.
     ThinkingDone { secs: f32, chars: usize },
     /// Settled assistant text (`assistant/message`).
@@ -184,6 +186,9 @@ impl<'a> tool::ToolHost for UiHost<'a> {
     }
     fn cancel(&mut self) -> bool {
         self.ui.pump() == Action::Cancel
+    }
+    fn tick(&mut self, name: &str, secs: f32) {
+        self.ui.on(Ev::ToolTick { name: name.to_string(), secs });
     }
     fn allow(&mut self, name: &str, args: &J) -> Result<(), String> {
         struct UiConfirmer<'a> {

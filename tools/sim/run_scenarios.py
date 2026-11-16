@@ -590,6 +590,26 @@ def check_steering(screens, reqs, work):
     return checks
 
 
+def check_ux(screens, reqs, work):
+    after = screens.get("after_turn", "")
+    history = screens.get("history", "")
+    tick = screens.get("tick", "")
+    help_menu = screens.get("help_menu", "")
+    paged = screens.get("paged", "")
+    checks = []
+    checks.append(("PgUp" in after and "history" in after,
+                   "idle status line shows the key hints"))
+    checks.append(("> hello history" in history,
+                   "Up on an empty prompt recalls the previous input"))
+    checks.append(("running" in tick and "bash" in tick,
+                   "live status shows the running tool and elapsed time"))
+    checks.append(("/goal" in help_menu and "/model" in help_menu and "Enter" in help_menu,
+                   "/help is a navigable menu with run hint"))
+    checks.append(("\u2191" in paged and "End" in paged,
+                   "PgUp scrolls back with a scroll indicator"))
+    return checks
+
+
 def check_config_menu(screens, reqs, work):
     menu = screens.get("menu", "")
     bottom = screens.get("bottom", "")
@@ -606,7 +626,7 @@ def check_config_menu(screens, reqs, work):
 
 
 def check_commands(screens, reqs, work):
-    help_ = screens.get("help", "")
+    help_ = screens.get("help_menu", "")
     usage = screens.get("usage", "")
     palette = screens.get("palette", "")
     models = screens.get("models", "")
@@ -615,9 +635,11 @@ def check_commands(screens, reqs, work):
     palette_c = screens.get("palette_c", "")
     checks.append(("/goal" in palette_g and "/compact" in palette_c,
                    "command palette resolves /goal and /compact"))
+    checks.append(("/goal" in help_ and "/model" in help_ and "select" in help_,
+                   "/help opens a command menu"))
     checks.append(("requests" in usage.lower() or "cache" in usage.lower(),
                    "/usage report rendered"))
-    checks.append(("/goal" in palette, "command palette completes /g to /goal"))
+
     checks.append(("deepseek-flash" in models, "/model lists endpoint models"))
     return checks
 
@@ -657,6 +679,7 @@ def check_goal_blocked(screens, reqs, work):
 
 CHECKS = {
     "clear": check_clear,
+    "ux": check_ux,
     "new_tools": check_new_tools,
     "rewind": check_rewind,
     "steering": check_steering,
