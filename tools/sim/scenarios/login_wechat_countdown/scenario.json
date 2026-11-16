@@ -1,0 +1,42 @@
+{
+ "mock_login": true,
+ "env": {
+  "MOCK_LOGIN_POLL_DELAY": "4"
+ },
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/login"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Sign in to DeepSeek",
+    "timeout_ms": 12000
+   }
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "QR valid for",
+    "timeout_ms": 20000
+   },
+   "snap": "countdown"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 300
+  }
+ ]
+}

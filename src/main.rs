@@ -2525,6 +2525,21 @@ fn wechat_guide(text_cols: usize, url: &str, status: Option<String>) -> Vec<Stri
     guide
 }
 
+fn login_device_status(message: &str, phase: &str, qr_ms: u64) -> Option<String> {
+    if phase == "waiting" && qr_ms > 0 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let left = 300_000u64.saturating_sub(now.saturating_sub(qr_ms)) / 1000;
+        // Round to 10s so the screen only refreshes ten times a minute.
+        let left = left / 10 * 10;
+        let text = i18n::tf("login_status_countdown", &[&format!("{}:{:02}", left / 60, left % 60)]);
+        return Some(text);
+    }
+    login_status_text(message, phase)
+}
+
 fn login_status_text(message: &str, phase: &str) -> Option<String> {
     if phase == "exchanging" {
         Some(i18n::t("login_status_finishing").to_string())
@@ -2547,7 +2562,7 @@ fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, S
         let mut matrix: Option<Vec<String>> = None;
         let mut last_status: Option<String> = None;
         while std::time::Instant::now() < deadline {
-            let (qr_version, qr, err, token, message, phase) = {
+            let (qr_version, qr, err, token, message, phase, qr_ms) = {
                 let st = session.shared.lock().unwrap();
                 (
                     st.qr_version,
@@ -2556,6 +2571,7 @@ fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, S
                     st.token.clone(),
                     st.message.clone(),
                     st.phase.clone(),
+                    st.qr_ms,
                 )
             };
             if let Some(e) = err {
@@ -2628,7 +2644,7 @@ fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, S
                 // QR on the right (164px), a compact numbered guide on the left.
                 const QR_PX: usize = 164;
                 let text_cols = c.saturating_sub(QR_PX / 6 + 1).max(10);
-                let guide = wechat_guide(text_cols, &session.url, login_status_text(&message, "waiting"));
+                let guide = wechat_guide(text_cols, &session.url, login_device_status(&message, &phase, qr_ms));
                 scr.qr = Some(guide);
                 scr.draw();
                 blit_ok = matrix
@@ -2637,15 +2653,15 @@ fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, S
                     .unwrap_or(false);
                 scr.qr_blit = blit_ok;
                 if !blit_ok {
-                    let lines = wechat_guide(c, &session.url, login_status_text(&message, "waiting"));
+                    let lines = wechat_guide(c, &session.url, login_device_status(&message, &phase, qr_ms));
                     scr.qr = Some(lines);
                     scr.draw();
                 }
                 shown = true;
-                last_status = login_status_text(&message, "waiting");
+                last_status = login_device_status(&message, &phase, qr_ms);
             } else if shown {
                 // Show progress on the panel while the phone is scanned/confirmed.
-                let status = login_status_text(&message, &phase);
+                let status = login_device_status(&message, &phase, qr_ms);
                 if status != last_status {
                     let lines = if blit_ok {
                         wechat_guide(24, &session.url, status.clone())

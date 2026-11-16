@@ -255,6 +255,7 @@ const EN: &[(&str, &str)] = &[
     ("login_status_refresh", "QR expired — refreshing…"),
     ("login_status_failed", "login failed — press r to retry"),
     ("login_retry_hint", "r retry · Esc cancel"),
+    ("login_status_countdown", "QR valid for {}"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -450,6 +451,7 @@ const ZH: &[(&str, &str)] = &[
     ("login_status_refresh", "二维码过期 — 正在刷新…"),
     ("login_status_failed", "登录失败 — 按 r 重试"),
     ("login_retry_hint", "r 重试 · Esc 取消"),
+    ("login_status_countdown", "二维码有效期 {}"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -644,6 +646,7 @@ const ES: &[(&str, &str)] = &[
     ("login_status_refresh", "QR caducado — renovando…"),
     ("login_status_failed", "login fallido — pulsa r para reintentar"),
     ("login_retry_hint", "r reintentar · Esc cancelar"),
+    ("login_status_countdown", "QR válido {}"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -839,6 +842,7 @@ const JA: &[(&str, &str)] = &[
     ("login_status_refresh", "QR の期限切れ — 更新中…"),
     ("login_status_failed", "ログイン失敗 — r で再試行"),
     ("login_retry_hint", "r 再試行 · Esc キャンセル"),
+    ("login_status_countdown", "QR 有効 {}"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -1034,6 +1038,7 @@ const DE: &[(&str, &str)] = &[
     ("login_status_refresh", "QR abgelaufen — wird erneuert…"),
     ("login_status_failed", "Login fehlgeschlagen — r zum Wiederholen"),
     ("login_retry_hint", "r wiederholen · Esc abbrechen"),
+    ("login_status_countdown", "QR gültig {}"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -1229,6 +1234,7 @@ const IT: &[(&str, &str)] = &[
     ("login_status_refresh", "QR scaduto — aggiornamento…"),
     ("login_status_failed", "login fallito — premi r per riprovare"),
     ("login_retry_hint", "r riprova · Esc annulla"),
+    ("login_status_countdown", "QR valido {}"),
 ];
 
 

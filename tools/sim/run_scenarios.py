@@ -808,6 +808,15 @@ def check_key_overrides_token(screens, reqs, work):
     return checks
 
 
+def check_login_wechat_countdown(screens, reqs, work):
+    screen = screens.get("countdown", "")
+    checks = []
+    checks.append(("QR valid for" in screen, "device QR screen shows the expiry countdown"))
+    checks.append(("4:" in screen or "3:" in screen or "5:" in screen,
+                   "countdown shows minutes and seconds"))
+    return checks
+
+
 def check_login_wechat_retry_more(screens, reqs, work):
     retry = screens.get("retry", "")
     prompt = screens.get("prompt", "")
@@ -982,6 +991,7 @@ CHECKS = {
     "login_wechat_status": check_login_wechat_status,
     "login_wechat_retry": check_login_wechat_retry,
     "login_wechat_retry_more": check_login_wechat_retry_more,
+    "login_wechat_countdown": check_login_wechat_countdown,
     "key_overrides_token": check_key_overrides_token,
     "extensions_toggle": check_extensions_toggle,
     "queue_edit": check_queue_edit,
