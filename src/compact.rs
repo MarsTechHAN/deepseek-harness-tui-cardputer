@@ -312,6 +312,11 @@ fn boundary_for_retain(msgs: &[J], retain: u64) -> usize {
     if msgs.len() < 2 {
         return 0;
     }
+    // retain=0 means "keep no verbatim tail" (manual `/compact`): the whole
+    // non-system history is shadowed.
+    if retain == 0 {
+        return msgs.len();
+    }
     let mut accumulated = 0u64;
     let mut keep_from = msgs.len();
     for i in (0..msgs.len()).rev() {
@@ -346,7 +351,9 @@ pub fn compact(
     ui: &mut dyn harness::Ui,
 ) -> Result<Report, String> {
     let before_tokens = estimate_tokens(msgs);
-    if msgs.len() < 4 {
+    // Manual compaction of a short session has only [system, user, assistant]
+    // to work with; anything less than one user turn is not summarisable.
+    if msgs.len() < 3 {
         return Err("nothing to compact".into());
     }
     let (threshold, retain) = set.budgets(window, cfg.max_tokens as u64);
@@ -380,7 +387,7 @@ pub fn compact(
                 cut -= 1;
             }
         }
-        if cut <= 1 || cut >= msgs.len() {
+        if cut <= 1 {
             return Err(format!(
                 "no safe compaction range can reduce context below threshold \
 ({} estimated tokens >= threshold {})",

@@ -460,6 +460,9 @@ pub fn status_lines() -> Vec<String> {
 /// One-line banner for the status area while a goal is active.
 pub fn banner() -> Option<String> {
     let g = current()?;
+    if g.phase == Phase::Complete {
+        return None;
+    }
     let max = if g.max_rounds == 0 {
         "\u{221e}".to_string()
     } else {

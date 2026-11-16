@@ -1,0 +1,192 @@
+{
+ "responses": [
+  {
+   "reasoning": "step 1",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_unlim_1",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "step 2",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_unlim_2",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "step 3",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_unlim_3",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "step 4",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_unlim_4",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "step 5",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_unlim_5",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "step 6",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_unlim_6",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "step 7",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_unlim_7",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "step 8",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_unlim_8",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "step 9",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_unlim_9",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "step 10",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_unlim_10",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "step 11",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_unlim_11",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "step 12",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_unlim_12",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "step 13",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_unlim_13",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "all steps done",
+   "content": "Thirteen tool steps done.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

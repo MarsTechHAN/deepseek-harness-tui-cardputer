@@ -1,0 +1,30 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/goal resume"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Blocked rejected",
+    "timeout_ms": 25000
+   },
+   "snap": "rejected"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 800,
+   "snap": "disarmed"
+  }
+ ]
+}

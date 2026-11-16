@@ -1,0 +1,16 @@
+{
+ "responses": [
+  {
+   "reasoning": "This response starts late so Esc can interrupt it.",
+   "initial_delay_ms": 4000,
+   "content": "This should never be shown.",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "After cancel.",
+   "content": "Recovered after cancel.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

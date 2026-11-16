@@ -1,0 +1,24 @@
+{
+ "responses": [
+  {
+   "reasoning": "Run the slow tool.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_slow_1",
+     "name": "bash",
+     "arguments": {
+      "command": "sleep 2; echo done"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "The tool returned.",
+   "content": "Tool finished.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

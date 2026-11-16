@@ -257,9 +257,14 @@ python3 run_scenarios.py          # /clear, /goal round driver, automatic compac
 ```
 
 `run_demo.py` writes snapshots and a contact sheet under `screenshots/`;
-`run_scenarios.py` asserts on captured screens *and* on the request log (e.g.
+`run_scenarios.py` runs 18 feature scenarios (thinking panel, tool call ordering,
+tool timeout, Esc interrupt, step limits, repeat/time context injection,
+auto+manual compaction, all `/goal` flows, `/clear`, `/config`, command palette,
+artifact panel) and asserts on captured screens *and* on the request log (e.g.
 that a `<goal_round>` prompt was sent, or that a checkpoint message reached the
-next request). Both scripts bind the mock API to 127.0.0.1 only.
+next request). `check_memory.py` samples RSS across a 20-turn session, and
+`run_all.py` runs the three together. Everything binds the mock API to
+127.0.0.1 only.
 
 Unit tests (host, no network): `cargo test` — harness/tool pipeline, compaction
 budgets, goal state machine, context formatting, config round-trip.

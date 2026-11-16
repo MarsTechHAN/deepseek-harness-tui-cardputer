@@ -1,0 +1,11 @@
+model: deepseek-flash
+effort: auto
+max_tokens: 1024
+api:
+  key: test
+compaction:
+  enabled: true
+  threshold_tokens: 900000
+  max_tokens: 512
+context:
+  time: false

@@ -1,0 +1,27 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/goal resume"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 1200,
+   "snap": "round"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 1000,
+    "timeout_ms": 25000
+   },
+   "snap": "done"
+  }
+ ]
+}

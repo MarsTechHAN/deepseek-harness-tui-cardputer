@@ -1,0 +1,20 @@
+{
+ "responses": [
+  {
+   "reasoning": "first",
+   "content": "First answer with enough volume to make a manual compaction worthwhile. First answer with enough volume to make a manual compaction worthwhile. First answer with enough volume to make a manual compaction worthwhile. First answer with enough volume to make a manual compaction worthwhile. First answer with enough volume to make a manual compaction worthwhile. First answer with enough volume to make a manual compaction worthwhile. First answer with enough volume to make a manual compaction worthwhile. First answer with enough volume to make a manual compaction worthwhile. First answer with enough volume to make a manual compaction worthwhile. First answer with enough volume to make a manual compaction worthwhile. First answer with enough volume to make a manual compaction worthwhile. First answer with enough volume to make a manual compaction worthwhile. First answer with enough volume to make a manual compaction worthwhile. First answer with enough volume to make a manual compaction worthwhile. ",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "summarise",
+   "content": "## Primary Request and Intent\n- Manual compaction test.\n\n## Next Step\n- Continue.",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "second",
+   "content": "Answer after manual compaction.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

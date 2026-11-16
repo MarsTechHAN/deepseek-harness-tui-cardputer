@@ -1,0 +1,15 @@
+{
+ "responses": [
+  {
+   "reasoning": "first",
+   "content": "First reply.",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "second",
+   "content": "Second reply.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

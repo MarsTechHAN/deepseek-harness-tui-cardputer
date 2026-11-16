@@ -41,6 +41,8 @@ pub struct RunOpts {
     pub turn: u32,
     /// Context window of the configured model, 0 when unknown.
     pub window: u64,
+    /// Global tool timeout cap in ms; 0 = each tool's own `timeout_ms`.
+    pub tool_timeout_ms: u64,
 }
 
 impl Default for RunOpts {
@@ -52,6 +54,7 @@ impl Default for RunOpts {
             context_refresh_secs: 600,
             turn: 1,
             window: 0,
+            tool_timeout_ms: 0,
         }
     }
 }
@@ -65,6 +68,7 @@ impl RunOpts {
             context_refresh_secs: c.context_refresh_secs,
             turn: 1,
             window,
+            tool_timeout_ms: c.tool_timeout_ms,
         }
     }
 }
@@ -463,7 +467,7 @@ pub fn run_turn(
 
         let outcomes = {
             let mut host = UiHost { ui: &mut *ui };
-            tool::run_batch(reg, &calls, &mut host)
+            tool::run_batch_with(reg, &calls, opts.tool_timeout_ms, &mut host)
         };
 
         let mut contexts: Vec<String> = Vec::new();

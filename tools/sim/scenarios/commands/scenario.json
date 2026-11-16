@@ -1,0 +1,60 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/help"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 500,
+   "snap": "help"
+  },
+  {
+   "key": "Up"
+  },
+  {
+   "key": "Up"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "help_more"
+  },
+  {
+   "send": "/usage"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 500,
+   "snap": "usage"
+  },
+  {
+   "send": "/g"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "palette"
+  },
+  {
+   "key": "CtrlU"
+  },
+  {
+   "send": "/model"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 1500,
+   "snap": "models"
+  }
+ ]
+}

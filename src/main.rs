@@ -2381,15 +2381,19 @@ user you can search the web or speak.\n",
     // not be sent to the model as chat).
     let mut pending_line: Option<String> = None;
     loop {
-        let (line, label) = match goal_seed.take() {
-            Some((prompt, label)) => (prompt, Some(label)),
-            None => match pending_line.take() {
-                Some(q) => (q, None),
+        // A queued command is a human instruction: it must run before the
+        // goal driver spends another autonomous round (DSH's driver waits for
+        // competing queued prompts instead of starving them).
+        let (line, label) = if let Some(q) = pending_line.take() {
+            (q, None)
+        } else {
+            match goal_seed.take() {
+                Some((prompt, label)) => (prompt, Some(label)),
                 None => match scr.edit() {
                     Some(l) => (l, None),
                     None => break,
                 },
-            },
+            }
         };
         // Slash commands are human commands: they run here and never become a
         // model message (the same contract as DSH's command registry).
@@ -2477,6 +2481,13 @@ user you can search the web or speak.\n",
                 *shared_cfg.borrow_mut() = cfg.clone();
                 tools::set_cfg(cfg.clone());
                 voice::set_cfg(cfg.clone());
+                // A command may have paused/cleared the goal while a round was
+                // already planned: do not run that round.
+                if goal_seed.is_some()
+                    && !goal::current().map(|g| g.is_active()).unwrap_or(false)
+                {
+                    goal_seed = None;
+                }
                 // `/goal <objective>`, `/goal resume`, `/goal edit` re-arm the
                 // driver: start the next automatic round right away.
                 if let Some(after) = goal::current() {
@@ -2591,7 +2602,7 @@ user you can search the web or speak.\n",
                 );
             }
         }
-        if scr.queue.is_empty() {
+        if scr.queue.is_empty() && pending_line.is_none() {
             if let Some(goal) = goal::current() {
                 if goal.is_active() {
                     if let Some((before, round)) = goal::start_round() {
@@ -2599,6 +2610,19 @@ user you can search the web or speak.\n",
                             goal::round_prompt(&before, round),
                             format!("\u{27f3} goal round {round}"),
                         ));
+                    } else if let Some(now) = goal::current() {
+                        // `start_round` also returns None at the round cap and
+                        // has already disarmed: report the fresh state so the
+                        // user knows why the autonomous run stopped.
+                        if now.max_rounds > 0 && now.rounds_started >= now.max_rounds {
+                            scr.push(
+                                &format!(
+                                    "goal reached its round limit ({}); /goal resume to continue",
+                                    now.max_rounds
+                                ),
+                                K_DIM,
+                            );
+                        }
                     }
                 }
             }

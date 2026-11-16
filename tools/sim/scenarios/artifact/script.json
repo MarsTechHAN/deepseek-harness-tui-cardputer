@@ -1,0 +1,24 @@
+{
+ "responses": [
+  {
+   "reasoning": "compose a panel",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_art_1",
+     "name": "artifact",
+     "arguments": {
+      "title": "Check panel",
+      "body": "line one of the panel\nline two of the panel\nline three of the panel"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "panel shown",
+   "content": "Panel is on screen.",
+   "finish_reason": "stop"
+  }
+ ]
+}

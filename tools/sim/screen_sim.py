@@ -472,7 +472,8 @@ class PtySim:
     def __init__(self, binary, cols=DEFAULT_COLS, rows=DEFAULT_ROWS,
                  home=None, cwd=None, env=None, vtime=3, startup_ms=DEFAULT_STARTUP_MS,
                  after_ms=DEFAULT_AFTER_MS, raw_log=None, out_dir=DEFAULT_OUT,
-                 renderer=None, text_only=False, startup_timeout_ms=20000):
+                 renderer=None, text_only=False, startup_timeout_ms=20000,
+                 pid_file=None):
         self.binary = binary
         self.cols = int(cols)
         self.rows = int(rows)
@@ -500,6 +501,7 @@ class PtySim:
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self._raw_fh = None
         self._start_time = 0.0
+        self.pid_file = pid_file
         self._snapshots = []
         self._snap_idx = 0
         self._input_log = []
@@ -562,6 +564,12 @@ class PtySim:
                 os._exit(127)
         # parent
         self.pid = pid
+        if self.pid_file:
+            try:
+                with open(self.pid_file, "w", encoding="utf-8") as fh:
+                    fh.write(str(pid))
+            except OSError:
+                pass
         os.close(slave)
         self.slave = None
         os.set_blocking(master, False)
@@ -1076,6 +1084,8 @@ def build_parser():
                    help="settle time after dst's first paint (default 650)")
     p.add_argument("--after-ms", type=int, default=DEFAULT_AFTER_MS,
                    help="delay after each send/key step (default 100)")
+    p.add_argument("--pid-file", default=None,
+                   help="write the dst child PID here (for RSS sampling)")
     p.add_argument("--vtime", type=int, default=3,
                    help="terminal VTIME in tenths of a second for idle reads (default 3)")
     p.add_argument("--scale", type=int, default=DEFAULT_SCALE,
@@ -1197,7 +1207,7 @@ def main(argv=None):
 
     sim = PtySim(
         binary=os.path.abspath(os.path.expanduser(args.bin)),
-        cols=args.cols, rows=args.rows,
+        cols=args.cols, rows=args.rows, pid_file=args.pid_file,
         home=args.home, cwd=args.cwd, env=extra_env,
         vtime=args.vtime, startup_ms=args.startup_ms, after_ms=args.after_ms,
         raw_log=args.raw_log, out_dir=args.out, renderer=renderer,

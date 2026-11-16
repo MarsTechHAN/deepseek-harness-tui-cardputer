@@ -1,0 +1,36 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "first turn"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 800,
+    "timeout_ms": 15000
+   },
+   "snap": "t1"
+  },
+  {
+   "send": "second turn"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 800,
+    "timeout_ms": 15000
+   },
+   "snap": "t2"
+  }
+ ]
+}

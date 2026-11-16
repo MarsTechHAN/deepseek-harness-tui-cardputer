@@ -1,0 +1,30 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "show a panel"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "line two of the panel",
+    "timeout_ms": 15000
+   },
+   "snap": "panel"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 500,
+   "snap": "dismissed"
+  }
+ ]
+}

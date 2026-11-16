@@ -230,6 +230,19 @@ impl ToolHost for NullHost {
 /// and observe a cancel request. A slow command must not freeze the prompt:
 /// that is the whole reason this is not a plain call.
 pub fn run_batch(reg: &[ToolDef], calls: &[Call], host: &mut dyn ToolHost) -> Vec<Outcome> {
+    run_batch_with(reg, calls, 0, host)
+}
+
+/// Run one batch with a global timeout cap (ms; 0 = use each tool's own
+/// `timeout_ms`). The cap lets `tools.call_timeout_ms` tighten every tool on a
+/// slow device without editing each definition; a tool's own budget is still
+/// honoured when it is tighter.
+pub fn run_batch_with(
+    reg: &[ToolDef],
+    calls: &[Call],
+    timeout_cap_ms: u64,
+    host: &mut dyn ToolHost,
+) -> Vec<Outcome> {
     let mut outs: Vec<Option<Outcome>> = (0..calls.len()).map(|_| None).collect();
 
     // ---- tools/pre-execute, in model order ----
@@ -296,11 +309,15 @@ pub fn run_batch(reg: &[ToolDef], calls: &[Call], host: &mut dyn ToolHost) -> Ve
         // `timeoutMs` is an executor-owned deadline (DSH `dsh-timeout`). A tool
         // that overruns is abandoned: its worker thread is detached and any
         // child process it owns keeps the per-tool deadline it set itself.
-        let budget = if def.timeout_ms > 0 {
-            std::time::Duration::from_millis(def.timeout_ms)
+        let mut budget_ms = if def.timeout_ms > 0 {
+            def.timeout_ms
         } else {
-            std::time::Duration::from_millis(crate::tool::DEFAULT_TIMEOUT_MS)
+            crate::tool::DEFAULT_TIMEOUT_MS
         };
+        if timeout_cap_ms > 0 {
+            budget_ms = budget_ms.min(timeout_cap_ms);
+        }
+        let budget = std::time::Duration::from_millis(budget_ms.max(1));
         let started = std::time::Instant::now();
         let mut settled: Option<Result<J, String>> = None;
         let mut timed_out = false;

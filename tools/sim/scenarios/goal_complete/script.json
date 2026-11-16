@@ -1,0 +1,26 @@
+{
+ "responses": [
+  {
+   "reasoning": "The seeded goal is active. Mark it complete.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_goal_1",
+     "name": "update_goal",
+     "arguments": {
+      "goal_id": "gtest",
+      "revision": 3,
+      "action": "complete"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "Write the closing message.",
+   "content": "Goal marked complete; closing message.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

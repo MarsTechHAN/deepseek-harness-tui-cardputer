@@ -1,0 +1,27 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "run the slow tool"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 1200,
+   "snap": "timed_out"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 20000
+   },
+   "snap": "after"
+  }
+ ]
+}

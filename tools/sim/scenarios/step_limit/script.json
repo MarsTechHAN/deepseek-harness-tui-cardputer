@@ -1,0 +1,19 @@
+{
+ "responses": [
+  {
+   "reasoning": "One tool step.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_step_1",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ ],
+ "auto_tool": false
+}

@@ -271,6 +271,16 @@ pub fn spawn_chat(cfg: &Cfg, messages: &J, tools: &J) -> Result<Chat, String> {
     spawn_chat_json(cfg, &messages.dump(), tools)
 }
 
+/// Loopback endpoints are allowed over plain HTTP: nothing leaves the machine,
+/// and the simulator/mock server depends on it. Everything else must be TLS.
+fn is_loopback(url: &str) -> bool {
+    let rest = url.strip_prefix("http://").unwrap_or("");
+    let host = rest.split('/').next().unwrap_or("");
+    let host = host.rsplit('@').next().unwrap_or(host);
+    let host = host.split(':').next().unwrap_or("");
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]" | "::1")
+}
+
 /// Context window (tokens) of the configured model, from `/models`.
 pub fn context_window(cfg: &Cfg) -> Option<u64> {
     let url = format!("{}/models", cfg.base.trim_end_matches('/'));
@@ -301,7 +311,7 @@ pub fn context_window(cfg: &Cfg) -> Option<u64> {
 /// Models the endpoint advertises, with their supported effort levels.
 pub fn list_models(cfg: &Cfg) -> Result<Vec<(String, String, Vec<String>)>, String> {
     let url = format!("{}/models", cfg.base.trim_end_matches('/'));
-    if !url.starts_with("https://") {
+    if !url.starts_with("https://") && !is_loopback(&url) {
         return Err("refusing non-HTTPS endpoint".into());
     }
     let out = Command::new("curl")

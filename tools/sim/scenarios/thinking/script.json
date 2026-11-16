@@ -1,0 +1,12 @@
+{
+ "responses": [
+  {
+   "reasoning": "The user says hello. This is the dst TUI on a 53x12 panel, so the reasoning panel must wrap full lines instead of one line per stream chunk.",
+   "reasoning_chunk_chars": 9,
+   "reasoning_delay_ms": 60,
+   "content": "Hi from the mock API.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

@@ -31,6 +31,16 @@ static STOP_PLAYBACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 
 /// Ask any in-flight TTS playback to stop (called when the user presses Esc).
 pub fn request_stop() {
+    // A clip may not be playing; log anyway so the simulator (and the device
+    // journal) can prove an interrupt reached the voice layer.
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(crate::config::log_dir().join("voice.log"))
+    {
+        use std::io::Write as _;
+        let _ = writeln!(f, "stop requested (aplay pid={})", PLAYING.load(std::sync::atomic::Ordering::SeqCst));
+    }
     STOP_PLAYBACK.store(true, std::sync::atomic::Ordering::SeqCst);
     let pid = PLAYING.load(std::sync::atomic::Ordering::SeqCst);
     if pid > 0 {

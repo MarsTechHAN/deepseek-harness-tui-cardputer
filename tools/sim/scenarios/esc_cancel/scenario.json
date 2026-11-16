@@ -1,0 +1,39 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "hello"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 1200
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 900,
+   "snap": "cancelled"
+  },
+  {
+   "send": "are you there"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 20000
+   },
+   "snap": "recovered"
+  }
+ ]
+}

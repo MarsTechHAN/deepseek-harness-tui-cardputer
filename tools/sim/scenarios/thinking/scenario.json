@@ -1,0 +1,27 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "hello"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 1000,
+   "snap": "live"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 20000
+   },
+   "snap": "folded"
+  }
+ ]
+}

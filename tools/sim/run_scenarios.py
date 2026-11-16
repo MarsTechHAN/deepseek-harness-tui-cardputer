@@ -55,6 +55,29 @@ def message_texts(requests):
     return texts
 
 
+def request_tool_calls(requests):
+    """All streamed tool_call arguments seen in request history (assistant msgs)."""
+    out = []
+    for body in requests:
+        for m in body.get("messages") or []:
+            for tc in m.get("tool_calls") or []:
+                out.append({"name": tc.get("function", {}).get("name"),
+                            "args": tc.get("function", {}).get("arguments")})
+    return out
+
+
+def request_tool_results(requests):
+    return [m for body in requests for m in (body.get("messages") or [])
+            if m.get("role") == "tool"]
+
+
+def read_file(path):
+    try:
+        return open(path, encoding="utf-8").read()
+    except OSError:
+        return ""
+
+
 def read_screens(out_dir):
     screens = {}
     for name in os.listdir(out_dir):
@@ -79,6 +102,11 @@ def run_scenario(name, binary, timeout=90):
     out = os.path.join(work, "out")
     os.makedirs(os.path.join(home, ".dst"), exist_ok=True)
     os.makedirs(out, exist_ok=True)
+    # A scenario may ship a pre-populated HOME tree (e.g. goal.json or
+    # mcp.json) under scenarios/<name>/home/. Copy it in first.
+    overlay = os.path.join(base, "home")
+    if os.path.isdir(overlay):
+        shutil.copytree(overlay, home, dirs_exist_ok=True)
     log_path = os.path.join(work, "requests.jsonl")
     env = dict(os.environ)
 
@@ -106,7 +134,7 @@ def run_scenario(name, binary, timeout=90):
 
 
 # Each check returns a list of (ok, message) tuples.
-def check_clear(screens, reqs):
+def check_clear(screens, reqs, work):
     checks = []
     final = screens.get("cleared", "")
     checks.append(("hold Tab to talk" in final, "screen reset to splash"))
@@ -117,7 +145,7 @@ def check_clear(screens, reqs):
     return checks
 
 
-def check_goal(screens, reqs):
+def check_goal(screens, reqs, work):
     screens_all = "\n".join(screens.values())
     checks = []
     checks.append(("\u25ce goal 1/1" in screens_all, "goal banner shows round counter"))
@@ -130,7 +158,7 @@ def check_goal(screens, reqs):
     return checks
 
 
-def check_compact(screens, reqs):
+def check_compact(screens, reqs, work):
     texts = message_texts(reqs)
     joined = "\n".join(texts)
     checks = []
@@ -144,7 +172,251 @@ def check_compact(screens, reqs):
     return checks
 
 
-CHECKS = {"clear": check_clear, "goal": check_goal, "compact": check_compact}
+def check_thinking(screens, reqs, work):
+    live = screens.get("live", "")
+    folded = screens.get("folded", "")
+    checks = []
+    # Full-width reasoning line: the bug produced one line per 9-char chunk.
+    checks.append(("This is the dst TUI on a 53x12" in live or
+                   "This is the dst TUI on a 53x12" in live.replace("\n", " "),
+                   "reasoning wraps into full lines"))
+    checks.append(("thinking" in live, "live thinking indicator shown"))
+    checks.append(("(collapsed)" in folded, "thinking folds to one line when the answer starts"))
+    checks.append(("reasoning panel" not in folded, "reasoning text removed after folding"))
+    return checks
+
+
+def check_tool_order(screens, reqs, work):
+    import re
+    pending = screens.get("pending", "")
+    done = screens.get("done", "")
+    results = request_tool_results(reqs)
+    settled = re.compile(r"\| \d+\.\d+s (ok|x)")
+    checks = []
+    checks.append(("* bash" in pending, "tool/call line shown before execution"))
+    checks.append((not settled.search(pending),
+                   "no settled result line while the tool is still running"))
+    checks.append(("ok" in done and "done" in done, "tool/result line and preview after return"))
+    checks.append((any("done" in (r.get("content") or "") for r in results),
+                   "tool result reached the model"))
+    checks.append((len(reqs) == 2, "one follow-up request after the tool batch"))
+    return checks
+
+
+def check_tool_timeout(screens, reqs, work):
+    timed = screens.get("timed_out", "")
+    after = screens.get("after", "")
+    results = request_tool_results(reqs)
+    checks = []
+    checks.append(("timed out" in timed or "timed out" in after,
+                   "timeout surfaced in the transcript"))
+    checks.append(("Timeout was reported to the model." in after, "turn continued after the timeout"))
+    checks.append((any("timed out" in (r.get("content") or "") for r in results),
+                   "timeout reached the model as a tool error"))
+    checks.append((len(reqs) == 2, "exactly one retry request after the timeout"))
+    return checks
+
+
+def check_esc_cancel(screens, reqs, work):
+    cancelled = screens.get("cancelled", "")
+    recovered = screens.get("recovered", "")
+    vlog = read_file(os.path.join(work, "home", ".dst", "logs", "voice.log"))
+    checks = []
+    checks.append(("cancelled" in cancelled, "Esc cancels the running request"))
+    checks.append(("This should never be shown." not in cancelled,
+                   "late stream content is discarded"))
+    checks.append(("stop requested" in vlog, "Esc interrupt reached the voice layer"))
+    checks.append(("Recovered after cancel." in recovered,
+                   "prompt is usable again after the interrupt"))
+    checks.append((len(reqs) >= 2, "a fresh request was made after the cancel"))
+    return checks
+
+
+def check_step_limit(screens, reqs, work):
+    limited = screens.get("limited", "")
+    checks = []
+    checks.append(("step limit reached (1)" in limited, "configured step cap is reported"))
+    checks.append((len(reqs) == 1, "no second model request after hitting the cap"))
+    return checks
+
+
+def check_unlimited_steps(screens, reqs, work):
+    done = screens.get("done", "")
+    checks = []
+    checks.append(("Thirteen tool steps done." in done, "turn ran through 13 tool steps"))
+    checks.append((len(reqs) == 14, "one request per step, no hidden cap (14 requests)"))
+    checks.append(("step limit reached" not in done, "no step limit was applied"))
+    return checks
+
+
+def check_repeat_reminder(screens, reqs, work):
+    texts = "\n".join(message_texts(reqs))
+    checks = []
+    checks.append(("repeating the exact same tool call" in texts,
+                   "repeat reminder injected into a later request"))
+    checks.append((len(reqs) == 4, "three repeated calls plus the final answer"))
+    checks.append(("Stopped repeating." in "\n".join(screens.values()),
+                   "model answer after the reminder rendered"))
+    return checks
+
+
+def check_time_context(screens, reqs, work):
+    checks = []
+    stamps = [[m for m in (body.get("messages") or [])
+               if isinstance(m.get("content"), str) and "Time sampled while preparing turn" in m["content"]]
+              for body in reqs]
+    checks.append((len(reqs) == 2, "two turns requested"))
+    checks.append((all(len(s) == 1 for s in stamps), "exactly one clock reading per request"))
+    checks.append((bool(stamps) and "turn 1" in stamps[0][0]["content"], "turn 1 reading uses turn 1"))
+    checks.append((len(stamps) > 1 and "turn 2" in stamps[1][0]["content"], "turn 2 reading uses turn 2"))
+    return checks
+
+
+def check_compact_manual(screens, reqs, work):
+    texts = message_texts(reqs)
+    joined = "\n".join(texts)
+    compact_screen = screens.get("compact", "")
+    checks = []
+    checks.append(("You are now acting as a compaction engine" in joined,
+                   "manual /compact calls the summariser"))
+    checks.append(("<compacted-summary>" in joined, "checkpoint message reached the next request"))
+    checks.append(("compacted:" in compact_screen, "manual compaction notice shown"))
+    checks.append(("Answer after manual compaction." in "\n".join(screens.values()),
+                   "conversation continues after manual compaction"))
+    return checks
+
+
+def check_goal_complete(screens, reqs, work):
+    done = screens.get("done", "")
+    calls = request_tool_calls(reqs)
+    results = request_tool_results(reqs)
+    goal = read_file(os.path.join(work, "home", ".dst", "goal.json"))
+    checks = []
+    checks.append((any(c["name"] == "update_goal" for c in calls),
+                   "model called update_goal"))
+    checks.append(('"action": "complete"' in " ".join(c.get("args") or "" for c in calls)
+                   or '"action":"complete"' in " ".join(c.get("args") or "" for c in calls),
+                   "update_goal asked for complete"))
+    checks.append(("Goal marked complete; closing message." in done,
+                   "closing message rendered after completion"))
+    checks.append(("\u25ce goal" not in done, "goal banner hidden after completion"))
+    checks.append(('"phase": "complete"' in goal or '"phase":"complete"' in goal,
+                   "goal persisted as complete"))
+    checks.append((len(reqs) == 2, "no further goal round after completion"))
+    checks.append((not any("goal state changed" in (r.get("content") or "") for r in results),
+                   "revision matched (no stale-state error)"))
+    return checks
+
+
+def check_goal_manage(screens, reqs, work):
+    all_screens = "\n".join(screens.values())
+    goal = read_file(os.path.join(work, "home", ".dst", "goal.json"))
+    checks = []
+    paused = screens.get("paused", "")
+    checks.append(("Status: paused" in paused,
+                   "queued /goal pause stops the loop after round 1"))
+    checks.append(("Rounds: 1/2" in paused, "only one round was spent"))
+    checks.append(("\u25ce goal 1/2" in paused, "goal banner shows the round counter"))
+    checks.append(("Goal round two done." in screens.get("round2", ""),
+                   "/goal resume re-arms and round 2 runs"))
+    checks.append(("goal reached its round limit" in screens.get("resumed", ""),
+                   "round cap stops automatic continuation"))
+    checks.append(("Goal updated" in screens.get("edited", "") and
+                   "revised objective" in screens.get("edited", ""),
+                   "/goal edit replaces the objective"))
+    checks.append(("Goal cleared." in screens.get("cleared", ""),
+                   "/goal clear removes the goal"))
+    checks.append((not goal and "\u25ce goal" not in screens.get("cleared", ""),
+                   "goal file and banner gone after clear"))
+    return checks
+
+
+def check_config_menu(screens, reqs, work):
+    menu = screens.get("menu", "")
+    bottom = screens.get("bottom", "")
+    toggled = screens.get("toggled", "")
+    cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+    checks = []
+    checks.append(("Max steps/turn" in menu, "max steps setting visible"))
+    checks.append(("Auto compact" in menu, "compaction setting visible"))
+    checks.append(("Goal rounds" in bottom, "goal round setting reachable by scrolling"))
+    checks.append(("Save & exit" in bottom, "config menu renders fully"))
+    checks.append(("\u25b8" in bottom, "selection marker follows scrolling"))
+    checks.append(("256K" in toggled, "Enter cycles the Auto compact threshold"))
+    checks.append(("threshold_tokens: 256000" in cfg,
+                   "toggled value persisted to config.yml"))
+    return checks
+
+
+def check_commands(screens, reqs, work):
+    help_ = screens.get("help", "")
+    usage = screens.get("usage", "")
+    palette = screens.get("palette", "")
+    models = screens.get("models", "")
+    checks = []
+    help_more = screens.get("help_more", "")
+    checks.append(("/goal" in help_more and "/compact" in help_more,
+                   "help lists the new /goal and /compact commands"))
+    checks.append(("requests" in usage.lower() or "cache" in usage.lower(),
+                   "/usage report rendered"))
+    checks.append(("/goal" in palette, "command palette completes /g to /goal"))
+    checks.append(("deepseek-flash" in models, "/model lists endpoint models"))
+    return checks
+
+
+def check_artifact(screens, reqs, work):
+    panel = screens.get("panel", "")
+    dismissed = screens.get("dismissed", "")
+    checks = []
+    checks.append(("Check panel" in panel and "line two of the panel" in panel,
+                   "artifact tool takes over the screen"))
+    checks.append(("Panel is on screen." in dismissed,
+                   "conversation continues after dismissing the panel"))
+    checks.append(("line three of the panel" not in dismissed,
+                   "Esc dismisses the full-screen panel"))
+    return checks
+
+
+def check_goal_blocked(screens, reqs, work):
+    results = request_tool_results(reqs)
+    goal = read_file(os.path.join(work, "home", ".dst", "goal.json"))
+    checks = []
+    checks.append((any("blocked requires at least 3 consecutive goal rounds"
+                       in (r.get("content") or "") for r in results),
+                   "premature blocked report rejected with DSH threshold text"))
+    all_screens = "\n".join(screens.values())
+    checks.append(("Blocked rejected" in all_screens,
+                   "model continues after the rejected report"))
+    checks.append((len(reqs) == 2, "one follow-up step after the tool error"))
+    checks.append(("goal disarmed after interrupt" in all_screens or
+                   "disarmed" in all_screens, "Esc stops the autonomous run"))
+    checks.append(('"phase": "active"' in goal or '"phase":"active"' in goal,
+                   "goal stayed active"))
+    checks.append(('"blocked_reason": null' in goal or '"blocked_reason":null' in goal,
+                   "no blocker recorded"))
+    return checks
+
+
+CHECKS = {
+    "clear": check_clear,
+    "goal_manage": check_goal_manage,
+    "commands": check_commands,
+    "artifact": check_artifact,
+    "goal_blocked": check_goal_blocked,
+    "goal": check_goal,
+    "compact": check_compact,
+    "thinking": check_thinking,
+    "tool_order": check_tool_order,
+    "tool_timeout": check_tool_timeout,
+    "esc_cancel": check_esc_cancel,
+    "step_limit": check_step_limit,
+    "unlimited_steps": check_unlimited_steps,
+    "repeat_reminder": check_repeat_reminder,
+    "time_context": check_time_context,
+    "compact_manual": check_compact_manual,
+    "goal_complete": check_goal_complete,
+    "config_menu": check_config_menu,
+}
 
 
 def main(argv):
@@ -163,13 +435,15 @@ def main(argv):
             print(f"[FAIL] {name}: {exc}")
             failures += 1
             continue
-        checks = CHECKS[name](screens, reqs)
+        checks = CHECKS[name](screens, reqs, work)
         ok = all(c[0] for c in checks)
         for passed, label in checks:
             print(f"  {'ok  ' if passed else 'FAIL'} {label}")
         print(f"[{'PASS' if ok else 'FAIL'}] {name} ({time.time() - t0:.1f}s)")
-        shutil.rmtree(work, ignore_errors=True)
-        if not ok:
+        if ok:
+            shutil.rmtree(work, ignore_errors=True)
+        else:
+            print(f"  work dir kept: {work}")
             failures += 1
     if failures:
         print(f"{failures} scenario(s) failed")

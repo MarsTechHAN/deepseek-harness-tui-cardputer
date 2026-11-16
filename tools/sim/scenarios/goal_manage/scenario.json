@@ -1,0 +1,84 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/goal verify goal management"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 150
+  },
+  {
+   "send": "/goal pause"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Goal round one done.",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "wait_for": {
+    "text": "Status: paused",
+    "timeout_ms": 20000
+   },
+   "snap": "paused"
+  },
+  {
+   "send": "/goal resume"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Goal round two done.",
+    "timeout_ms": 20000
+   },
+   "snap": "round2"
+  },
+  {
+   "wait_for": {
+    "text": "goal reached its round limit",
+    "timeout_ms": 20000
+   },
+   "snap": "resumed"
+  },
+  {
+   "send": "/goal edit revised objective"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Goal updated",
+    "timeout_ms": 15000
+   },
+   "snap": "edited"
+  },
+  {
+   "send": "/goal clear"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Goal cleared.",
+    "timeout_ms": 15000
+   },
+   "snap": "cleared"
+  }
+ ]
+}

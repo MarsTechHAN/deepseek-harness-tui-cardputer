@@ -1,0 +1,52 @@
+{
+ "responses": [
+  {
+   "reasoning": "same call 1",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_rep_1",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "same call 2",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_rep_2",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "same call 3",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_rep_3",
+     "name": "list_dir",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "stop repeating",
+   "content": "Stopped repeating.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

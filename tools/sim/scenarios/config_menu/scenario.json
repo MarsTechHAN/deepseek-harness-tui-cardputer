@@ -1,0 +1,103 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/config"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 800,
+   "snap": "menu"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "bottom"
+  },
+  {
+   "key": "Up"
+  },
+  {
+   "key": "Up"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "toggled"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "key": "Down"
+  }
+ ]
+}

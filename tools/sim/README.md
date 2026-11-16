@@ -391,23 +391,52 @@ the 10 checks regress.
 
 ---
 
-## 8. Feature scenarios (`run_scenarios.py`)
+## 8. Feature checks (`run_scenarios.py`, `check_memory.py`)
 
-`run_demo.py` is the visual smoke test. `run_scenarios.py` asserts behaviour for
-the features that are easy to regress:
+`run_demo.py` is the visual smoke test. The other two scripts assert behaviour
+for every feature that is easy to regress, on screens **and** on the mock
+request log:
 
-| scenario | what it checks |
-| --- | --- |
-| `clear` | `/clear` resets the screen to the splash, removes live reasoning text, and a `/clear` typed while a turn is running is dispatched as a command (never sent to the model as chat) |
-| `goal` | `/goal <objective>` creates a goal, the round driver injects `<goal_round>` for round 1, the status line shows `◎ goal 1/<cap>`, and the configured round cap stops automatic continuation |
-| `compact` | with a low `compaction.threshold_tokens`, the summariser instruction is sent, a `<compacted-summary>` checkpoint reaches the next request, and the post-compaction turn still answers |
+| scenario | feature | what it verifies |
+| --- | --- | --- |
+| `thinking` | reasoning panel | reasoning streams as full-width wrapped lines (not one line per chunk) and folds to one line when the answer starts |
+| `tool_order` | tool pipeline | `tool/call` line appears while the tool is still running, no settled result yet; after return the result row + preview appear and the result reaches the model |
+| `tool_timeout` | tool timeouts | a tool overrunning `tools.call_timeout_ms` settles as `timed out`, the turn continues, the model sees the error result |
+| `esc_cancel` | Esc interrupt | Esc cancels the stream, late content is discarded, the voice layer receives a stop request, and the prompt is usable again |
+| `step_limit` | step limit | `agent.max_steps: 1` stops after one step with the limit notice |
+| `unlimited_steps` | no step cap | 13 tool steps run to completion (14 requests) with no hidden 12-step cap |
+| `repeat_reminder` | context injection | the third identical tool call injects DSH's repeat reminder into a later request |
+| `time_context` | context injection | exactly one clock reading per request, turn numbers advance, no accumulation |
+| `compact` | auto compaction | summariser instruction sent, `<compacted-summary>` checkpoint reaches the next request, conversation continues |
+| `compact_manual` | manual `/compact` | `/compact` summarises immediately (no threshold), notice shown, next turn carries the checkpoint |
+| `goal` | goal round driver | `/goal` creates a goal, round 1 starts automatically with `<goal_round>`, banner shows `◎ goal 1/<cap>`, cap stops continuation |
+| `goal_manage` | goal commands | queued `/goal pause` stops the loop, `/goal resume` runs the next round, `/goal edit` changes the objective, `/goal clear` removes goal + banner |
+| `goal_complete` | goal completion | model self-judges via `update_goal complete`, closing message renders, banner disappears, goal persists as complete, no further round |
+| `goal_blocked` | blocked policy | premature `blocked` report is rejected with DSH's 3-round threshold, goal stays active, Esc disarms the run |
+| `clear` | `/clear` | splash returns, live/thinking text and panels are gone, a `/clear` typed while busy is dispatched as a command (not sent to the model) |
+| `config_menu` | `/config` | new settings (max steps, auto compact, goal rounds) are reachable, Enter cycles the compaction threshold, the value is persisted to `config.yml` |
+| `commands` | commands/palette | help lists `/goal` `/compact`, palette completes `/g` to `/goal`, `/usage` renders, `/model` lists endpoint models |
+| `artifact` | artifact panel | the model panel replaces the screen, Esc dismisses it and the conversation continues |
 
 ```bash
 cd tools/sim
-python3 run_scenarios.py             # all scenarios
-python3 run_scenarios.py goal        # just one
+python3 run_scenarios.py               # all 18 scenarios (~2 min)
+python3 run_scenarios.py goal compact  # just some
+python3 check_memory.py                # 20-turn session, samples dst RSS
+python3 run_all.py                     # demo + scenarios + memory in one go
 ```
 
 Each scenario runs against an ephemeral mock port and a temporary `HOME`, so
-`~/.dst` is untouched. Add a directory under `scenarios/` and register a check
-function in `run_scenarios.py` to cover more behaviour.
+`~/.dst` is untouched; `--quick` on `run_all.py` skips the long memory check.
+Add a directory under `scenarios/` (with `config.yml`, `scenario.json`,
+`script.json`, optionally a `home/` overlay) and register a check function in
+`run_scenarios.py` to cover more behaviour.
+
+`check_memory.py` drives a 20-turn session with large replies and samples the
+`dst` child's RSS: the transcript is capped, so the process must stay far below
+the device's 512 MB budget (tens of MB on the debug build) while still
+rendering the last turn.
+
+Note: `mock_api.py` serves plain HTTP on `127.0.0.1`. `dst` only relaxes its
+HTTPS requirement for loopback endpoints, so `/model` listing works against the
+mock while remote endpoints still require TLS.

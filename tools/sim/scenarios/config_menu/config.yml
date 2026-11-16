@@ -1,0 +1,5 @@
+model: deepseek-flash
+effort: auto
+max_tokens: 1024
+api:
+  key: test

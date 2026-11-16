@@ -1,0 +1,26 @@
+{
+ "responses": [
+  {
+   "reasoning": "try to mark blocked too early",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_gb_1",
+     "name": "update_goal",
+     "arguments": {
+      "goal_id": "gtest",
+      "revision": 3,
+      "action": "blocked",
+      "blocked_reason": "the tests cannot proceed"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "blocked was rejected",
+   "content": "Blocked rejected; continuing.",
+   "finish_reason": "stop"
+  }
+ ]
+}
