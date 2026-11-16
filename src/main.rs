@@ -2554,7 +2554,7 @@ fn login_status_text(message: &str, phase: &str) -> Option<String> {
     }
 }
 
-fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, String> {
+fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<LoginResult, String> {
     let session = login::start(port, lang)?;
     let port = session.port;
     let mut attempts = 0u8;
@@ -2626,6 +2626,15 @@ fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, S
                             attempts = 0;
                             continue 'retry;
                         }
+                        Some(b't') | Some(b'T') => {
+                            session.shared.lock().unwrap().cancelled = true;
+                            close_qr(scr);
+                            if let Some(r) = login_type(scr) {
+                                return Ok(r);
+                            }
+                            // User backed out of typing: fall back to the prompt.
+                            break;
+                        }
                         Some(0x1b) | Some(0x03) => {
                             session.shared.lock().unwrap().cancelled = true;
                             close_qr(scr);
@@ -2637,7 +2646,7 @@ fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, S
             }
             if let Some(t) = token {
                 close_qr(scr);
-                return Ok(t);
+                return Ok(LoginResult::Token(t));
             }
             if !shown && qr_version > 0 && !qr.is_empty() {
                 let m = crate::dsh_login::qr_matrix_from_jpeg(&qr);
@@ -2842,7 +2851,7 @@ fn start_login(scr: &mut Scr, config_rc: &ConfigRc) -> bool {
     let port = login::DEFAULT_PORT;
     let lang = config_rc.borrow().language.clone();
     let result = match choice {
-        0 => login_wechat_device(scr, port, &lang).map(LoginResult::Token),
+        0 => login_wechat_device(scr, port, &lang),
         1 => login_web(scr, port, &lang),
         _ => match login_type(scr) {
             Some(r) => Ok(r),

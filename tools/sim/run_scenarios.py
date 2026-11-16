@@ -808,6 +808,21 @@ def check_key_overrides_token(screens, reqs, work):
     return checks
 
 
+def check_login_wechat_switch_typing(screens, reqs, work):
+    prompt = screens.get("prompt", "")
+    type_menu = screens.get("type", "")
+    token_prompt = screens.get("token_prompt", "")
+    done = screens.get("done", "")
+    cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+    checks = []
+    checks.append(("login failed — press r to retry" in prompt, "QR failure prompt offers typing"))
+    checks.append(("Type the credentials directly" in type_menu, "t opens the typing menu"))
+    checks.append(("Paste DSH token" in token_prompt, "token prompt reached"))
+    checks.append(("Logged in" in done and "dshtypedtoken1234567890abcdef" in cfg,
+                   "typed token saved after QR failure"))
+    return checks
+
+
 def check_login_wechat_countdown(screens, reqs, work):
     screen = screens.get("countdown", "")
     checks = []
@@ -992,6 +1007,7 @@ CHECKS = {
     "login_wechat_retry": check_login_wechat_retry,
     "login_wechat_retry_more": check_login_wechat_retry_more,
     "login_wechat_countdown": check_login_wechat_countdown,
+    "login_wechat_switch_typing": check_login_wechat_switch_typing,
     "key_overrides_token": check_key_overrides_token,
     "extensions_toggle": check_extensions_toggle,
     "queue_edit": check_queue_edit,

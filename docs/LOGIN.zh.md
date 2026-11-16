@@ -44,7 +44,7 @@ auth_init(PKCE) → auth_approve → auth_exchange → DSH token`。
 | 等待扫码 | `→ QR valid for 4:50` | `expires in 4:50` |
 | 已扫码 | `→ scanned — confirm on the phone` | 本地化状态 |
 | 确认中 | `→ authorized — finishing login…` | 本地化状态 |
-| 过期 | 第一次自动刷新；再次失败显示 `login failed — press r to retry`（`r retry · Esc cancel`） | 显示“二维码过期 — 正在刷新…”并自动重试一次；Retry 按钮保留 |
+| 过期 | 第一次自动刷新；再次失败显示 `login failed — press r to retry`（`r retry · t type · Esc cancel`） | 显示“二维码过期 — 正在刷新…”并自动重试一次；Retry 按钮保留 |
 | 取消 | 设备按 Esc 立即中断 | 网页点 Cancel 立即中断 |
 
 ## 常见问题
@@ -52,7 +52,7 @@ auth_init(PKCE) → auth_approve → auth_exchange → DSH token`。
 | 现象 | 原因 / 处理 |
 | --- | --- |
 | 二维码扫不出来 | 二维码来自微信且按像素绘制；确认设备有 `python3`+Pillow、屏幕未被遮挡；网页端有同一二维码。 |
-| 连续两次 `QR expired` | 网络或时钟不稳定；检查 Wi-Fi 与系统时间后按 `r` 或 Retry。 |
+| 连续两次 `QR expired` | 网络或时钟不稳定；检查 Wi-Fi 与系统时间后按 `r`（重新扫码）、`t`（改为直接输入 token/API key），或网页 Retry。 |
 | `login failed` 带 HTTP/biz code | 网页会显示本地化摘要 + 技术细节；多为平台接口变化或请求被拒。稍后重试，或暂时改用 API key。 |
 | `50005 PAYLOAD_SCHEMA_MISMATCH` | redirect URI 必须为 `http://127.0.0.1:<端口>/oauth/callback`，正常由 dst 处理。 |
 | `invalid dsh token` / `auth failed: use /key or /login` | token 已失效；重新 `/login`，或用 `/key` 切换 API key。 |

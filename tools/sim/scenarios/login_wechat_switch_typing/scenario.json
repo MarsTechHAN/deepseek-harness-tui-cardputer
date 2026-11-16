@@ -1,0 +1,66 @@
+{
+ "mock_login": true,
+ "env": {
+  "MOCK_LOGIN_EXPIRED_N": "2"
+ },
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/login"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Sign in to DeepSeek",
+    "timeout_ms": 12000
+   }
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "login failed — press r to retry",
+    "timeout_ms": 40000
+   },
+   "snap": "prompt"
+  },
+  {
+   "send": "t"
+  },
+  {
+   "wait_for": {
+    "text": "Type the credentials directly",
+    "timeout_ms": 15000
+   },
+   "snap": "type"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "token_prompt"
+  },
+  {
+   "send": "dshtypedtoken1234567890abcdef"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Logged in",
+    "timeout_ms": 15000
+   },
+   "snap": "done"
+  }
+ ]
+}

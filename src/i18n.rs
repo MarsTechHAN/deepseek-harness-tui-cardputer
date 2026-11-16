@@ -254,7 +254,7 @@ const EN: &[(&str, &str)] = &[
     ("dsh_token_set", "DSH token"),
     ("login_status_refresh", "QR expired — refreshing…"),
     ("login_status_failed", "login failed — press r to retry"),
-    ("login_retry_hint", "r retry · Esc cancel"),
+    ("login_retry_hint", "r retry · t type · Esc cancel"),
     ("login_status_countdown", "QR valid for {}"),
 ];
 
@@ -450,7 +450,7 @@ const ZH: &[(&str, &str)] = &[
     ("dsh_token_set", "DSH token"),
     ("login_status_refresh", "二维码过期 — 正在刷新…"),
     ("login_status_failed", "登录失败 — 按 r 重试"),
-    ("login_retry_hint", "r 重试 · Esc 取消"),
+    ("login_retry_hint", "r 重试 · t 直接输入 · Esc 取消"),
     ("login_status_countdown", "二维码有效期 {}"),
 ];
 const ES: &[(&str, &str)] = &[
@@ -645,7 +645,7 @@ const ES: &[(&str, &str)] = &[
     ("dsh_token_set", "token DSH"),
     ("login_status_refresh", "QR caducado — renovando…"),
     ("login_status_failed", "login fallido — pulsa r para reintentar"),
-    ("login_retry_hint", "r reintentar · Esc cancelar"),
+    ("login_retry_hint", "r reintentar · t escribir · Esc cancelar"),
     ("login_status_countdown", "QR válido {}"),
 ];
 
@@ -841,7 +841,7 @@ const JA: &[(&str, &str)] = &[
     ("dsh_token_set", "DSH トークン"),
     ("login_status_refresh", "QR の期限切れ — 更新中…"),
     ("login_status_failed", "ログイン失敗 — r で再試行"),
-    ("login_retry_hint", "r 再試行 · Esc キャンセル"),
+    ("login_retry_hint", "r 再試行 · t 直接入力 · Esc キャンセル"),
     ("login_status_countdown", "QR 有効 {}"),
 ];
 
@@ -1037,7 +1037,7 @@ const DE: &[(&str, &str)] = &[
     ("dsh_token_set", "DSH-Token"),
     ("login_status_refresh", "QR abgelaufen — wird erneuert…"),
     ("login_status_failed", "Login fehlgeschlagen — r zum Wiederholen"),
-    ("login_retry_hint", "r wiederholen · Esc abbrechen"),
+    ("login_retry_hint", "r wiederholen · t eingeben · Esc abbrechen"),
     ("login_status_countdown", "QR gültig {}"),
 ];
 
@@ -1233,7 +1233,7 @@ const IT: &[(&str, &str)] = &[
     ("dsh_token_set", "token DSH"),
     ("login_status_refresh", "QR scaduto — aggiornamento…"),
     ("login_status_failed", "login fallito — premi r per riprovare"),
-    ("login_retry_hint", "r riprova · Esc annulla"),
+    ("login_retry_hint", "r riprova · t digita · Esc annulla"),
     ("login_status_countdown", "QR valido {}"),
 ];
 
