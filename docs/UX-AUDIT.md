@@ -22,7 +22,7 @@ inspected visually, not only asserted in code.
 | Goal | pursuing / objective / paused / done badges | ok: badge and todo progress fit the right slot |
 | Login | `/login` menu, direct typing prompts, WeChat QR screen | ok: three paths, numbered guide left + QR right, live scanned/finishing status, QR validity countdown, `r retry` after repeated failures |
 | Login QA | phone page states, i18n, QR scanability | ok: six-language page, countdown/expired/retry/cancel, QR decodes with jsQR (`https://open.weixin.qq.com/connect/confirm?...`), cancel aborts the flow |
-| i18n | en, zh, es, ja, de, it menus/help/approval/login pages | ok; note: the simulator's PNG renderer garbles wide glyphs inside reverse-video rows (selected row) — text snapshots and a real terminal are correct |
+| i18n | en, zh, es, ja, de, it menus/help/approval/login pages/command feedback/dynamic labels | ok; every user-visible string is catalog-backed and the parity unit test keeps all six languages complete. Note: the simulator's PNG renderer garbles wide glyphs inside reverse-video rows (selected row) — text snapshots and a real terminal are correct |
 
 ## Fixes made during the audit
 
