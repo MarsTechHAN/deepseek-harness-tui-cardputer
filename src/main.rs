@@ -1287,6 +1287,7 @@ impl harness::Ui for OnceUi {
                 eprintln!("[compacting {messages} messages, {} tokens]", crate::compact::human_tokens(tokens));
             }
             Ev::CompactingDone { ok, note } => eprintln!("[compact {}] {note}", if ok { "ok" } else { "failed" }),
+            Ev::Info(n) => eprintln!("[info] {n}"),
             Ev::Note(n) => eprintln!("[note] {n}"),
             _ => {}
         }
@@ -1492,6 +1493,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                     self.scr.push(&format!("compaction failed: {note}"), K_DIM);
                 }
             }
+            Ev::Info(n) => self.scr.push(&n, K_DIM),
             Ev::Note(n) => self.scr.push(&n, K_ERR),
             _ => {}
         }

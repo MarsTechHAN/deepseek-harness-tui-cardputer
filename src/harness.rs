@@ -124,6 +124,8 @@ pub enum Ev {
     Artifact { title: String, body: String },
     /// Harness-level notice (limit reached, failure, compaction).
     Note(String),
+    /// Informational notice (compaction done, pruned, step budget reached).
+    Info(String),
     StepEnd(u32),
     TurnEnd { steps: u32 },
 }
@@ -371,7 +373,7 @@ pub fn run_turn(
         // a looping model is instead bounded by Esc, the goal driver, or the
         // user's own config).
         if opts.max_steps > 0 && steps >= opts.max_steps {
-            ui.on(Ev::Note(format!(
+            ui.on(Ev::Info(format!(
                 "step limit reached ({}); stopping this turn",
                 opts.max_steps
             )));
@@ -408,7 +410,7 @@ pub fn run_turn(
                 // overflow bypasses the pressure threshold and forces one
                 // compaction, then retries the same request once.
                 if !was_cancelled && is_context_overflow(&partial.finish) && opts.compact.enabled {
-                    ui.on(Ev::Note(
+                    ui.on(Ev::Info(
                         "context overflow reported by the provider; forcing compaction".into(),
                     ));
                     let mut forced = opts.compact.clone();

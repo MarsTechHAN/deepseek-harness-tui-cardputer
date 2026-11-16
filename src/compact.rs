@@ -279,7 +279,7 @@ pub fn maybe_compact(
         0
     };
     if pruned > 0 && !should_compact(set, msgs, window, cfg.max_tokens as u64) {
-        ui.on(Ev::Note(format!(
+        ui.on(Ev::Info(format!(
             "pruned {pruned} old tool results; context is under {}-token budget",
             human_tokens(threshold)
         )));
@@ -287,7 +287,7 @@ pub fn maybe_compact(
     }
     match compact(cfg, set, msgs, window, defs, ui) {
         Ok(report) => {
-            ui.on(Ev::Note(format!(
+            ui.on(Ev::Info(format!(
                 "compacted: {} -> {} tokens ({} messages, {} pruned)",
                 human_tokens(report.before_tokens),
                 human_tokens(report.after_tokens),
