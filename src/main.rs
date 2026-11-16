@@ -714,8 +714,9 @@ impl Scr {
         let hidden = a.body.len().saturating_sub(a.scroll + body_rows);
         let mut footer = if hidden > 0 {
             format!(
-                " {} | s save | {}",
+                " {} | {} | s save | {}",
                 i18n::t("artifact_back"),
+                i18n::t("artifact_scroll"),
                 i18n::tf("artifact_more", &[&hidden.to_string()])
             )
         } else {
@@ -992,14 +993,25 @@ impl Scr {
     fn jobs_panel(&mut self) {
         let mut sel = 0usize;
         let mut preview: Option<Vec<String>> = None;
+        let mut filter = 0u8; // 0 all, 1 running, 2 watchers
         loop {
-            let views = crate::bg::views();
+            let mut views = crate::bg::views();
             if views.is_empty() {
                 self.push(i18n::t("jobs_none"), K_DIM);
                 return;
             }
+            views.sort_by(|a, b| {
+                let ar = a.status.starts_with("running");
+                let br = b.status.starts_with("running");
+                br.cmp(&ar)
+            });
+            views.retain(|v| match filter {
+                1 => v.status.starts_with("running"),
+                2 => v.watcher,
+                _ => true,
+            });
             if sel >= views.len() {
-                sel = views.len() - 1;
+                sel = views.len().saturating_sub(1);
             }
             let items: Vec<MenuItem> = views
                 .iter()
@@ -1013,8 +1025,13 @@ impl Scr {
                     value: format!("  {} \u{b7} {}s", v.status, v.age),
                 })
                 .collect();
+            let filter_name = match filter {
+                1 => i18n::t("jobs_filter_running"),
+                2 => i18n::t("jobs_filter_watchers"),
+                _ => i18n::t("jobs_filter_all"),
+            };
             self.menu = Some(Menu {
-                title: i18n::t("jobs_title").into(),
+                title: format!("{} \u{b7} {}", i18n::t("jobs_title"), filter_name),
                 items,
                 sel,
                 hint: i18n::t("jobs_hint").into(),
@@ -1046,11 +1063,19 @@ impl Scr {
                 }
                 continue;
             }
+            if views.is_empty() && !matches!(k, b'f' | b'F' | 0x1b | 0x03) {
+                continue;
+            }
             match k {
                 0x03 | b'q' => {
                     self.menu = None;
                     self.draw();
                     return;
+                }
+                b'f' | b'F' => {
+                    filter = (filter + 1) % 3;
+                    sel = 0;
+                    preview = None;
                 }
                 b's' | b'S' => {
                     let id = views[sel].id.clone();
@@ -2726,7 +2751,14 @@ fn model_menu(scr: &mut Scr, config_rc: &ConfigRc) {
     let models = match crate::api::list_models(&cfg) {
         Ok(m) => m,
         Err(e) => {
-            scr.push(&format!("model list unavailable: {e}"), K_ERR);
+            scr.push(&format!("model list unavailable: {e}"), K_DIM);
+            if let Some(name) = menu_prompt(scr, "Model name:", false) {
+                if !name.is_empty() {
+                    config_rc.borrow_mut().model = name.clone();
+                    let _ = config_rc.borrow().save();
+                    scr.push(&format!("model set to {name}"), K_NORM);
+                }
+            }
             return;
         }
     };

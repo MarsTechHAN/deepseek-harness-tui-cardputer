@@ -147,7 +147,7 @@ const EN: &[(&str, &str)] = &[
     ("ext_title", "Skills & MCP"),
     ("ext_hint", "\u{2191}\u{2193} select \u{b7} Enter details \u{b7} Esc close"),
     ("menu_extensions", "Skills & MCP"),
-    ("jobs_hint", "\u{2191}\u{2193} select \u{b7} Enter output \u{b7} s save \u{b7} x kill \u{b7} Esc"),
+    ("jobs_hint", "\u{2191}\u{2193} select \u{b7} Enter output \u{b7} s save \u{b7} x kill \u{b7} Esc · f filter"),
     ("jobs_none", "No background jobs or watchers"),
     ("menu_save", "Save & exit"),
     ("menu_hint", "\u{2191}\u{2193} move \u{b7} Enter change \u{b7} Esc exit"),
@@ -196,6 +196,11 @@ const EN: &[(&str, &str)] = &[
     ("unlimited", "unlimited"),
     ("sandbox_reason_danger", "system configuration change"),
     ("sandbox_reason_unsafe", "not a known-safe operation"),
+    // EN filter/scroll keys
+    ("jobs_filter_all", "all"),
+    ("jobs_filter_running", "running"),
+    ("jobs_filter_watchers", "watchers"),
+    ("artifact_scroll", "PgUp/PgDn"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -276,7 +281,7 @@ const ZH: &[(&str, &str)] = &[
     ("ext_title", "技能与 MCP"),
     ("ext_hint", "\u{2191}\u{2193} 选择 \u{b7} Enter 详情 \u{b7} Esc 关闭"),
     ("menu_extensions", "技能与 MCP"),
-    ("jobs_hint", "\u{2191}\u{2193} 选择 \u{b7} Enter 输出 \u{b7} s 保存 \u{b7} x 结束 \u{b7} Esc"),
+    ("jobs_hint", "\u{2191}\u{2193} 选择 \u{b7} Enter 输出 \u{b7} s 保存 \u{b7} x 结束 \u{b7} Esc · f 过滤"),
     ("jobs_none", "没有后台任务或监视器"),
     ("menu_save", "保存并退出"),
     ("menu_hint", "\u{2191}\u{2193} 移动 \u{b7} Enter 修改 \u{b7} Esc 退出"),
@@ -332,6 +337,11 @@ const ZH: &[(&str, &str)] = &[
     ("unlimited", "无限"),
     ("sandbox_reason_danger", "系统配置变更"),
     ("sandbox_reason_unsafe", "非已知安全操作"),
+    // ZH filter/scroll keys
+    ("jobs_filter_all", "全部"),
+    ("jobs_filter_running", "运行中"),
+    ("jobs_filter_watchers", "监视器"),
+    ("artifact_scroll", "PgUp/PgDn"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -452,7 +462,7 @@ const ES: &[(&str, &str)] = &[
     ("ext_title", "Skills y MCP"),
     ("ext_hint", "↑↓ elegir · Enter detalles · Esc cerrar"),
     ("menu_extensions", "Skills y MCP"),
-    ("jobs_hint", "↑↓ elegir · Enter salida · s guardar · x matar · Esc"),
+    ("jobs_hint", "↑↓ elegir · Enter salida · s guardar · x matar · Esc · f filtro"),
     ("jobs_none", "Sin trabajos ni watchers"),
     ("menu_hint", "↑↓ mover · Enter cambiar · Esc salir"),
     ("menu_hint_gated", "API de terceros: search/fetch/ocr/voz no disponibles · ↑↓ Enter Esc"),
@@ -467,6 +477,11 @@ const ES: &[(&str, &str)] = &[
     ("unlimited", "ilimitado"),
     ("sandbox_reason_danger", "cambio de configuración del sistema"),
     ("sandbox_reason_unsafe", "operación no segura conocida"),
+    // ES filter/scroll keys
+    ("jobs_filter_all", "todas"),
+    ("jobs_filter_running", "en marcha"),
+    ("jobs_filter_watchers", "watchers"),
+    ("artifact_scroll", "PgUp/PgDn"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -588,7 +603,7 @@ const JA: &[(&str, &str)] = &[
     ("ext_title", "Skills と MCP"),
     ("ext_hint", "↑↓ 選択 · Enter 詳細 · Esc 閉じる"),
     ("menu_extensions", "Skills と MCP"),
-    ("jobs_hint", "↑↓ 選択 · Enter 出力 · s 保存 · x 終了 · Esc"),
+    ("jobs_hint", "↑↓ 選択 · Enter 出力 · s 保存 · x 終了 · Esc · f 絞込"),
     ("jobs_none", "バックグラウンドタスクはありません"),
     ("menu_hint", "↑↓ 移動 · Enter 変更 · Esc 終了"),
     ("menu_hint_gated", "サードパーティ API: search/fetch/ocr/音声なし · ↑↓ Enter Esc"),
@@ -603,6 +618,11 @@ const JA: &[(&str, &str)] = &[
     ("unlimited", "無制限"),
     ("sandbox_reason_danger", "システム設定の変更"),
     ("sandbox_reason_unsafe", "既知の安全操作ではありません"),
+    // JA filter/scroll keys
+    ("jobs_filter_all", "すべて"),
+    ("jobs_filter_running", "実行中"),
+    ("jobs_filter_watchers", "監視"),
+    ("artifact_scroll", "PgUp/PgDn"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -724,7 +744,7 @@ const DE: &[(&str, &str)] = &[
     ("ext_title", "Skills & MCP"),
     ("ext_hint", "↑↓ wählen · Enter Details · Esc schließen"),
     ("menu_extensions", "Skills & MCP"),
-    ("jobs_hint", "↑↓ wählen · Enter Ausgabe · s speichern · x beenden · Esc"),
+    ("jobs_hint", "↑↓ wählen · Enter Ausgabe · s speichern · x beenden · Esc · f Filter"),
     ("jobs_none", "Keine Jobs oder Watcher"),
     ("menu_hint", "↑↓ bewegen · Enter ändern · Esc verlassen"),
     ("menu_hint_gated", "Drittanbieter-API: search/fetch/ocr/Sprache fehlen · ↑↓ Enter Esc"),
@@ -739,6 +759,11 @@ const DE: &[(&str, &str)] = &[
     ("unlimited", "unbegrenzt"),
     ("sandbox_reason_danger", "Systemkonfiguration ändern"),
     ("sandbox_reason_unsafe", "keine bekannte sichere Operation"),
+    // DE filter/scroll keys
+    ("jobs_filter_all", "alle"),
+    ("jobs_filter_running", "laufend"),
+    ("jobs_filter_watchers", "Watcher"),
+    ("artifact_scroll", "PgUp/PgDn"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -860,7 +885,7 @@ const IT: &[(&str, &str)] = &[
     ("ext_title", "Skill e MCP"),
     ("ext_hint", "↑↓ scegli · Enter dettagli · Esc chiudi"),
     ("menu_extensions", "Skill e MCP"),
-    ("jobs_hint", "↑↓ scegli · Enter output · s salva · x termina · Esc"),
+    ("jobs_hint", "↑↓ scegli · Enter output · s salva · x termina · Esc · f filtro"),
     ("jobs_none", "Nessun job o watcher"),
     ("menu_hint", "↑↓ muovi · Enter modifica · Esc esci"),
     ("menu_hint_gated", "API di terzi: search/fetch/ocr/voce non disponibili · ↑↓ Enter Esc"),
@@ -875,6 +900,11 @@ const IT: &[(&str, &str)] = &[
     ("unlimited", "illimitato"),
     ("sandbox_reason_danger", "modifica della configurazione di sistema"),
     ("sandbox_reason_unsafe", "operazione non nota come sicura"),
+    // IT filter/scroll keys
+    ("jobs_filter_all", "tutti"),
+    ("jobs_filter_running", "in corso"),
+    ("jobs_filter_watchers", "watcher"),
+    ("artifact_scroll", "PgUp/PgDn"),
 ];
 
 

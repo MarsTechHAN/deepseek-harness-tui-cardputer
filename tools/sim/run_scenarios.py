@@ -544,6 +544,11 @@ def check_job_manager(screens, reqs, work):
                    "Enter opens the full task output in the panel viewer"))
     checks.append(("saved Job 1 output to" in screens.get("saved_list", ""),
                    "s saves the selected task output from the list"))
+    running = screens.get("filter_running", "")
+    watchers = screens.get("filter_watchers", "")
+    checks.append(("running" in running, "f filters to running tasks"))
+    checks.append(("Watcher 1" in watchers and "Job 1" not in watchers,
+                   "f filters to watchers only"))
     checks.append(("killed" in killed, "x kills the selected task and reports it"))
     return checks
 

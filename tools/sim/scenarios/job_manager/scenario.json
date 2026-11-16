@@ -58,6 +58,38 @@
    "wait_ms": 300
   },
   {
+   "send": "f"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "filter_running"
+  },
+  {
+   "send": "f"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "filter_watchers"
+  },
+  {
+   "send": "f"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
    "send": "x"
   },
   {

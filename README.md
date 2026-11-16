@@ -149,7 +149,7 @@ bottom-right badge (`◎ Pursuing Goal 2/10`, `⏸ Goal paused`, `✓ Goal done`
 
 **Background-task manager**: press Down on an empty prompt while jobs or
 watchers exist to open a list of tasks (`Job 1`, `Watcher 1`, …) with command,
-status and age; Enter shows the output tail, `x` kills the task, Esc closes.
+status and age; Enter shows the output tail, `f` cycles all/running/watchers, `x` kills the task, Esc closes.
 
 **Menus** are menuconfig-style with full-width rows: labels left-aligned,
 values right-aligned at the panel edge.
