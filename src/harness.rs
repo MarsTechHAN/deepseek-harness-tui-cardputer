@@ -90,6 +90,8 @@ impl RunOpts {
 pub struct TurnReport {
     #[allow(dead_code)]
     pub steps: u32,
+    /// The turn was cut by the configured step cap (model did not stop).
+    pub limit_hit: bool,
     pub cancelled: bool,
     pub failed: bool,
     pub text: String,
@@ -425,6 +427,7 @@ pub fn run_turn(
         // a looping model is instead bounded by Esc, the goal driver, or the
         // user's own config).
         if opts.max_steps > 0 && steps >= opts.max_steps {
+            report.limit_hit = true;
             ui.on(Ev::Info(format!(
                 "step limit reached ({}); stopping this turn",
                 opts.max_steps

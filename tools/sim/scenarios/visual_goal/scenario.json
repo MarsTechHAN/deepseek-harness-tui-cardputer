@@ -1,0 +1,39 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/goal keep the status line readable at all times"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 700,
+   "snap": "status1"
+  },
+  {
+   "wait_ms": 1800,
+   "snap": "status2"
+  },
+  {
+   "wait_ms": 1800,
+   "snap": "status3"
+  },
+  {
+   "wait_ms": 1800,
+   "snap": "status4"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 700,
+    "timeout_ms": 20000
+   },
+   "snap": "done"
+  }
+ ]
+}

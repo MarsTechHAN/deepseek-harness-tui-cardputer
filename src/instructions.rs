@@ -202,6 +202,7 @@ pub fn tool_defs() -> Vec<crate::tool::ToolDef> {
     ]
 }
 
+#[allow(dead_code)]
 pub fn summary() -> Vec<String> {
     let files = load();
     if files.is_empty() {

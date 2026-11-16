@@ -1,0 +1,57 @@
+{
+ "phases": [
+  {
+   "cwd": "work_a",
+   "steps": [
+    {
+     "wait_for": {
+      "text": "dst",
+      "timeout_ms": 10000
+     }
+    },
+    {
+     "send": "work on the whale"
+    },
+    {
+     "key": "Enter"
+    },
+    {
+     "wait_stable": {
+      "stable_ms": 600,
+      "timeout_ms": 20000
+     }
+    }
+   ]
+  },
+  {
+   "cwd": "work_a",
+   "steps": [
+    {
+     "wait_for": {
+      "text": "dst",
+      "timeout_ms": 10000
+     }
+    },
+    {
+     "send": "/resume"
+    },
+    {
+     "key": "Enter"
+    },
+    {
+     "wait_for": {
+      "text": "Resume session",
+      "timeout_ms": 15000
+     }
+    },
+    {
+     "send": "zebra"
+    },
+    {
+     "wait_ms": 500,
+     "snap": "content_search"
+    }
+   ]
+  }
+ ]
+}

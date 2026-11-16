@@ -1,0 +1,1 @@
+{"responses": [{"reasoning": "name", "content": "", "tool_calls": [{"id": "c1", "name": "rename", "arguments": {"name": "alpha whale task"}}], "finish_reason": "tool_calls"}, {"reasoning": "body", "content": "We discussed the zebra migration in detail.", "finish_reason": "stop"}]}

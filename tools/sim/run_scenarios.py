@@ -469,7 +469,7 @@ def check_jobs(screens, reqs, work):
     checks.append(("killed" in joined, "job_kill stopped the long job"))
     checks.append(({"job_start", "job_wait", "job_kill"} <= names,
                    "job_start / job_wait / job_kill tools were called"))
-    checks.append(("j1" in "\n".join(screens.values()) and "j2" in "\n".join(screens.values()),
+    checks.append(("Job 1" in "\n".join(screens.values()) and "Job 2" in "\n".join(screens.values()),
                    "job ids are visible in the transcript"))
     checks.append(("Jobs finished." in "\n".join(screens.values()),
                    "model concludes after the job batch"))
@@ -483,8 +483,8 @@ def check_watcher(screens, reqs, work):
     checks = []
     checks.append(("watcher-line-one" in texts or "watcher-line-two" in texts,
                    "watcher output was delivered to the agent as a user message"))
-    checks.append(("[watcher w1]" in texts, "delivered lines carry the [watcher <id>] prefix"))
-    checks.append(("watcher-line" in screens_all and "\u26a1 watcher w1" in screens_all,
+    checks.append(("[watcher 1]" in texts, "delivered lines carry the [watcher N] prefix"))
+    checks.append(("watcher-line" in screens_all and "\u26a1 Watcher 1" in screens_all,
                    "transcript shows the watcher-triggered turn"))
     checks.append(("stopped" in results, "watcher_stop stopped the watcher"))
     return checks
@@ -534,7 +534,7 @@ def check_job_manager(screens, reqs, work):
     killed = screens.get("killed", "")
     checks = []
     checks.append(("Background tasks" in listing, "Down opens the background-task manager"))
-    checks.append(("j1" in listing and "w1" in listing and "sleep 20" in listing,
+    checks.append(("Job 1" in listing and "Watcher 1" in listing and "sleep 20" in listing,
                    "jobs and watchers listed as bullet lines with commands"))
     checks.append(("x kill" in listing, "kill key is advertised"))
     checks.append(("sleep 20" in output or "running" in output,

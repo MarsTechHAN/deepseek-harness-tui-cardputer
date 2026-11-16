@@ -50,9 +50,9 @@ fn next_id(watcher: bool) -> String {
     static JOB: AtomicU32 = AtomicU32::new(0);
     static WATCH: AtomicU32 = AtomicU32::new(0);
     if watcher {
-        format!("w{}", WATCH.fetch_add(1, Ordering::SeqCst) + 1)
+        format!("Watcher {}", WATCH.fetch_add(1, Ordering::SeqCst) + 1)
     } else {
-        format!("j{}", JOB.fetch_add(1, Ordering::SeqCst) + 1)
+        format!("Job {}", JOB.fetch_add(1, Ordering::SeqCst) + 1)
     }
 }
 
@@ -86,7 +86,8 @@ fn read_stream<R: std::io::Read + Send + 'static>(
                     if inbox.len() > 100 {
                         inbox.pop_front();
                     }
-                    inbox.push_back((id.clone(), line));
+                    let n = id.rsplit(' ').next().unwrap_or(&id).to_string();
+                    inbox.push_back((n, line));
                 }
             }
         }

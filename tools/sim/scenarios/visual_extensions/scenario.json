@@ -1,0 +1,27 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/extensions"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 700,
+   "snap": "ext"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "ext_detail"
+  }
+ ]
+}

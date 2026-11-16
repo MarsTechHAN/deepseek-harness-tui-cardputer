@@ -503,13 +503,36 @@ impl Scr {
         } else {
             String::new()
         };
-        let mut right = match crate::goal::badge_cycle() {
-            Some(badge) if ring.is_empty() => badge,
-            Some(badge) => format!("{ring} {badge}"),
-            None => ring,
-        };
-        if let Some(t) = crate::todo::progress() {
-            right = format!("{right} \u{2630} {t}");
+        // Status slot: context ring + goal badge + todo progress, greedily
+        // dropping the ring first so the line never wraps on the 53-cell panel.
+        let goal_badge = crate::goal::badge_cycle();
+        let todo = crate::todo::progress().map(|t| format!("t{t}"));
+        let mut parts: Vec<String> = Vec::new();
+        if !ring.is_empty() { parts.push(ring.clone()); }
+        if let Some(b) = &goal_badge { parts.push(b.clone()); }
+        if let Some(t) = &todo { parts.push(t.clone()); }
+        let cap = self.cols / 2;
+        // Preference order: full, goal+todo, ring+goal, goal, ring+todo, ring.
+        let mut choices: Vec<Vec<String>> = Vec::new();
+        choices.push(parts.clone());
+        if goal_badge.is_some() && todo.is_some() {
+            choices.push(vec![goal_badge.clone().unwrap(), todo.clone().unwrap()]);
+        }
+        if goal_badge.is_some() {
+            choices.push(vec![ring.clone(), goal_badge.clone().unwrap()]);
+            choices.push(vec![goal_badge.clone().unwrap()]);
+        }
+        if todo.is_some() {
+            choices.push(vec![ring.clone(), todo.clone().unwrap()]);
+        }
+        choices.push(vec![ring.clone()]);
+        let mut right = choices
+            .iter()
+            .map(|c| c.join(" "))
+            .find(|c| dw(c) <= cap)
+            .unwrap_or_else(|| fit(&parts.join(" "), cap));
+        if dw(&right) > cap {
+            right = fit(&right, cap);
         }
         let ring = right;
         let ring_w = dw(&ring);
@@ -593,15 +616,21 @@ impl Scr {
             .saturating_sub(preview_rows);
         // Window the list around the selection (menuconfig behaviour).
         let start = if m.sel >= rows { m.sel + 1 - rows } else { 0 };
+        // Labels stay left-aligned; values sit on the right edge so every row
+        // fills the panel width (selection highlight spans the whole line).
         for i in 0..rows {
             let idx = start + i;
             if let Some(item) = m.items.get(idx) {
                 let selected = idx == m.sel;
                 let mark = if selected { "\u{25b8}" } else { " " };
-                let left = format!("{mark} {}", item.label);
-                let room = self.cols.saturating_sub(dw(&left) + dw(&item.value) + 1);
-                let dots = " ".repeat(room.min(20));
-                let line = format!("{left}{dots} {}", item.value);
+                let value_w = dw(&item.value);
+                let label_room = self
+                    .cols
+                    .saturating_sub(2 + if value_w > 0 { value_w + 1 } else { 0 })
+                    .max(4);
+                let label = format!("{mark} {}", fit(&item.label, label_room));
+                let gap = self.cols.saturating_sub(dw(&label) + value_w);
+                let line = format!("{label}{}{}", " ".repeat(gap), item.value);
                 if selected {
                     s.push_str("\x1b[7m");
                 } else {
@@ -911,9 +940,9 @@ impl Scr {
                         "{} {}  {}",
                         if v.watcher { "\u{2248}" } else { "\u{25cf}" },
                         v.id,
-                        v.command.chars().take(32).collect::<String>()
+                        v.command.chars().take(22).collect::<String>()
                     ),
-                    value: format!("{} \u{b7} {}s", v.status, v.age),
+                    value: format!("  {} \u{b7} {}s", v.status, v.age),
                 })
                 .collect();
             self.menu = Some(Menu {
@@ -1796,10 +1825,17 @@ impl<'a> harness::Ui for TermUi<'a> {
                                 }
                             }
                             if seq.starts_with("13;") {
-                                crate::voice::request_stop();
-                                self.force_now();
-                                poll_mode(true);
-                                return Action::Cancel;
+                                let line: String = self.scr.input.iter().collect();
+                                let line = line.trim().to_string();
+                                if !line.is_empty() {
+                                    self.scr.input.clear();
+                                    self.scr.cursor = 0;
+                                    self.scr.push(
+                                        &format!("\u{21b3} steer: {line} (next step)"),
+                                        K_DIM,
+                                    );
+                                    self.steer.push(line);
+                                }
                             }
                             poll_mode(true); // read_key_timeout left the tty blocking
                         }
@@ -2335,7 +2371,7 @@ fn resume_menu(scr: &mut Scr) -> Option<std::path::PathBuf> {
                     "{:>4}  {}{}",
                     rel_time(now, e.3),
                     e.1,
-                    if content_hits.contains(&e.1) { "  (content match)" } else { "" }
+                    if content_hits.contains(&e.1) { " [body]" } else { "" }
                 ),
                 value: if e.2 == here {
                     "this folder".to_string()
@@ -2577,9 +2613,13 @@ fn extensions_menu(scr: &mut Scr) {
     let servers = crate::mcp::server_summary();
     let mut items: Vec<MenuItem> = Vec::new();
     let mut details: Vec<Vec<String>> = Vec::new();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let shorten = |p: String| {
+        if !home.is_empty() && p.starts_with(&home) { format!("~{}", &p[home.len()..]) } else { p }
+    };
     for sk in &skills {
-        items.push(MenuItem { label: format!("skill  {}", sk.name), value: sk.description.chars().take(20).collect() });
-        details.push(vec![format!("skill: {}", sk.name), format!("path: {}", sk.dir.display()), String::new(),
+        items.push(MenuItem { label: format!("skill  {}", sk.name), value: String::new() });
+        details.push(vec![format!("skill: {}", sk.name), format!("path: {}", shorten(sk.dir.display().to_string())), String::new(),
                           sk.description.clone()]);
     }
     for (server, tools) in &servers {
@@ -3052,7 +3092,7 @@ user you can search the web or speak.\n",
             for (id, line) in crate::bg::poll_watchers() {
                 s.auto_queue.push((
                     format!("[watcher {id}] {line}"),
-                    format!("\u{26a1} watcher {id}: {}", first_line_short(&line, 36)),
+                    format!("\u{26a1} Watcher {id}: {}", first_line_short(&line, 36)),
                 ));
             }
             let got = {
@@ -3335,7 +3375,11 @@ user you can search the web or speak.\n",
         // ---- goal round driver (DSH `dsh-goal-round-driver`) ----
         // Esc stops the autonomous run: an interrupted round disarms the goal
         // instead of retrying it; `/goal resume` re-arms.
-        if last_report.as_ref().map(|r| r.cancelled).unwrap_or(false) {
+        let stopped_early = last_report
+            .as_ref()
+            .map(|r| r.cancelled || r.failed || r.limit_hit)
+            .unwrap_or(false);
+        if stopped_early {
             if goal::current().map(|g| g.is_active()).unwrap_or(false) {
                 goal::set_armed(false);
                 scr.push(

@@ -483,7 +483,7 @@ pub fn badge_cycle() -> Option<String> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     if g.is_active() && secs % 8 >= 4 {
-        let obj: String = g.objective.chars().take(26).collect();
+        let obj: String = g.objective.chars().take(14).collect();
         Some(format!("\u{25ce} {obj}"))
     } else {
         badge()

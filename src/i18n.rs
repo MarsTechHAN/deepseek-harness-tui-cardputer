@@ -62,7 +62,7 @@ const EN: &[(&str, &str)] = &[
     ("tagline", "dst | a DeepSeek harness on a Cardputer Zero"),
     ("hints", "{} | hold Tab to talk | /help | /quit"),
     ("unconfigured", "No API configured - type /login to set up"),
-    ("busy", "Enter queues \u{b7} Shift+Enter interrupts \u{b7} Esc aborts"),
+    ("busy", "Enter queues \u{b7} Shift+Enter steers \u{b7} Esc interrupts"),
     ("queued", "{} queued"),
     ("force_sent", "\u{26a1} interrupted, sending now: {}"),
     ("voice_queued", "\u{1f3a4} recording queued (starts after this turn)"),

@@ -71,11 +71,6 @@ pub const COMMANDS: &[Command] = &[
         input_hint: None,
     },
     Command {
-        name: "memory",
-        description: "show project and global memory files",
-        input_hint: None,
-    },
-    Command {
         name: "extensions",
         description: "inspect skills and MCP servers (menu)",
         input_hint: None,
@@ -348,14 +343,6 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             resume_menu: false, model_menu: false, compact: false,
             rewind_menu: true, extensions_menu: false,
         },
-        "memory" => {
-            let mut lines = vec![(crate::i18n::t("memory_title").to_string(), KIND_DIM)];
-            for l in crate::instructions::summary() {
-                lines.push((l, KIND_NORMAL));
-            }
-            lines.push(("edit: AGENTS.md in the workspace or ~/.dst/AGENTS.md".into(), KIND_DIM));
-            Outcome::many(lines)
-        }
         "extensions" => Outcome {
             lines: Vec::new(), quit: false, clear: false, login: false,
             config_wizard: false, resume_menu: false, model_menu: false,
