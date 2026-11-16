@@ -58,7 +58,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "goal",
         description: "show or manage the session goal (long-running objective)",
-        input_hint: Some("[<objective>|edit <objective>|pause|resume|clear]"),
+        input_hint: Some("[show|<objective>|edit <objective>|pause|resume|clear]"),
     },
     Command {
         name: "resume",
@@ -337,7 +337,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
         },
         "goal" => {
             let lower = arg.to_ascii_lowercase();
-            let result = if arg.is_empty() {
+            let result = if arg.is_empty() || lower == "show" || lower == "status" {
                 Ok(crate::goal::status_lines())
             } else if lower == "clear" {
                 match crate::goal::clear() {

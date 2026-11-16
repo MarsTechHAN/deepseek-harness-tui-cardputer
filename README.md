@@ -98,8 +98,8 @@ repository.
   `user/message` after the batch's tool results, exactly as DSH orders it.
 
 **Internationalisation**
-- UI language via `language: en|zh` in the config (default `en`), switchable from
-  `/config`. Only interface text is translated; tool descriptions and the system
+- UI language via `language: en|zh|es|ja|de|it` in the config (default `en`),
+  switchable from `/config`; missing translations fall back to English. Only interface text is translated; tool descriptions and the system
   prompt stay English so model behaviour is unchanged.
 
 **Command palette**
@@ -117,6 +117,14 @@ repository.
   official API. On a third-party endpoint those tools are removed from the registry
   and the model is told they are unavailable; the wizard warns first. `dst --tools`
   prints the effective tool set for diagnosis.
+
+**No title/header row**: every row belongs to the transcript, status line and
+prompt; the session title appears in `/resume`, and goal state is shown as a
+bottom-right badge (`◎ Pursuing Goal 2/10`, `⏸ Goal paused`, `✓ Goal done`).
+
+**Background-task manager**: press Down on an empty prompt while jobs or
+watchers exist to open a list of tasks (command + status + age); Enter shows the
+output tail, `x` kills the task, Esc closes.
 
 **Permissions / sandbox**
 - Every tool call passes a permission gate. `auto` (default) allows known-safe

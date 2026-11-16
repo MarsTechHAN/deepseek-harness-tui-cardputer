@@ -1,0 +1,40 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   },
+   "snap": "splash"
+  },
+  {
+   "send": "/config"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 600,
+   "snap": "menu"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "send": "hola"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 700,
+    "timeout_ms": 15000
+   },
+   "snap": "reply"
+  }
+ ]
+}

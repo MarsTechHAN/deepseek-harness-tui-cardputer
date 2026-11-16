@@ -192,7 +192,7 @@ def validate_run(snap_dir, req_log):
         else:
             problems.append(f"{name}: expected {label or needle!r} on screen; got:\n{text}")
 
-    need("splash", "dst", "the 'dst' title")
+    need("splash", "hold Tab", "the splash hint line")
     need("thinking", "thinking", "the live thinking indicator")
     need("reply", "mock", "streamed content")
     need("tool_call", "list_dir", "the list_dir tool line")

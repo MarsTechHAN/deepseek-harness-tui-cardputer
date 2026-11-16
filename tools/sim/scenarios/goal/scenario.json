@@ -1,6 +1,31 @@
-{"steps":[
- {"wait_for":{"text":"dst","timeout_ms":10000}},
- {"send":"/goal make the whale blue"},{"key":"Enter"},
- {"wait_stable":{"stable_ms":900,"timeout_ms":20000},"snap":"round"},
- {"wait_ms":1200,"snap":"after"}
-]}
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/goal make the whale blue"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "pursuing"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 20000
+   },
+   "snap": "round"
+  },
+  {
+   "wait_ms": 1200,
+   "snap": "after"
+  }
+ ]
+}

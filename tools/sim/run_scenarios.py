@@ -176,7 +176,7 @@ def check_clear(screens, reqs, work):
 def check_goal(screens, reqs, work):
     screens_all = "\n".join(screens.values())
     checks = []
-    checks.append(("\u25ce goal 1/1" in screens_all, "goal banner shows round counter"))
+    checks.append(("Pursuing Goal 1/1" in screens_all, "bottom-right badge shows the round budget"))
     checks.append(("\u27f3 goal round 1" in screens_all, "automatic goal round prompt shown"))
     checks.append(("Round one: goal driver worked." in screens_all, "goal round answer rendered"))
     checks.append((len(reqs) == 1, "round cap stops automatic continuation"))
@@ -327,7 +327,7 @@ def check_goal_complete(screens, reqs, work):
                    "update_goal asked for complete"))
     checks.append(("Goal marked complete; closing message." in done,
                    "closing message rendered after completion"))
-    checks.append(("\u25ce goal" not in done, "goal banner hidden after completion"))
+    checks.append(("Pursuing Goal" not in done and "Goal done" in done, "goal status shows done"))
     checks.append(('"phase": "complete"' in goal or '"phase":"complete"' in goal,
                    "goal persisted as complete"))
     checks.append((len(reqs) == 2, "no further goal round after completion"))
@@ -344,7 +344,7 @@ def check_goal_manage(screens, reqs, work):
     checks.append(("Status: paused" in paused,
                    "queued /goal pause stops the loop after round 1"))
     checks.append(("Rounds: 1/2" in paused, "only one round was spent"))
-    checks.append(("\u25ce goal 1/2" in paused, "goal banner shows the round counter"))
+    checks.append(("Goal paused 1/2" in paused, "bottom-right badge shows the paused budget"))
     checks.append(("Goal round two done." in screens.get("round2", ""),
                    "/goal resume re-arms and round 2 runs"))
     checks.append(("goal reached its round limit" in screens.get("resumed", ""),
@@ -354,7 +354,7 @@ def check_goal_manage(screens, reqs, work):
                    "/goal edit replaces the objective"))
     checks.append(("Goal cleared." in screens.get("cleared", ""),
                    "/goal clear removes the goal"))
-    checks.append((not goal and "\u25ce goal" not in screens.get("cleared", ""),
+    checks.append((not goal and "Pursuing Goal" not in screens.get("cleared", ""),
                    "goal file and banner gone after clear"))
     return checks
 
@@ -378,8 +378,8 @@ def check_session_menu(screens, reqs, work):
     checks = []
     checks.append(('Session renamed to "Whale splash task"' in screens.get("t1", ""),
                    "rename tool renamed the session during the turn"))
-    checks.append(("Whale splash task" in screens.get("t1", ""),
-                   "session title shown in the header"))
+    checks.append(("Whale splash task" in screens.get("resume", ""),
+                   "session title shown in the resume picker"))
     checks.append(("Resume session" in resume and "Whale splash task" in resume,
                    "/resume opens a menu listing session titles"))
     checks.append(("expand" in resume, "menu hints the expand gesture"))
@@ -516,6 +516,33 @@ def check_resume_search(screens, reqs, work):
     return checks
 
 
+def check_i18n_es(screens, reqs, work):
+    splash = screens.get("splash", "")
+    menu = screens.get("menu", "")
+    reply = screens.get("reply", "")
+    checks = []
+    checks.append(("mantén Tab" in splash, "Spanish splash/hint rendered"))
+    checks.append(("Configuración" in menu, "config menu is translated"))
+    checks.append(("Idioma" in menu and "Modelo" in menu, "menu labels translated"))
+    checks.append(("Hola desde el mock." in reply, "conversation still works in Spanish"))
+    return checks
+
+
+def check_job_manager(screens, reqs, work):
+    listing = screens.get("list", "")
+    output = screens.get("output", "")
+    killed = screens.get("killed", "")
+    checks = []
+    checks.append(("Background tasks" in listing, "Down opens the background-task manager"))
+    checks.append(("j1" in listing and "w1" in listing and "sleep 20" in listing,
+                   "jobs and watchers listed as bullet lines with commands"))
+    checks.append(("x kill" in listing, "kill key is advertised"))
+    checks.append(("sleep 20" in output or "running" in output,
+                   "Enter shows the selected task's output/status"))
+    checks.append(("killed" in killed, "x kills the selected task and reports it"))
+    return checks
+
+
 def check_config_menu(screens, reqs, work):
     menu = screens.get("menu", "")
     bottom = screens.get("bottom", "")
@@ -584,6 +611,8 @@ def check_goal_blocked(screens, reqs, work):
 
 CHECKS = {
     "clear": check_clear,
+    "i18n_es": check_i18n_es,
+    "job_manager": check_job_manager,
     "sandbox_auto": check_sandbox_auto,
     "sandbox_strict": check_sandbox_strict,
     "sandbox_full": check_sandbox_full,

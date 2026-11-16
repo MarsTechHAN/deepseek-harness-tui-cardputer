@@ -46,8 +46,6 @@ pub struct Scr {
     input: Vec<char>,
     cursor: usize,
     note: Option<String>,
-    /// Persistent right-hand header text (wifi / battery).
-    hdr: String,
     /// Messages typed while a turn was running, oldest first.
     queue: Vec<String>,
     /// Ctrl-C/Ctrl-D asked the app to exit.
@@ -88,8 +86,6 @@ pub struct Scr {
     artifact: Option<Artifact>,
     /// The opening splash has been scrolled away already.
     splash_done: bool,
-    /// True when tmux already draws a status line: skip our own header.
-    hide_header: bool,
     /// Live line above the prompt: (1 = thinking, 2 = streaming tail, text).
     live: Option<(u8, String)>,
     /// Strict-mode permission pop-up.
@@ -161,7 +157,6 @@ impl Scr {
             input: Vec::new(),
             cursor: 0,
             note: None,
-            hdr: String::new(),
             quit: false,
             busy: false,
             voice_pending: false,
@@ -181,7 +176,6 @@ impl Scr {
             utf8_buf: Vec::new(),
             artifact: None,
             splash_done: false,
-            hide_header: std::env::var("TMUX").is_ok(),
             queue: Vec::new(),
             live: None,
             approval: None,
@@ -391,35 +385,10 @@ impl Scr {
         };
         let body_rows = self
             .rows
-            .saturating_sub(if self.hide_header { 2 } else { 3 })
+            .saturating_sub(2)
             .max(1)
             .saturating_sub(pal_rows)
             .saturating_sub(think_rows);
-
-        // ---- header: title left, device state right ----
-        // Under tmux the status bar already shows wifi/battery, so drawing it
-        // again both duplicated it and cost the transcript a row.
-        if !self.hide_header {
-            let right = fit(
-                &self.note.clone().unwrap_or_else(|| self.hdr.clone()),
-                self.cols / 2,
-            );
-            let right_w = dw(&right);
-            let left_w = self.cols.saturating_sub(right_w);
-            let title = crate::session::title();
-            let head = if title.is_empty() {
-                " dst".to_string()
-            } else {
-                format!(" dst \u{00b7} {title}")
-            };
-            let mut status = fit(&head, left_w);
-            let pad = left_w.saturating_sub(dw(&status));
-            status.push_str(&" ".repeat(pad));
-            status.push_str(&right);
-            s.push_str("\x1b[90m");
-            s.push_str(&status);
-            s.push_str("\x1b[0m\x1b[K\r\n");
-        }
 
         // ---- transcript window ----
         let total = self.lines.len();
@@ -497,13 +466,6 @@ impl Scr {
         if live_line.is_empty() && !self.queue.is_empty() {
             live_line = i18n::tf("queued", &[&self.queue.len().to_string()]);
         }
-        // An active goal is ambient state: show it when nothing more urgent is
-        // happening, so autonomous rounds are not invisible.
-        if live_line.is_empty() {
-            if let Some(b) = crate::goal::banner() {
-                live_line = b;
-            }
-        }
         // Scrolled back: say so, and how to get back.
         if self.busy && live_line.is_empty() {
             live_line = i18n::t("busy").to_string();
@@ -534,6 +496,11 @@ impl Scr {
             format!("{} {}", crate::usage::ring(pct), label)
         } else {
             String::new()
+        };
+        let ring = match crate::goal::badge() {
+            Some(badge) if ring.is_empty() => badge,
+            Some(badge) => format!("{ring} {badge}"),
+            None => ring,
         };
         let ring_w = dw(&ring);
         s.push_str("\x1b[1;33m> \x1b[0m");
@@ -913,6 +880,95 @@ impl Scr {
         self.draw();
     }
 
+    /// Interactive manager for background jobs and watchers: Up/Down select,
+    /// Enter shows the output tail, `x` kills the task, Esc closes.
+    fn jobs_panel(&mut self) {
+        let mut sel = 0usize;
+        let mut preview: Option<Vec<String>> = None;
+        loop {
+            let views = crate::bg::views();
+            if views.is_empty() {
+                self.push(i18n::t("jobs_none"), K_DIM);
+                return;
+            }
+            if sel >= views.len() {
+                sel = views.len() - 1;
+            }
+            let items: Vec<MenuItem> = views
+                .iter()
+                .map(|v| MenuItem {
+                    label: format!(
+                        "{} {}  {}",
+                        if v.watcher { "\u{2248}" } else { "\u{25cf}" },
+                        v.id,
+                        v.command.chars().take(32).collect::<String>()
+                    ),
+                    value: format!("{} \u{b7} {}s", v.status, v.age),
+                })
+                .collect();
+            self.menu = Some(Menu {
+                title: i18n::t("jobs_title").into(),
+                items,
+                sel,
+                hint: i18n::t("jobs_hint").into(),
+                preview: preview.clone(),
+            });
+            self.draw();
+            let k = match self.read_key_timeout() {
+                Some(k) => k,
+                None => continue,
+            };
+            if k == 0x1b {
+                match self.read_key_timeout() {
+                    Some(b'[') => match self.read_key_timeout() {
+                        Some(b'A') => {
+                            sel = sel.saturating_sub(1);
+                            preview = None;
+                        }
+                        Some(b'B') => {
+                            sel = (sel + 1).min(views.len() - 1);
+                            preview = None;
+                        }
+                        _ => {}
+                    },
+                    _ => {
+                        self.menu = None;
+                        self.draw();
+                        return;
+                    }
+                }
+                continue;
+            }
+            match k {
+                0x03 | b'q' => {
+                    self.menu = None;
+                    self.draw();
+                    return;
+                }
+                b'x' | b'X' => {
+                    let id = views[sel].id.clone();
+                    let note = match crate::bg::stop(&id) {
+                        Ok(status) => format!("{id}: {status}"),
+                        Err(e) => format!("{id}: {e}"),
+                    };
+                    self.menu = None;
+                    self.push(&note, K_DIM);
+                    preview = None;
+                }
+                0x0d | 0x0a => {
+                    let id = views[sel].id.clone();
+                    let text = crate::bg::output_of(&id, 6);
+                    let mut lines: Vec<String> = Vec::new();
+                    for l in text.lines() {
+                        lines.push(l.to_string());
+                    }
+                    preview = Some(lines);
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// returns Some(line) when the user submits
     fn edit(&mut self) -> Option<String> {
         loop {
@@ -1061,6 +1117,10 @@ impl Scr {
                                 let n = self.palette_items().len();
                                 if n > 0 {
                                     self.palette_sel = (self.palette_sel + 1).min(n - 1);
+                                } else if self.input.is_empty() && crate::bg::has_any() {
+                                    // Down on an empty prompt opens the
+                                    // background-task manager.
+                                    self.jobs_panel();
                                 } else {
                                     self.scroll = self.scroll.saturating_sub(5);
                                 }
@@ -1802,43 +1862,6 @@ fn art_frame_lines(frame: usize, cols: usize) -> Vec<String> {
     let f = &art::FRAMES[frame % art::FRAMES.len()];
     let pad = " ".repeat(cols.saturating_sub(art::ART_WIDTH) / 2);
     f.iter().map(|l| format!("{pad}{l}")).collect()
-}
-
-/// Wifi + battery for the header. Read directly so a tmux-formatted status
-/// script cannot leak markup like ``#[fg=green]`` into the line.
-fn device_status() -> String {
-    let mut parts: Vec<String> = Vec::new();
-    if let Ok(o) = std::process::Command::new("sh")
-        .arg("-c")
-        .arg("ip -4 -o addr show scope global 2>/dev/null | awk '{print $2, $4}' | head -1")
-        .output()
-    {
-        let t = String::from_utf8_lossy(&o.stdout);
-        let t = t.trim();
-        if !t.is_empty() {
-            parts.push(t.replace("/24", "").replace("/16", ""));
-        }
-    }
-    if let Ok(rd) = std::fs::read_dir("/sys/class/power_supply") {
-        for e in rd.flatten() {
-            let d = e.path();
-            if let Ok(v) = std::fs::read_to_string(d.join("voltage_now")) {
-                if let Ok(uv) = v.trim().parse::<f64>() {
-                    let cur = std::fs::read_to_string(d.join("current_now"))
-                        .ok()
-                        .and_then(|c| c.trim().parse::<f64>().ok())
-                        .unwrap_or(0.0);
-                    let mut s = format!("{:.2}V", uv / 1e6);
-                    if cur != 0.0 {
-                        s.push_str(&format!(" {:+.2}A", cur / 1e6));
-                    }
-                    parts.push(s);
-                    break;
-                }
-            }
-        }
-    }
-    parts.join(" | ")
 }
 
 /// Only one `dst` may own a terminal. Two instances both reading /dev/tty is
@@ -2658,9 +2681,13 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             }
             7 => {
                 let cur = config_rc.borrow().language.clone();
-                let next = if cur.starts_with("zh") { "en" } else { "zh" };
+                let idx = i18n::CODES
+                    .iter()
+                    .position(|c| cur.to_ascii_lowercase().starts_with(c))
+                    .unwrap_or(0);
+                let next = i18n::CODES[(idx + 1) % i18n::CODES.len()];
                 config_rc.borrow_mut().language = next.to_string();
-                i18n::set(&config_rc.borrow().language);
+                i18n::set(next);
                 let _ = config_rc.borrow().save();
             }
             8 => {
@@ -2822,7 +2849,6 @@ user you can search the web or speak.\n",
     raw_mode(true);
 
     scr.seed_splash(&cfg.model);
-    scr.hdr = device_status();
     onboarding(&mut scr, &config_rc, &login_rx);
     cfg = api_cfg(&config_rc.borrow());
     *shared_cfg.borrow_mut() = cfg.clone();

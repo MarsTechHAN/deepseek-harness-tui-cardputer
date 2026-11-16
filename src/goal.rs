@@ -457,6 +457,23 @@ pub fn status_lines() -> Vec<String> {
     }
 }
 
+/// Bottom-right status badge: pursuing / paused / blocked / done, with the
+/// round budget. This is the persistent goal-status place in the UI.
+pub fn badge() -> Option<String> {
+    let g = current()?;
+    let budget = if g.max_rounds == 0 {
+        format!("{}/\u{221e}", g.rounds_started)
+    } else {
+        format!("{}/{}", g.rounds_started, g.max_rounds)
+    };
+    Some(match g.phase {
+        Phase::Active if g.armed => format!("\u{25ce} Pursuing Goal {budget}"),
+        Phase::Active | Phase::Paused => format!("\u{23f8} Goal paused {budget}"),
+        Phase::Blocked => "\u{2298} Goal blocked".to_string(),
+        Phase::Complete => "\u{2713} Goal done".to_string(),
+    })
+}
+
 /// One-line banner for the status area while a goal is active.
 pub fn banner() -> Option<String> {
     let g = current()?;

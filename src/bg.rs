@@ -167,6 +167,69 @@ fn status_value(job: &Job, include_output: bool) -> J {
     J::o(pairs)
 }
 
+/// Read-only snapshot of one background task for the TUI manager.
+pub struct JobView {
+    pub id: String,
+    pub watcher: bool,
+    pub status: String,
+    pub command: String,
+    pub age: u64,
+}
+
+/// All jobs/watchers, refreshed.
+pub fn views() -> Vec<JobView> {
+    let mut guard = jobs();
+    guard
+        .iter_mut()
+        .map(|j| {
+            refresh(j);
+            JobView {
+                id: j.id.clone(),
+                watcher: j.watcher,
+                status: j.status.clone(),
+                command: j.command.clone(),
+                age: now().saturating_sub(j.started),
+            }
+        })
+        .collect()
+}
+
+pub fn has_any() -> bool {
+    !views().is_empty()
+}
+
+/// `id: status` plus the recent output tail, for the manager panel.
+pub fn output_of(id: &str, max: usize) -> String {
+    let mut guard = jobs();
+    if let Some(job) = guard.iter_mut().find(|j| j.id == id) {
+        refresh(job);
+        let mut out = format!("{}: {}", job.id, job.status);
+        let tail = tail_lines(job, max);
+        if !tail.is_empty() {
+            out.push('\n');
+            out.push_str(&tail.join("\n"));
+        }
+        out
+    } else {
+        format!("no job '{id}'")
+    }
+}
+
+/// Stop a job or watcher and return its resulting status.
+pub fn stop(id: &str) -> Result<String, String> {
+    let mut guard = jobs();
+    let job = guard
+        .iter_mut()
+        .find(|j| j.id == id)
+        .ok_or_else(|| format!("no job '{id}'"))?;
+    if let Some(mut child) = job.child.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    job.status = "killed".to_string();
+    Ok(job.status.clone())
+}
+
 // ---------------------------------------------------------------------------
 // watcher inbox for the TUI
 // ---------------------------------------------------------------------------

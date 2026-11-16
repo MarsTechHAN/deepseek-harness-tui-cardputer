@@ -424,11 +424,13 @@ request log:
 | `jobs` | background jobs | job_start x2, job_wait returns output, job_kill stops the long job, ids visible |
 | `watcher` | watchers | watcher lines arrive as `[watcher w1]` user messages, trigger an autonomous turn, watcher_stop stops it |
 | `resume_search` | resume UX | sessions from two directories, current folder first, relative age labels, type-to-filter by name only |
+| `i18n_es` | localisation | Spanish splash/hints, translated config menu and command descriptions |
+| `job_manager` | manual task manager | Down opens bullets for jobs/watchers, Enter shows output, x kills |
 | `onboarding` | first-run flow | an unconfigured start shows a menu (official vs custom endpoint), arrows move, no "type 1 or 2" prompt, Esc cancels |
 
 ```bash
 cd tools/sim
-python3 run_scenarios.py               # all 26 scenarios (~3 min)
+python3 run_scenarios.py               # all 29 scenarios (~3 min)
 python3 run_scenarios.py goal compact  # just some
 python3 check_memory.py                # 20-turn session, samples dst RSS
 python3 run_all.py                     # demo + scenarios + memory in one go

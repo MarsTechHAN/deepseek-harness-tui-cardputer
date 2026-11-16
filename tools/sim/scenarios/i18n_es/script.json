@@ -1,0 +1,9 @@
+{
+ "responses": [
+  {
+   "reasoning": "hola",
+   "content": "Hola desde el mock.",
+   "finish_reason": "stop"
+  }
+ ]
+}
