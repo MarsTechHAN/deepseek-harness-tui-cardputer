@@ -808,6 +808,21 @@ def check_key_overrides_token(screens, reqs, work):
     return checks
 
 
+def check_login_wechat_retry(screens, reqs, work):
+    retry = screens.get("retry", "")
+    done = screens.get("done", "")
+    cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+    log = read_file(os.path.join(work, "mock-login.jsonl"))
+    checks = []
+    checks.append(("QR expired — refreshing" in retry,
+                   "expired QR shows an automatic refresh status"))
+    checks.append((log.count("/connect/qrconnect") >= 2,
+                   "a second QR was requested automatically"))
+    checks.append(("Logged in" in done, "retry flow completes"))
+    checks.append(("dsh_token:" in cfg, "token persisted"))
+    return checks
+
+
 def check_login_wechat_status(screens, reqs, work):
     scanned = screens.get("scanned", "")
     done = screens.get("done", "")
@@ -948,6 +963,7 @@ CHECKS = {
     "login_type_token": check_login_type_token,
     "login_wechat": check_login_wechat,
     "login_wechat_status": check_login_wechat_status,
+    "login_wechat_retry": check_login_wechat_retry,
     "key_overrides_token": check_key_overrides_token,
     "extensions_toggle": check_extensions_toggle,
     "queue_edit": check_queue_edit,

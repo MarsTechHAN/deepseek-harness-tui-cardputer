@@ -23,6 +23,7 @@ DSH_TOKEN = "dsh" + "x" * 61
 STATE = {"state": "s" * 43}
 LOG = []
 SCAN_COUNT = [0]
+EXPIRED_ONCE = [0]
 
 
 class H(BaseHTTPRequestHandler):
@@ -68,7 +69,10 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(data)
         elif path == "/connect/l/qrconnect":
             errcode = 405
-            if os.environ.get("MOCK_LOGIN_SCANNED") and SCAN_COUNT[0] == 0:
+            if os.environ.get("MOCK_LOGIN_EXPIRED") and EXPIRED_ONCE[0] == 0:
+                EXPIRED_ONCE[0] = 1
+                errcode = 402
+            elif os.environ.get("MOCK_LOGIN_SCANNED") and SCAN_COUNT[0] == 0:
                 SCAN_COUNT[0] = 1
                 errcode = 404
             self.send_response(200)

@@ -2538,79 +2538,116 @@ fn login_status_text(message: &str, phase: &str) -> Option<String> {
 fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, String> {
     let session = login::start(port, lang)?;
     let port = session.port;
-    login::start_wechat(&session.shared, port);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
-    let mut shown = false;
-    let mut blit_ok = false;
-    let mut matrix: Option<Vec<String>> = None;
-    let mut last_status: Option<String> = None;
-    while std::time::Instant::now() < deadline {
-        let (qr_version, qr, err, token, message, phase) = {
-            let st = session.shared.lock().unwrap();
-            (st.qr_version, st.qr.clone(), st.error.clone(), st.token.clone(), st.message.clone(), st.phase.clone())
-        };
-        if let Some(e) = err {
-            close_qr(scr);
-            return Err(e);
-        }
-        if let Some(t) = token {
-            close_qr(scr);
-            return Ok(t);
-        }
-        if !shown && qr_version > 0 && !qr.is_empty() {
-            let m = crate::dsh_login::qr_matrix_from_jpeg(&qr);
-            matrix = m.clone().ok();
-            let (r, c) = term_size();
-            scr.rows = r;
-            scr.cols = c;
-            // QR on the right (164px), a compact numbered guide on the left.
-            const QR_PX: usize = 164;
-            let text_cols = c.saturating_sub(QR_PX / 6 + 1).max(10);
-            let guide = wechat_guide(text_cols, &session.url, login_status_text(&message, "waiting"));
-            scr.qr = Some(guide);
-            scr.draw();
-            blit_ok = matrix
-                .as_ref()
-                .map(|m| login::draw_matrix_fb(m, Some((156, 0, 164, 170))).is_ok())
-                .unwrap_or(false);
-            scr.qr_blit = blit_ok;
-            if !blit_ok {
-                let lines = wechat_guide(c, &session.url, login_status_text(&message, "waiting"));
-                scr.qr = Some(lines);
-                scr.draw();
-            }
-            shown = true;
-            last_status = login_status_text(&message, "waiting");
-        } else if shown {
-            // Show progress on the panel while the phone is scanned/confirmed.
-            let status = login_status_text(&message, &phase);
-            if status != last_status {
-                let lines = if blit_ok {
-                    wechat_guide(24, &session.url, status.clone())
-                } else {
-                    wechat_guide(scr.cols, &session.url, status.clone())
-                };
-                scr.qr_blit = false;
-                scr.qr = Some(lines);
-                scr.draw();
-                if blit_ok {
-                    if let Some(m) = matrix.as_ref() {
-                        let _ = login::draw_matrix_fb(m, Some((156, 0, 164, 170)));
+    let mut attempts = 0u8;
+    'retry: loop {
+        login::start_wechat(&session.shared, port);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+        let mut shown = false;
+        let mut blit_ok = false;
+        let mut matrix: Option<Vec<String>> = None;
+        let mut last_status: Option<String> = None;
+        while std::time::Instant::now() < deadline {
+            let (qr_version, qr, err, token, message, phase) = {
+                let st = session.shared.lock().unwrap();
+                (
+                    st.qr_version,
+                    st.qr.clone(),
+                    st.error.clone(),
+                    st.token.clone(),
+                    st.message.clone(),
+                    st.phase.clone(),
+                )
+            };
+            if let Some(e) = err {
+                let lower = e.to_lowercase();
+                if attempts == 0 && (lower.contains("expired") || lower.contains("timed out")) {
+                    attempts += 1;
+                    // QR expired: refresh once automatically instead of making
+                    // the user re-run /login.
+                    let status = Some(i18n::t("login_status_refresh").to_string());
+                    let lines = if blit_ok {
+                        wechat_guide(24, &session.url, status)
+                    } else {
+                        wechat_guide(scr.cols, &session.url, status)
+                    };
+                    scr.qr_blit = false;
+                    scr.qr = Some(lines);
+                    scr.draw();
+                    if blit_ok {
+                        if let Some(m) = matrix.as_ref() {
+                            let _ = login::draw_matrix_fb(m, Some((156, 0, 164, 170)));
+                        }
+                        scr.qr_blit = true;
                     }
-                    scr.qr_blit = true;
+                    std::thread::sleep(std::time::Duration::from_millis(600));
+                    continue 'retry;
                 }
-                last_status = status;
-            }
-        }
-        if let Some(k) = scr.read_key_timeout() {
-            if k == 0x1b || k == 0x03 {
                 close_qr(scr);
-                return Err(i18n::t("login_cancel").into());
+                return Err(e);
+            }
+            if let Some(t) = token {
+                close_qr(scr);
+                return Ok(t);
+            }
+            if !shown && qr_version > 0 && !qr.is_empty() {
+                let m = crate::dsh_login::qr_matrix_from_jpeg(&qr);
+                matrix = m.ok();
+                let (r, c) = term_size();
+                scr.rows = r;
+                scr.cols = c;
+                // QR on the right (164px), a compact numbered guide on the left.
+                const QR_PX: usize = 164;
+                let text_cols = c.saturating_sub(QR_PX / 6 + 1).max(10);
+                let guide = wechat_guide(text_cols, &session.url, login_status_text(&message, "waiting"));
+                scr.qr = Some(guide);
+                scr.draw();
+                blit_ok = matrix
+                    .as_ref()
+                    .map(|m| login::draw_matrix_fb(m, Some((156, 0, 164, 170))).is_ok())
+                    .unwrap_or(false);
+                scr.qr_blit = blit_ok;
+                if !blit_ok {
+                    let lines = wechat_guide(c, &session.url, login_status_text(&message, "waiting"));
+                    scr.qr = Some(lines);
+                    scr.draw();
+                }
+                shown = true;
+                last_status = login_status_text(&message, "waiting");
+            } else if shown {
+                // Show progress on the panel while the phone is scanned/confirmed.
+                let status = login_status_text(&message, &phase);
+                if status != last_status {
+                    let lines = if blit_ok {
+                        wechat_guide(24, &session.url, status.clone())
+                    } else {
+                        wechat_guide(scr.cols, &session.url, status.clone())
+                    };
+                    scr.qr_blit = false;
+                    scr.qr = Some(lines);
+                    scr.draw();
+                    if blit_ok {
+                        if let Some(m) = matrix.as_ref() {
+                            let _ = login::draw_matrix_fb(m, Some((156, 0, 164, 170)));
+                        }
+                        scr.qr_blit = true;
+                    }
+                    last_status = status;
+                }
+            }
+            if let Some(k) = scr.read_key_timeout() {
+                if k == 0x1b || k == 0x03 {
+                    close_qr(scr);
+                    return Err(i18n::t("login_cancel").into());
+                }
             }
         }
+        if attempts == 0 {
+            attempts = 1;
+            continue 'retry;
+        }
+        close_qr(scr);
+        return Err(i18n::t("onboard_timeout").into());
     }
-    close_qr(scr);
-    Err(i18n::t("onboard_timeout").into())
 }
 
 fn login_web(scr: &mut Scr, port: u16, lang: &str) -> Result<LoginResult, String> {
@@ -4060,6 +4097,13 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    }
+    if argv.get(1).map(|s| s.as_str()) == Some("--login-page") {
+        let lang = argv.get(2).map(|s| s.as_str()).unwrap_or("en");
+        let html = login::page_for_test(lang);
+        println!("LEN {} LANG {}", html.len(), lang);
+        std::fs::write("/tmp/login-page.html", &html).ok();
+        return;
     }
     if argv.get(1).map(|s| s.as_str()) == Some("--qr-ppm") {
         let (src, dst) = (argv.get(2), argv.get(3));

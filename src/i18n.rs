@@ -252,6 +252,7 @@ const EN: &[(&str, &str)] = &[
     ("login_status_finishing", "authorized — finishing login…"),
     // dsh token display
     ("dsh_token_set", "DSH token"),
+    ("login_status_refresh", "QR expired — refreshing…"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -444,6 +445,7 @@ const ZH: &[(&str, &str)] = &[
     ("login_status_finishing", "已授权 — 正在完成登录…"),
     // dsh token display
     ("dsh_token_set", "DSH token"),
+    ("login_status_refresh", "二维码过期 — 正在刷新…"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -635,6 +637,7 @@ const ES: &[(&str, &str)] = &[
     ("login_status_finishing", "autorizado — terminando el login…"),
     // dsh token display
     ("dsh_token_set", "token DSH"),
+    ("login_status_refresh", "QR caducado — renovando…"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -827,6 +830,7 @@ const JA: &[(&str, &str)] = &[
     ("login_status_finishing", "認証済み — ログインを完了中…"),
     // dsh token display
     ("dsh_token_set", "DSH トークン"),
+    ("login_status_refresh", "QR の期限切れ — 更新中…"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -1019,6 +1023,7 @@ const DE: &[(&str, &str)] = &[
     ("login_status_finishing", "autorisiert — Login wird abgeschlossen…"),
     // dsh token display
     ("dsh_token_set", "DSH-Token"),
+    ("login_status_refresh", "QR abgelaufen — wird erneuert…"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -1211,6 +1216,7 @@ const IT: &[(&str, &str)] = &[
     ("login_status_finishing", "autorizzato — completamento login…"),
     // dsh token display
     ("dsh_token_set", "token DSH"),
+    ("login_status_refresh", "QR scaduto — aggiornamento…"),
 ];
 
 
