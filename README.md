@@ -122,8 +122,10 @@ repository.
   prints the effective tool set for diagnosis.
 
 **Interaction polish**
-- `/help` is a command menu: arrows select, Enter runs a no-argument command or
-  completes one that needs input, Esc closes.
+- `/help` and the `/` palette group commands by category (session, goal, core,
+  setup, tools, info); `/help` previews usage, the palette keeps only short
+  argument hints so descriptions stay readable. Enter runs a no-argument
+  command or completes one that needs input, Esc closes.
 - Up/Down on an empty prompt recall input history (60 entries persisted in
   `~/.dst/history`, mode 600; `/key` never recorded); PgUp/PgDn scroll the
   transcript a page at a time.
@@ -155,6 +157,9 @@ status and age; Enter shows the output tail, `f` cycles all/running/watchers, `x
 values right-aligned at the panel edge.
 
 **Permissions / sandbox**
+
+Onboarding explains the default `auto` sandbox on the endpoint-choice preview:
+safe commands run, risky ones are judged or refused, and `/config` changes it.
 - Every tool call passes a permission gate. `auto` (default) allows known-safe
   operations (read-only commands, `read_file`/`list_dir`, web reads, writes under
   the current workspace), refuses system-configuration changes (sudo, systemctl

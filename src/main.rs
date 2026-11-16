@@ -362,7 +362,7 @@ impl Scr {
     }
 
     /// Palette rows for the current input (empty when not composing a command).
-    fn palette_items(&self) -> Vec<(&'static str, String, Option<&'static str>)> {
+    fn palette_items(&self) -> Vec<(&'static str, String, Option<&'static str>, &'static str)> {
         let text: String = self.input.iter().collect();
         cmd::palette(&text)
     }
@@ -455,14 +455,20 @@ impl Scr {
         } else {
             0
         };
-        for (vis, (name, desc, hint)) in pal.iter().skip(pal_start).take(pal_rows).enumerate() {
+        for (vis, (name, desc, hint, cat)) in pal.iter().skip(pal_start).take(pal_rows).enumerate() {
             let i = pal_start + vis;
             let selected = i == self.palette_sel;
             let marker = if selected { "\u{25b8}" } else { " " };
-            let hint = hint.map(|h| format!(" {h}")).unwrap_or_default();
+            // Long argument hints would crowd out the category/description;
+            // they remain visible in /help.
+            let hint = hint
+                .filter(|h| h.chars().count() <= 14)
+                .map(|h| format!(" {h}"))
+                .unwrap_or_default();
             let head = format!("{marker} /{name}{hint}");
             let pad = dw(&head);
             let room = self.cols.saturating_sub(pad + 3);
+            let desc = format!("[{}] {desc}", i18n::t(cat));
             let d: String = desc.chars().take(room).collect();
             if selected {
                 s.push_str("\x1b[1;36m");
@@ -1265,7 +1271,7 @@ impl Scr {
                     let pal = self.palette_items();
                     if !pal.is_empty() {
                         let i = self.palette_sel.min(pal.len() - 1);
-                        let (name, _desc, hint) = pal[i].clone();
+                        let (name, _desc, hint, _cat) = pal[i].clone();
                         let typed: String = self.input.iter().collect();
                         let typed = typed.trim_end();
                         // A hint in [] is optional, <..> is required: only the
@@ -2369,11 +2375,13 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc, login_rx: &LoginRx) {
             Some(vec![
                 i18n::t("onboard_prev_official_1").to_string(),
                 i18n::t("onboard_prev_official_2").to_string(),
+                i18n::t("onboard_prev_sandbox").to_string(),
             ])
         } else {
             Some(vec![
                 i18n::t("onboard_prev_custom_1").to_string(),
                 i18n::t("onboard_prev_custom_2").to_string(),
+                i18n::t("onboard_prev_sandbox").to_string(),
             ])
         };
         scr.menu = Some(Menu {
@@ -3032,11 +3040,26 @@ fn tool_output_panel(scr: &mut Scr) {
 /// `/help`: a menu of commands (name left, one-line description right).
 /// Enter runs a no-argument command, or completes a command that needs input.
 fn help_menu(scr: &mut Scr) -> Option<String> {
-    let items: Vec<MenuItem> = cmd::COMMANDS
+    let mut ordered: Vec<&cmd::Command> = cmd::COMMANDS.iter().collect();
+    ordered.sort_by(|a, b| {
+        cmd::category_rank(a.category)
+            .cmp(&cmd::category_rank(b.category))
+            .then(a.name.cmp(b.name))
+    });
+    let sorted: Vec<cmd::Command> = ordered
+        .into_iter()
+        .map(|c| cmd::Command {
+            name: c.name,
+            description: c.description,
+            input_hint: c.input_hint,
+            category: c.category,
+        })
+        .collect();
+    let items: Vec<MenuItem> = sorted
         .iter()
         .map(|c| MenuItem {
             label: format!("/{}", c.name),
-            value: cmd::describe(c.name),
+            value: format!("[{}] {}", i18n::t(c.category), cmd::describe(c.name)),
         })
         .collect();
     if items.is_empty() {
@@ -3044,7 +3067,7 @@ fn help_menu(scr: &mut Scr) -> Option<String> {
     }
     let mut sel = 0usize;
     loop {
-        let c = &cmd::COMMANDS[sel];
+        let c = &sorted[sel];
         let hint = c.input_hint.map(|h| format!(" {h}")).unwrap_or_default();
         let preview = Some(vec![
             format!("/{}{hint}", c.name),
@@ -3073,7 +3096,7 @@ fn help_menu(scr: &mut Scr) -> Option<String> {
         }
         if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return None; }
         if k == 0x0d || k == 0x0a {
-            let c = &cmd::COMMANDS[sel];
+            let c = &sorted[sel];
             let needs_arg = c.input_hint.map(|h| h.starts_with('<')).unwrap_or(false);
             let chosen = if needs_arg {
                 format!("/{} ", c.name)

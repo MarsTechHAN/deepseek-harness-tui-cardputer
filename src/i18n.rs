@@ -201,6 +201,14 @@ const EN: &[(&str, &str)] = &[
     ("jobs_filter_running", "running"),
     ("jobs_filter_watchers", "watchers"),
     ("artifact_scroll", "PgUp/PgDn"),
+    // EN category/sandbox keys
+    ("cat_core", "core"),
+    ("cat_session", "session"),
+    ("cat_goal", "goal"),
+    ("cat_setup", "setup"),
+    ("cat_tools", "tools"),
+    ("cat_info", "info"),
+    ("onboard_prev_sandbox", "sandbox defaults to auto: safe commands run, risky ones are judged or refused; change it in /config."),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -342,6 +350,14 @@ const ZH: &[(&str, &str)] = &[
     ("jobs_filter_running", "运行中"),
     ("jobs_filter_watchers", "监视器"),
     ("artifact_scroll", "PgUp/PgDn"),
+    // ZH category/sandbox keys
+    ("cat_core", "核心"),
+    ("cat_session", "会话"),
+    ("cat_goal", "目标"),
+    ("cat_setup", "设置"),
+    ("cat_tools", "工具"),
+    ("cat_info", "信息"),
+    ("onboard_prev_sandbox", "sandbox 默认 auto：安全命令直接执行，风险操作由 LLM 判定或拒绝；可在 /config 修改。"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -482,6 +498,14 @@ const ES: &[(&str, &str)] = &[
     ("jobs_filter_running", "en marcha"),
     ("jobs_filter_watchers", "watchers"),
     ("artifact_scroll", "PgUp/PgDn"),
+    // ES category/sandbox keys
+    ("cat_core", "básico"),
+    ("cat_session", "sesión"),
+    ("cat_goal", "objetivo"),
+    ("cat_setup", "ajustes"),
+    ("cat_tools", "herramientas"),
+    ("cat_info", "info"),
+    ("onboard_prev_sandbox", "sandbox usa auto: comandos seguros se ejecutan, los riesgosos se juzgan o rechazan; cámbialo en /config."),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -623,6 +647,14 @@ const JA: &[(&str, &str)] = &[
     ("jobs_filter_running", "実行中"),
     ("jobs_filter_watchers", "監視"),
     ("artifact_scroll", "PgUp/PgDn"),
+    // JA category/sandbox keys
+    ("cat_core", "基本"),
+    ("cat_session", "セッション"),
+    ("cat_goal", "ゴール"),
+    ("cat_setup", "設定"),
+    ("cat_tools", "ツール"),
+    ("cat_info", "情報"),
+    ("onboard_prev_sandbox", "sandbox は auto: 安全なコマンドは実行、危険なものは判定・拒否。/config で変更。"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -764,6 +796,14 @@ const DE: &[(&str, &str)] = &[
     ("jobs_filter_running", "laufend"),
     ("jobs_filter_watchers", "Watcher"),
     ("artifact_scroll", "PgUp/PgDn"),
+    // DE category/sandbox keys
+    ("cat_core", "Basis"),
+    ("cat_session", "Sitzung"),
+    ("cat_goal", "Ziel"),
+    ("cat_setup", "Setup"),
+    ("cat_tools", "Tools"),
+    ("cat_info", "Info"),
+    ("onboard_prev_sandbox", "Sandbox ist auto: sichere Befehle laufen, riskante werden bewertet/abgelehnt; in /config änderbar."),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -905,6 +945,14 @@ const IT: &[(&str, &str)] = &[
     ("jobs_filter_running", "in corso"),
     ("jobs_filter_watchers", "watcher"),
     ("artifact_scroll", "PgUp/PgDn"),
+    // IT category/sandbox keys
+    ("cat_core", "base"),
+    ("cat_session", "sessione"),
+    ("cat_goal", "obiettivo"),
+    ("cat_setup", "setup"),
+    ("cat_tools", "strumenti"),
+    ("cat_info", "info"),
+    ("onboard_prev_sandbox", "sandbox è auto: i comandi sicuri girano, i rischiosi vengono giudicati o rifiutati; cambialo in /config."),
 ];
 
 

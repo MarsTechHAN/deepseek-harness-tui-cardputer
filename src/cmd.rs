@@ -18,81 +18,110 @@ pub struct Command {
     pub description: &'static str,
     /// Placeholder advertised before free-form input, e.g. `[name]`.
     pub input_hint: Option<&'static str>,
+    /// Grouping key used by the palette/help (`cat_*` i18n keys).
+    pub category: &'static str,
+}
+
+/// Category display order for the palette and help menu.
+pub fn category_rank(cat: &str) -> u8 {
+    match cat {
+        "cat_session" => 0,
+        "cat_goal" => 1,
+        "cat_core" => 2,
+        "cat_setup" => 3,
+        "cat_tools" => 4,
+        _ => 5,
+    }
 }
 
 pub const COMMANDS: &[Command] = &[
     Command {
         name: "help",
+        category: "cat_core",
         description: "list commands",
         input_hint: None,
     },
     Command {
         name: "model",
+        category: "cat_core",
         description: "show or set the model",
         input_hint: Some("[name]"),
     },
     Command {
         name: "effort",
+        category: "cat_core",
         description: "show or set reasoning effort (auto|low|high|max)",
         input_hint: Some("[auto|low|high|max]"),
     },
     Command {
         name: "login",
+        category: "cat_setup",
         description: "configure the API key by scanning a QR code",
         input_hint: None,
     },
     Command {
         name: "key",
+        category: "cat_setup",
         description: "set the API key directly",
         input_hint: Some("<api-key>"),
     },
     Command {
         name: "usage",
+        category: "cat_info",
         description: "token usage, cache hit rate and context pressure",
         input_hint: None,
     },
     Command {
         name: "compact",
+        category: "cat_session",
         description: "summarise older history now (same method as automatic compaction)",
         input_hint: None,
     },
     Command {
         name: "goal",
+        category: "cat_goal",
         description: "show or manage the session goal (long-running objective)",
         input_hint: Some("[show|<objective>|edit <objective>|pause|resume|clear]"),
     },
     Command {
         name: "resume",
+        category: "cat_session",
         description: "pick a previous session from a menu (expand to preview)",
         input_hint: None,
     },
     Command {
         name: "rewind",
+        category: "cat_session",
         description: "restore a checkpoint from an earlier turn (menu picker)",
         input_hint: None,
     },
     Command {
         name: "extensions",
+        category: "cat_tools",
         description: "inspect skills and MCP servers (menu)",
         input_hint: None,
     },
     Command {
         name: "rename",
+        category: "cat_session",
         description: "name the current saved session (shown in /resume)",
         input_hint: Some("<title>"),
     },
     Command {
         name: "config",
+        category: "cat_core",
         description: "interactive configuration (options first)",
         input_hint: Some("[wizard]"),
     },
     Command {
         name: "clear",
+        category: "cat_session",
         description: "clear the transcript",
         input_hint: None,
     },
     Command {
         name: "quit",
+        category: "cat_core",
         description: "exit dst",
         input_hint: None,
     },
@@ -115,7 +144,7 @@ pub fn describe(name: &str) -> String {
     }
 }
 
-pub fn palette(input: &str) -> Vec<(&'static str, String, Option<&'static str>)> {
+pub fn palette(input: &str) -> Vec<(&'static str, String, Option<&'static str>, &'static str)> {
     let t = input.trim_start();
     if !t.starts_with('/') {
         return Vec::new();
@@ -124,10 +153,23 @@ pub fn palette(input: &str) -> Vec<(&'static str, String, Option<&'static str>)>
     if q.contains(char::is_whitespace) {
         return Vec::new();
     }
-    COMMANDS
+    let ql = q.to_lowercase();
+    let mut items: Vec<&Command> = COMMANDS
         .iter()
-        .filter(|c| c.name.starts_with(q))
-        .map(|c| (c.name, describe(c.name), c.input_hint))
+        .filter(|c| {
+            q.is_empty()
+                || c.name.starts_with(q)
+                || describe(c.name).to_lowercase().contains(&ql)
+        })
+        .collect();
+    items.sort_by(|a, b| {
+        category_rank(a.category)
+            .cmp(&category_rank(b.category))
+            .then(a.name.cmp(b.name))
+    });
+    items
+        .into_iter()
+        .map(|c| (c.name, describe(c.name), c.input_hint, c.category))
         .collect()
 }
 

@@ -409,6 +409,7 @@ def check_onboarding(screens, reqs, work):
                    "onboarding is a menu with both connection options"))
     checks.append(("Enter confirm" in menu, "menu hint explains the keys"))
     checks.append(("platform.deepseek.com" in menu, "option preview explains the choice"))
+    checks.append(("sandbox defaults to auto" in menu, "onboarding explains sandbox mode"))
     checks.append(("Type 1 or 2" not in menu, "no \"type 1 or 2\" prompt left"))
     checks.append(("\u25b8" in moved, "arrow keys move the selection"))
     checks.append((len(reqs) == 0, "onboarding made no model request"))
@@ -612,8 +613,10 @@ def check_ux(screens, reqs, work):
                    "Up on an empty prompt recalls the previous input"))
     checks.append(("running" in tick and "bash" in tick,
                    "live status shows the running tool and elapsed time"))
-    checks.append(("/model" in help_menu and "Enter runs" in help_menu,
-                   "/help is a navigable menu with a description preview"))
+    checks.append(("/compact" in help_menu or "/clear" in help_menu,
+                   "/help is a navigable menu"))
+    checks.append(("Enter runs" in help_menu,
+                   "/help shows a description preview"))
     checks.append(("\u2191" in paged and "End" in paged,
                    "PgUp scrolls back with a scroll indicator"))
     return checks
@@ -727,8 +730,13 @@ def check_commands(screens, reqs, work):
     palette_c = screens.get("palette_c", "")
     checks.append(("/goal" in palette_g and "/compact" in palette_c,
                    "command palette resolves /goal and /compact"))
-    checks.append(("/model" in help_ and "Enter runs" in help_ and "select" in help_,
-                   "/help opens a command menu with a description preview"))
+    checks.append(("[goal]" in palette_g or "[core]" in palette_g,
+                   "palette groups commands by category"))
+    checks.append(("[session]" in palette_c, "palette shows session category"))
+    checks.append(("/compact" in help_ or "/clear" in help_,
+                   "/help lists commands"))
+    checks.append(("Enter runs" in help_ and "select" in help_,
+                   "/help shows a description preview"))
     checks.append(("requests" in usage.lower() or "cache" in usage.lower(),
                    "/usage report rendered"))
 
