@@ -1,0 +1,53 @@
+{
+ "mock_login": true,
+ "env": {
+  "MOCK_LOGIN_EXPIRED_N": "2"
+ },
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/login"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Sign in to DeepSeek",
+    "timeout_ms": 12000
+   }
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "QR expired — refreshing",
+    "timeout_ms": 30000
+   },
+   "snap": "retry"
+  },
+  {
+   "wait_for": {
+    "text": "login failed — press r to retry",
+    "timeout_ms": 40000
+   },
+   "snap": "prompt"
+  },
+  {
+   "send": "r"
+  },
+  {
+   "wait_for": {
+    "text": "Logged in",
+    "timeout_ms": 40000
+   },
+   "snap": "done"
+  }
+ ]
+}

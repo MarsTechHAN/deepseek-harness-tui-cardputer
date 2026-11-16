@@ -2582,8 +2582,37 @@ fn login_wechat_device(scr: &mut Scr, port: u16, lang: &str) -> Result<String, S
                     std::thread::sleep(std::time::Duration::from_millis(600));
                     continue 'retry;
                 }
-                close_qr(scr);
-                return Err(e);
+                // Automatic refresh is limited to one try; after that show an
+                // actionable prompt so the user can retry without re-running
+                // /login (e.g. flaky network or a second expiry).
+                let status = Some(i18n::t("login_status_failed").to_string());
+                let lines = if blit_ok {
+                    wechat_guide(24, &session.url, status)
+                } else {
+                    wechat_guide(scr.cols, &session.url, status)
+                };
+                scr.qr_blit = false;
+                scr.qr = Some(lines);
+                scr.draw();
+                if blit_ok {
+                    if let Some(m) = matrix.as_ref() {
+                        let _ = login::draw_matrix_fb(m, Some((156, 0, 164, 170)));
+                    }
+                    scr.qr_blit = true;
+                }
+                loop {
+                    match scr.read_key_timeout() {
+                        Some(b'r') | Some(b'R') => {
+                            attempts = 0;
+                            continue 'retry;
+                        }
+                        Some(0x1b) | Some(0x03) => {
+                            close_qr(scr);
+                            return Err(i18n::t("login_cancel").into());
+                        }
+                        _ => {}
+                    }
+                }
             }
             if let Some(t) = token {
                 close_qr(scr);

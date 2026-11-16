@@ -24,6 +24,7 @@ STATE = {"state": "s" * 43}
 LOG = []
 SCAN_COUNT = [0]
 EXPIRED_ONCE = [0]
+EXPIRED_N = [int(os.environ.get("MOCK_LOGIN_EXPIRED_N", "0"))]
 
 
 class H(BaseHTTPRequestHandler):
@@ -71,6 +72,9 @@ class H(BaseHTTPRequestHandler):
             errcode = 405
             if os.environ.get("MOCK_LOGIN_EXPIRED") and EXPIRED_ONCE[0] == 0:
                 EXPIRED_ONCE[0] = 1
+                errcode = 402
+            elif EXPIRED_N[0] > 0:
+                EXPIRED_N[0] -= 1
                 errcode = 402
             elif os.environ.get("MOCK_LOGIN_SCANNED") and SCAN_COUNT[0] == 0:
                 SCAN_COUNT[0] = 1

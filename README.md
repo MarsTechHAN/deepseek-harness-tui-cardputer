@@ -253,7 +253,8 @@ official or a custom OpenAI-compatible endpoint, then pick the sandbox mode.
    real WeChat QR on the panel: a compact numbered text guide on the left
    (title / steps / page / Esc) and the QR on the right, with a live status
    line that updates to "scanned — confirm on the phone" and "finishing login"
-   as the phone proceeds. The DSH token is stored under `api.dsh_token` and sent to the model
+   as the phone proceeds. An expired QR refreshes automatically once; after a
+   second failure the screen offers `r retry · Esc cancel`. The DSH token is stored under `api.dsh_token` and sent to the model
    API as `x-dsh-auth-token` (no Bearer). Requires `python3` + Pillow only to
    convert the WeChat JPEG QR into panel modules; without a framebuffer the same
    QR and live progress are shown on the phone page.

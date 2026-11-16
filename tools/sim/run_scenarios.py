@@ -808,6 +808,23 @@ def check_key_overrides_token(screens, reqs, work):
     return checks
 
 
+def check_login_wechat_retry_more(screens, reqs, work):
+    retry = screens.get("retry", "")
+    prompt = screens.get("prompt", "")
+    done = screens.get("done", "")
+    cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+    log = read_file(os.path.join(work, "mock-login.jsonl"))
+    checks = []
+    checks.append(("QR expired — refreshing" in retry, "first expiry auto-refreshes"))
+    checks.append(("login failed — press r to retry" in prompt,
+                   "second failure shows an actionable retry prompt"))
+    checks.append((log.count("/connect/qrconnect") >= 3,
+                   "pressing r requests a third QR"))
+    checks.append(("Logged in" in done and "dsh_token:" in cfg,
+                   "interactive retry completes and persists the token"))
+    return checks
+
+
 def check_login_wechat_retry(screens, reqs, work):
     retry = screens.get("retry", "")
     done = screens.get("done", "")
@@ -964,6 +981,7 @@ CHECKS = {
     "login_wechat": check_login_wechat,
     "login_wechat_status": check_login_wechat_status,
     "login_wechat_retry": check_login_wechat_retry,
+    "login_wechat_retry_more": check_login_wechat_retry_more,
     "key_overrides_token": check_key_overrides_token,
     "extensions_toggle": check_extensions_toggle,
     "queue_edit": check_queue_edit,

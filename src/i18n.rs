@@ -253,6 +253,8 @@ const EN: &[(&str, &str)] = &[
     // dsh token display
     ("dsh_token_set", "DSH token"),
     ("login_status_refresh", "QR expired — refreshing…"),
+    ("login_status_failed", "login failed — press r to retry"),
+    ("login_retry_hint", "r retry · Esc cancel"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -446,6 +448,8 @@ const ZH: &[(&str, &str)] = &[
     // dsh token display
     ("dsh_token_set", "DSH token"),
     ("login_status_refresh", "二维码过期 — 正在刷新…"),
+    ("login_status_failed", "登录失败 — 按 r 重试"),
+    ("login_retry_hint", "r 重试 · Esc 取消"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -638,6 +642,8 @@ const ES: &[(&str, &str)] = &[
     // dsh token display
     ("dsh_token_set", "token DSH"),
     ("login_status_refresh", "QR caducado — renovando…"),
+    ("login_status_failed", "login fallido — pulsa r para reintentar"),
+    ("login_retry_hint", "r reintentar · Esc cancelar"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -831,6 +837,8 @@ const JA: &[(&str, &str)] = &[
     // dsh token display
     ("dsh_token_set", "DSH トークン"),
     ("login_status_refresh", "QR の期限切れ — 更新中…"),
+    ("login_status_failed", "ログイン失敗 — r で再試行"),
+    ("login_retry_hint", "r 再試行 · Esc キャンセル"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -1024,6 +1032,8 @@ const DE: &[(&str, &str)] = &[
     // dsh token display
     ("dsh_token_set", "DSH-Token"),
     ("login_status_refresh", "QR abgelaufen — wird erneuert…"),
+    ("login_status_failed", "Login fehlgeschlagen — r zum Wiederholen"),
+    ("login_retry_hint", "r wiederholen · Esc abbrechen"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -1217,6 +1227,8 @@ const IT: &[(&str, &str)] = &[
     // dsh token display
     ("dsh_token_set", "token DSH"),
     ("login_status_refresh", "QR scaduto — aggiornamento…"),
+    ("login_status_failed", "login fallito — premi r per riprovare"),
+    ("login_retry_hint", "r riprova · Esc annulla"),
 ];
 
 
