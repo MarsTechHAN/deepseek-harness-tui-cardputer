@@ -125,6 +125,9 @@ repository.
   recorded); PgUp/PgDn scroll the transcript a page at a time.
 - The idle status line shows key hints; running tools report live progress on
   the status line (`bash running 1.2s`).
+- CtrlO opens a recent tool-output list; Enter shows the full result in the
+  scrollable panel viewer. Ctrl+A/Ctrl+E move the cursor, Ctrl+W deletes a word;
+  Home/End jump to the top/bottom of the scrollback when not editing.
 - Menu right-hand text truncates with `…` instead of silently cutting words.
 
 **No title/header row**: every row belongs to the transcript, status line and
