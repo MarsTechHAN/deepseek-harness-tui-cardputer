@@ -267,8 +267,9 @@ official or a custom OpenAI-compatible endpoint, then pick the sandbox mode.
 
 Model requests and voice/OCR pick the auth header automatically: DSH token →
 `x-dsh-auth-token`, API key → `Authorization: Bearer`. `/config` shows
-`DSH token` as the credential type when one is stored, and setting an API key
-(`/key` or the config prompt) replaces the token so the new key is not shadowed.
+`API key / token` as the credential row, shows `DSH token` as the value when one
+is stored, and setting an API key (`/key` or the config prompt) replaces the
+token so the new key is not shadowed.
 
 ## Configuration (`~/.dst/config.yml`)
 
