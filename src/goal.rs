@@ -494,6 +494,7 @@ pub fn badge_cycle() -> Option<String> {
 }
 
 /// One-line banner for the status area while a goal is active.
+#[allow(dead_code)]
 pub fn banner() -> Option<String> {
     let g = current()?;
     if g.phase == Phase::Complete {

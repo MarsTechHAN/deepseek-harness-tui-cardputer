@@ -7,6 +7,7 @@
 use crate::config::{self, Config};
 
 pub const KIND_NORMAL: u8 = 0;
+#[allow(dead_code)]
 pub const KIND_TOOL: u8 = 2;
 pub const KIND_ERR: u8 = 4;
 pub const KIND_DIM: u8 = 5;

@@ -525,6 +525,7 @@ def check_i18n_es(screens, reqs, work):
     checks = []
     checks.append(("mantén Tab" in splash, "Spanish splash/hint rendered"))
     checks.append(("Configuración" in menu, "config menu is translated"))
+    checks.append(("modelo" in menu, "config help preview is translated"))
     checks.append(("Idioma" in menu and "Modelo" in menu, "menu labels translated"))
     checks.append(("Hola desde el mock." in reply, "conversation still works in Spanish"))
     return checks
@@ -684,6 +685,17 @@ def check_watcher_flood(screens, reqs, work):
     return checks
 
 
+def check_sandbox_es(screens, reqs, work):
+    popup = screens.get("popup", "")
+    checks = []
+    checks.append(("Permiso requerido" in popup, "approval title is translated"))
+    checks.append(("herramienta:" in popup and "motivo:" in popup,
+                   "approval labels are translated"))
+    checks.append(("[y] permitir" in popup, "approval keys are translated"))
+    checks.append(("/tmp/dst-es.txt" in popup, "approval detail still shows the path"))
+    return checks
+
+
 def check_config_menu(screens, reqs, work):
     menu = screens.get("menu", "")
     bottom = screens.get("bottom", "")
@@ -754,6 +766,7 @@ def check_goal_blocked(screens, reqs, work):
 
 CHECKS = {
     "clear": check_clear,
+    "sandbox_es": check_sandbox_es,
     "history_persist": check_history_persist,
     "watcher_flood": check_watcher_flood,
     "sandbox_diff": check_sandbox_diff,

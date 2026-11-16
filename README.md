@@ -99,7 +99,10 @@ repository.
 
 **Internationalisation**
 - UI language via `language: en|zh|es|ja|de|it` in the config (default `en`),
-  switchable from `/config`; missing translations fall back to English. Only interface text is translated; tool descriptions and the system
+  switchable from `/config`. Every UI string — menus, help previews, approval
+  dialogs, onboarding, jobs and tips — is translated; a unit test enforces that
+  each language covers the full English catalog (missing keys would fall back to
+  English). Only interface text is translated; tool descriptions and the system
   prompt stay English so model behaviour is unchanged.
 
 **Command palette**

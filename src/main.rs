@@ -605,10 +605,10 @@ impl Scr {
         let mut s = String::with_capacity(2048);
         s.push_str("\x1b[?25l\x1b[2J\x1b[H");
         s.push_str("\x1b[1;31m");
-        s.push_str(&fit(" Permission required (strict mode)", self.cols));
+        s.push_str(&fit(&format!(" {}", i18n::t("approval_title")), self.cols));
         s.push_str("\x1b[0m\x1b[K\r\n\r\n");
         s.push_str("\x1b[1;37m");
-        s.push_str(&fit(&format!(" tool: {}", a.tool), self.cols));
+        s.push_str(&fit(&format!(" {} {}", i18n::t("approval_tool"), a.tool), self.cols));
         s.push_str("\x1b[0m\x1b[K\r\n\r\n");
         s.push_str("\x1b[0;37m");
         let mut shown = 0usize;
@@ -626,10 +626,13 @@ impl Scr {
             }
         }
         s.push_str("\x1b[90m");
-        s.push_str(&fit(&format!(" reason: {}", a.reason), self.cols));
+        s.push_str(&fit(
+            &format!(" {} {}", i18n::t("approval_reason"), a.reason),
+            self.cols,
+        ));
         s.push_str("\x1b[0m\x1b[K\r\n\r\n");
         s.push_str("\x1b[1;33m");
-        s.push_str(&fit(" [y] allow    [n] reject    Esc reject", self.cols));
+        s.push_str(&fit(&format!(" {}", i18n::t("approval_keys")), self.cols));
         s.push_str("\x1b[0m\x1b[K");
         let mut out = std::io::stdout();
         let _ = out.write_all(s.as_bytes());
@@ -1906,7 +1909,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                 self.scr.live = None;
                 // The pending line was drawn when the call started; this one
                 // adds the outcome and a short preview of what came back.
-                let (name, title, took) = self
+                let (name, _title, took) = self
                     .tools
                     .remove(&id)
                     .map(|(n, t, started)| (n, t, started.elapsed().as_secs_f32()))
@@ -2337,17 +2340,17 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc, login_rx: &LoginRx) {
     ];
     let mut sel = 0usize;
     loop {
-        let preview = Some(if sel == 0 {
-            vec![
-                "DeepSeek official: key at platform.deepseek.com".to_string(),
-                "QR login opens a page on your phone to paste it.".to_string(),
-            ]
+        let preview = if sel == 0 {
+            Some(vec![
+                i18n::t("onboard_prev_official_1").to_string(),
+                i18n::t("onboard_prev_official_2").to_string(),
+            ])
         } else {
-            vec![
-                "Custom endpoint: any OpenAI-compatible /v1 URL + key.".to_string(),
-                "search/fetch/ocr and speech tools are unavailable there.".to_string(),
-            ]
-        });
+            Some(vec![
+                i18n::t("onboard_prev_custom_1").to_string(),
+                i18n::t("onboard_prev_custom_2").to_string(),
+            ])
+        };
         scr.menu = Some(Menu {
             title: i18n::t("onboard_choose").into(),
             items: items.clone(),
@@ -3014,7 +3017,7 @@ fn help_menu(scr: &mut Scr) -> Option<String> {
         let preview = Some(vec![
             format!("/{}{hint}", c.name),
             cmd::describe(c.name),
-            "Enter runs it (or completes the command)".to_string(),
+            i18n::t("help_enter_hint").to_string(),
         ]);
         scr.menu = Some(Menu {
             title: i18n::t("cmd_help_title").into(),
@@ -3074,19 +3077,23 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             c.model.clone(),
             c.effort.clone(),
             c.base.clone(),
-            if c.api_key.is_empty() { "not set".to_string() } else { "configured".to_string() },
+            if c.api_key.is_empty() {
+                i18n::t("unset").to_string()
+            } else {
+                i18n::t("set").to_string()
+            },
             c.tts_voice.clone(),
             c.auto_send_voice,
             c.queued_default,
             c.language.clone(),
-            if c.max_steps == 0 { "unlimited".to_string() } else { c.max_steps.to_string() },
+            if c.max_steps == 0 { i18n::t("unlimited").to_string() } else { c.max_steps.to_string() },
             if c.compact_enabled {
-                format!("on @ {}", crate::compact::human_tokens(c.compact_threshold))
+                format!("{} @ {}", i18n::t("on"), crate::compact::human_tokens(c.compact_threshold))
             } else {
-                "off".to_string()
+                i18n::t("off").to_string()
             },
             if c.goal_max_rounds == 0 {
-                "unlimited".to_string()
+                i18n::t("unlimited").to_string()
             } else {
                 c.goal_max_rounds.to_string()
             },
@@ -3121,23 +3128,25 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
         } else {
             i18n::t("menu_hint_gated").to_string()
         };
-        let helps = [
-            "model: which model /model uses",
-            "effort: reasoning effort tier sent to the API",
-            "endpoint: official DeepSeek or a compatible base URL",
-            "key: API key (stored in config.yml, mode 600)",
-            "voice: TTS voice used by the speak tool",
-            "auto-send: submit the transcript automatically after push-to-talk",
-            "queue: Enter queues while busy; off = send immediately",
-            "language: UI language (en/zh/es/ja/de/it)",
-            "max steps: model requests per turn (0 = unlimited)",
-            "auto compact: summarise history when pressure exceeds this token budget (0 = off)",
-            "goal rounds: automatic continuation rounds (0 = unlimited)",
-            "sandbox: auto (LLM judge) / strict (ask) / full access",
-            "extensions: inspect skills and MCP servers",
-            "save: write config.yml and return",
+        let help_keys = [
+            "cfg_help_model",
+            "cfg_help_effort",
+            "cfg_help_endpoint",
+            "cfg_help_key",
+            "cfg_help_voice",
+            "cfg_help_autosend",
+            "cfg_help_queue",
+            "cfg_help_language",
+            "cfg_help_steps",
+            "cfg_help_compact",
+            "cfg_help_goalrounds",
+            "cfg_help_sandbox",
+            "cfg_help_extensions",
+            "cfg_help_save",
         ];
-        let preview = Some(vec![helps[sel.min(helps.len() - 1)].to_string()]);
+        let preview = Some(vec![
+            i18n::t(help_keys[sel.min(help_keys.len() - 1)]).to_string(),
+        ]);
         scr.menu = Some(Menu { title: i18n::t("menu_title").into(), items: items.clone(), sel, hint, preview });
         scr.draw();
         let k = match scr.read_key_timeout() {

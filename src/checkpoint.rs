@@ -39,7 +39,7 @@ fn list_paths() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-pub struct Checkpoint { pub path: PathBuf, pub label: String, pub preview: String }
+pub struct Checkpoint { pub path: PathBuf, pub label: String }
 
 pub fn list() -> Vec<Checkpoint> {
     let mut out: Vec<(PathBuf, u64, Checkpoint)> = list_paths().into_iter().filter_map(|p| {
@@ -57,7 +57,7 @@ pub fn list() -> Vec<Checkpoint> {
             "(session start)".to_string()
         };
         let _ = stem;
-        Some((p.clone(), created, Checkpoint { path: p, label, preview }))
+        Some((p.clone(), created, Checkpoint { path: p, label }))
     }).collect();
     out.sort_by(|a, b| b.1.cmp(&a.1));
     out.into_iter().map(|(_, _, c)| c).collect()

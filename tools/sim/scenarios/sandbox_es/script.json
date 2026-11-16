@@ -1,0 +1,1 @@
+{"responses": [{"reasoning": "edit", "content": "", "tool_calls": [{"id": "e1", "name": "edit_file", "arguments": {"path": "/tmp/dst-es.txt", "old_string": "viejo", "new_string": "nuevo"}}], "finish_reason": "tool_calls"}, {"reasoning": "done", "content": "Editado rechazado.", "finish_reason": "stop"}]}

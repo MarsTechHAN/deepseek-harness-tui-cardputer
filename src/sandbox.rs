@@ -447,9 +447,9 @@ use full mode or ask the user"
         }
         Mode::Strict => {
             let reason = if class == Class::Danger {
-                "system configuration change"
+                crate::i18n::t("sandbox_reason_danger")
             } else {
-                "not a known-safe operation"
+                crate::i18n::t("sandbox_reason_unsafe")
             };
             let req = Approval {
                 tool: name.to_string(),
