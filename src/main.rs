@@ -1118,7 +1118,7 @@ impl Scr {
                         "{} {}  {}",
                         if v.watcher { "\u{2248}" } else { "\u{25cf}" },
                         v.id,
-                        v.command.chars().take(22).collect::<String>()
+                        first_line_short(&v.command, 22)
                     ),
                     value: format!("  {} \u{b7} {}s", v.status, v.age),
                 })
@@ -1315,15 +1315,15 @@ impl Scr {
                     let selected = idx == sel;
                     let mark = if selected { "\u{25b8}" } else { " " };
                     let line = format!("{mark} {}. {}", idx + 1, item);
-                    let line: String = line.chars().take(self.cols.saturating_sub(2)).collect();
                     if selected {
                         out.push_str("\x1b[7m");
                     } else {
                         out.push_str("\x1b[0;37m");
                     }
                     // Pad to the panel width so the selection highlight and
-                    // the row background span the whole line.
-                    let mut shown = fit(&line, self.cols);
+                    // the row background span the whole line; ellipsise edits
+                    // that are longer than the panel instead of cutting words.
+                    let mut shown = fit_ellipsis(&line, self.cols);
                     shown.push_str(&" ".repeat(self.cols.saturating_sub(dw(&shown))));
                     out.push_str(&shown);
                     out.push_str("\x1b[0m\x1b[K\r\n");

@@ -25,7 +25,7 @@
    "wait_ms": 200
   },
   {
-   "send": "second queued"
+   "send": "second queued message that is intentionally much longer than the panel width so the editor must show it ellipsised"
   },
   {
    "key": "Enter"

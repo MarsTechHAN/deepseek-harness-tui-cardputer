@@ -1,0 +1,16 @@
+{
+ "steps": [
+  {"wait_for": {"text": "dst", "timeout_ms": 10000}},
+  {"send": "/goal"},
+  {"key": "Enter"},
+  {"wait_ms": 350, "snap": "goal_empty"},
+  {"key": "CtrlO"},
+  {"wait_ms": 350, "snap": "tool_empty"},
+  {"send": "/resume"},
+  {"key": "Enter"},
+  {"wait_ms": 350, "snap": "resume_empty"},
+  {"send": "/usage"},
+  {"key": "Enter"},
+  {"wait_ms": 350, "snap": "usage"}
+ ]
+}

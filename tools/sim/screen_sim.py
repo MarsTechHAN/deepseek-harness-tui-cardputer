@@ -411,27 +411,35 @@ class ScreenRenderer:
                     fg, bg = bg, fg
             return fg, bg
 
+        # Two passes: paint every cell background first, then draw glyphs.
+        # Wide glyphs overflow their 2-cell box slightly; drawing per-cell in a
+        # single pass let the next cell's background clip the previous glyph
+        # (visible as sliced CJK inside reverse-video rows).
+        for r in range(self.rows):
+            row = screen.buffer[r]
+            for c in range(self.cols):
+                cell = row[c]
+                if cell.data == "":
+                    prev = row[c - 1] if c > 0 else None
+                    if prev is not None and prev.data and is_wide(prev.data[0]):
+                        _fg, bg = colours(prev)
+                    else:
+                        _fg, bg = colours(cell)
+                else:
+                    _fg, bg = colours(cell)
+                if bg != DEFAULT_BG:
+                    x0, y0 = c * cw, r * ch
+                    draw.rectangle([x0, y0, x0 + cw - 1, y0 + ch - 1], fill=bg)
+
         for r in range(self.rows):
             row = screen.buffer[r]
             for c in range(self.cols):
                 cell = row[c]
                 data = cell.data
                 if data == "":
-                    # pyte leaves the second cell of a wide glyph empty. Paint
-                    # its background from the glyph's cell, otherwise reverse
-                    # video (selected menu rows) cuts CJK glyphs in half.
-                    prev = row[c - 1] if c > 0 else None
-                    if prev is not None and prev.data and is_wide(prev.data[0]):
-                        _fg, bg = colours(prev)
-                        if bg != DEFAULT_BG:
-                            x0, y0 = c * cw, r * ch
-                            draw.rectangle(
-                                [x0, y0, x0 + cw - 1, y0 + ch - 1], fill=bg)
-                    continue
-                fg, bg = colours(cell)
+                    continue  # continuation cell of a wide character
+                fg, _bg = colours(cell)
                 x0, y0 = c * cw, r * ch
-                if bg != DEFAULT_BG:
-                    draw.rectangle([x0, y0, x0 + cw - 1, y0 + ch - 1], fill=bg)
                 if not data.strip():
                     continue
                 font, span = self._glyph_font(data[0] if len(data) == 1 else data)

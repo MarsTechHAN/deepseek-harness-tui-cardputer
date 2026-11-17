@@ -827,6 +827,23 @@ def check_resume_preview_zh(screens, reqs, work):
     return checks
 
 
+def check_empty_states_zh(screens, reqs, work):
+    goal = screens.get("goal_empty", "")
+    tool = screens.get("tool_empty", "")
+    resume = screens.get("resume_empty", "")
+    usage = screens.get("usage", "")
+    checks = []
+    checks.append(("当前没有设置 goal." in goal,
+                   "/goal with no goal shows a localized empty state"))
+    checks.append(("还没有工具输出" in tool,
+                   "CtrlO with no output shows a localized empty state"))
+    checks.append(("还没有保存的会话" in resume,
+                   "/resume with no sessions shows a localized empty state"))
+    checks.append(("次请求" in usage, "the app stays usable after the empty states"))
+    checks.append((len(reqs) == 0, "no model request was made"))
+    return checks
+
+
 def check_ux(screens, reqs, work):
     after = screens.get("after_turn", "")
     history = screens.get("history", "")
@@ -938,13 +955,17 @@ def check_queue_edit(screens, reqs, work):
     removed = screens.get("removed", "")
     edited = screens.get("edited", "")
     checks = []
-    checks.append(("Queued messages" in panel and "first queued" in panel and "second queued" in panel,
+    checks.append(("Queued messages" in panel and "first queued" in panel
+                   and "second queued message that is" in panel,
                    "CtrlQ opens the queued-message editor while busy"))
     checks.append(("x delete" in panel, "editor advertises delete/edit keys"))
-    checks.append(("first queued" not in removed and "second queued" in removed,
+    checks.append(("\u2026" in panel,
+                   "long queued messages are ellipsised, not cut mid-word"))
+    checks.append(("first queued" not in removed
+                   and "second queued message that is" in removed,
                    "x removes the selected queued message"))
-    checks.append(("> second queued" in edited,
-                   "Enter moves the selected message back into the prompt"))
+    checks.append(("ellipsised" in edited,
+                   "Enter moves the long message back into the prompt"))
     return checks
 
 
@@ -1287,6 +1308,7 @@ CHECKS = {
     "tool_log_multi": check_tool_log_multi,
     "tool_order": check_tool_order,
     "tool_timeout": check_tool_timeout,
+    "empty_states_zh": check_empty_states_zh,
     "esc_cancel": check_esc_cancel,
     "step_limit": check_step_limit,
     "unlimited_steps": check_unlimited_steps,

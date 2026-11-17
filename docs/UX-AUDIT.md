@@ -24,16 +24,17 @@ asserted in code.
 | Commands | palette, help menu, previews, 1/N position | fixed: `/help` dropped a redundant footer row (8 commands visible, was 7) and its hint now reads `Enter run/complete`. Palette name matches rank above description matches, and an exactly typed command wins over the highlighted row: in Chinese `/resume` also fuzzy-matched `/rename` (whose description mentions `/resume`) and Enter used to complete `/rename` instead of running `/resume` |
 | Config | all 15 rows, numeric prompts, model/judge/edit, extensions | fixed: the third-party capability footer fits 53 cells in all six languages instead of being cut mid-word; menu values keep a 2-cell gap |
 | Sessions | resume list/search/expanded/resumed, rewind list/preview | fixed: resume hint shortened so it no longer truncates. Chinese preview labels verified (`resume_preview_zh`): `标题/模型/轮次/最近`, counts and colon spacing |
-| Background | task list (all/running/watchers), save, full output | fixed: the footer hint fits 53 cells in all six languages (it was cut to `f…`); filter titles and full-width rows |
-| Queue | CtrlQ editor, delete, pull back into prompt | ok: full-width selection |
+| Background | task list (all/running/watchers), save, full output | fixed: the footer hint fits 53 cells in all six languages (it was cut to `f…`); long commands are ellipsised instead of bare-cut; filter titles and full-width rows |
+| Queue | CtrlQ editor, delete, pull back into prompt | fixed: long queued messages are ellipsised instead of cut mid-word (`queue_edit` now queues a 110-char message) |
 | Goal | pursuing / objective / paused / done badges, wrap-up | fixed: state glyphs are ASCII-safe (paused/done rendered as boxes before); the model-facing wrap-up paragraph is now a one-line `+ goal wrap-up …` marker instead of filling the transcript |
 | Login | `/login` menu, direct typing prompts, WeChat QR screen | fixed: choice menus say `select · Enter choose · Esc back` instead of the config-editor wording; three paths, numbered guide left + QR right, live scanned/finishing status, QR validity countdown, `r retry` after repeated failures |
 | Login QA | phone page states, i18n, QR scanability | ok: six-language page, countdown/expired/retry/cancel, QR decodes with jsQR (`https://open.weixin.qq.com/connect/confirm?...`), cancel aborts the flow |
+| Empty states | `/goal` with no goal, CtrlO with no output, `/resume` with no sessions | ok: each shows a localized one-liner and the app stays usable (`empty_states_zh`) |
 | Errors | provider 401 (bad key), 429 (rate limit) + automatic retry | fixed: one red `request failed: …` line, a highlighted yellow `→` recovery hint (`/key`, `/login`, `/model`), localized in all six languages; textual rate limits are retried like HTTP 429; the next prompt works normally |
 | Goal status | `/goal` report, badge, commands | fixed: report rows and the bottom-right badge are localized; the command list sits on its own row instead of wrapping its last command |
 | Sessions | resume preview metadata | fixed: title/model/turns/recent labels are localized |
 | Voice | push-to-talk REC, transcript insertion, `speak` tool card, mocked offline | ok: `DST_MOCK_SPEECH=1` fakes ASR/TTS so the whole voice path is reviewable on the simulator; `auto_send_voice` now actually applies |
-| i18n | en, zh, es, ja, de, it menus/help/approval/login pages/command feedback/dynamic labels | ok; every user-visible string is catalog-backed. Beyond the six-language parity test, a unit test now scans `src/*.rs` for literal `i18n::t("…")` keys and fails if the English catalog lacks one (this caught the config-menu hint disappearing when its key was dropped). Runtime notices (request failed, retries, compaction, goal notices, save/mic/speech failures), the `/goal` report/badge and the resume-preview labels are localized too. The simulator's PNG renderer now paints the continuation cell behind a wide glyph, so selected (reverse-video) menu rows render CJK correctly and can be visually reviewed |
+| i18n | en, zh, es, ja, de, it menus/help/approval/login pages/command feedback/dynamic labels | ok; every user-visible string is catalog-backed. Beyond the six-language parity test, a unit test now scans `src/*.rs` for literal `i18n::t("…")` keys and fails if the English catalog lacks one (this caught the config-menu hint disappearing when its key was dropped). Runtime notices (request failed, retries, compaction, goal notices, save/mic/speech failures), the `/goal` report/badge and the resume-preview labels are localized too. The simulator's PNG renderer paints all backgrounds before glyphs and fills the continuation cell behind a wide glyph, so selected (reverse-video) menu rows render CJK cleanly (verified in zh/ja/de config and help menus) |
 
 ## Fixes made during the audit
 
@@ -77,8 +78,12 @@ asserted in code.
 - Chinese labels use `: ` after labels (`标题: …`, `状态: …`) instead of the
   full-width colon, which `tidy()` had squashed to a cramped half-width
 - resume preview labels localized and covered by `resume_preview_zh`
-- simulator PNG renderer: paint the continuation cell of wide glyphs so
-  reverse-video (selected) rows no longer cut CJK characters in half
+- simulator PNG renderer: two-pass drawing plus continuation-cell background,
+  so reverse-video (selected) rows no longer clip or slice CJK glyphs; this
+  finally allows visual review of localized selected rows
+- long queue entries (and job commands) are ellipsised instead of hard-cut
+- localized empty states for `/goal`, CtrlO and `/resume` covered by
+  `empty_states_zh`
 - provider errors: localized `request failed` line plus a yellow `→` recovery
   hint, retry notice localized, textual rate limits treated as transient;
   `mock_api.py` can now serve scripted HTTP errors and `api_error`/`api_retry`
@@ -107,9 +112,10 @@ asserted in code.
 
 ## Known limitations
 
-- Simulator only: wide CJK glyphs in reverse-video rows can render as boxes in
-  PNG captures (pyte + fallback-font interaction); text captures show the real
-  characters. Device fonts still need a real-hardware pass.
+- Simulator only: PNG captures use the host's CJK fallback font, so the image
+  is a faithful layout/contrast check rather than a font-fidelity check; text
+  captures show the real characters. The device fbterm font still needs a
+  real-hardware pass.
 - Inline Markdown emphasis (`**bold**`, backticks) is stripped rather than
   styled: the transcript stores one colour per row, so bold/inline-code would
   need embedded SGR handling in the wrapper. Headings, lists and fenced code
