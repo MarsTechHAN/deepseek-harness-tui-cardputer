@@ -1,0 +1,65 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "run the forever app"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "ESC TEST APP",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "wait_ms": 150,
+   "snap": "app_screen"
+  },
+  {
+   "key": "Esc",
+   "wait_ms": 110
+  },
+  {
+   "key": "Esc",
+   "wait_ms": 110
+  },
+  {
+   "key": "Esc",
+   "wait_ms": 110
+  },
+  {
+   "key": "Esc",
+   "wait_ms": 110
+  },
+  {
+   "key": "Esc",
+   "wait_ms": 110
+  },
+  {
+   "key": "Esc",
+   "wait_ms": 110
+  },
+  {
+   "wait_for": {
+    "text": "long-press",
+    "timeout_ms": 15000
+   }
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 30000
+   }
+  },
+  {
+   "snap": "after_esc"
+  }
+ ]
+}

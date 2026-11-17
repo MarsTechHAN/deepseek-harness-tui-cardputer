@@ -43,10 +43,12 @@ repository.
   [auto|low|high|max]`, `/config` (interactive wizard: options everywhere, text
   input only for the API key and a custom base URL), `/login` (real DeepSeek
   Platform sign-in; see below), `/usage`, `/key`, `/resume` (menu picker), `/rename <title>`,
-  `/compact`, `/goal`, `/clear`, `/quit`.
+  `/compact`, `/goal`, `/apps`, `/clear`, `/quit`.
 - `/goal <objective>` starts a long-running goal; `/goal` shows it, and
   `/goal edit|pause|resume|clear` manages it. `/compact` summarises older
   history immediately with the same method automatic compaction uses.
+- `/apps` opens the manager for the apps dst built, where Enter runs one and
+  `x` deletes it. Creator mode itself is a row in `/config` (see below).
 
 **Usage and context**
 - `/usage` reports cumulative totals in Claude Code's style: cache hit rate,
@@ -111,11 +113,38 @@ repository.
   select, Enter runs it (commands that need an argument are completed with a space
   instead). The list scrolls with the selection.
 
+**Creator mode** (`src/apps.rs`, design in [docs/CREATOR.md](docs/CREATOR.md))
+- Opt-in mode where dst is the device's only program: everything the user uses
+  is something dst built and saved. Off by default; the `Mode` row in
+  `/config` switches it (`tui.mode: normal|creator`), and the switch is
+  announced in the transcript with a creator idle hint afterwards.
+- Every build becomes a persistent app package under
+  `~/.dst/apps/<category>/<name>/`: `app.json` (manifest), `APP.md` (a short
+  annotation written for the user) and the entry program. The model creates them
+  with the creator tools `app_save` / `app_file` and runs them with `app_run`,
+  which takes over the panel full-screen and hands it back when the app exits.
+- A skills-style catalog (`- system/battery_viewer — Battery viewer [sh]: …`,
+  one line per app, capped) is injected into the system prompt each turn, so the
+  model knows what already exists and updates it instead of duplicating it;
+  `APP.md` is read on demand with `read_file`.
+- `/apps` is the user's side: a menu with the app list, `→` shows the annotation,
+  Enter runs (doc apps open their APP.md in the panel), `x` deletes after `y/n`.
+- Consensus the platform enforces, not the apps: **long-press Esc always leaves
+  an app** and gives the screen back to the chat (the runner watches keyboard
+  auto-repeat and kills the app; trailing Esc repeats are swallowed). Model-side
+  runs have a 60 s default time limit (`timeout_s`), user-started runs have none.
+- Creator mode announces saved apps in the transcript and nudges when a turn
+  changed files without saving an app, so work is not lost between sessions.
+- Only available on the interactive TUI: `app_run` fails cleanly in `--once`,
+  background jobs and `--call`. Writes are confined to the app root by the tool
+  (slug/path validation, per-file and per-app size caps).
+
 **Configuration screen**
 - `/config` is a menuconfig-style screen: arrows move, Enter edits, Esc leaves. It
   edits model, effort, endpoint, API key, TTS voice, auto-send, queue mode,
-  language, step/compaction/goal budgets, sandbox mode and the auto-judge
-  model, and warns before switching to a third-party endpoint.
+  language, UI mode (normal/creator), step/compaction/goal budgets, sandbox
+  mode and the auto-judge model, and warns before switching to a third-party
+  endpoint.
 
 **Endpoint capabilities**
 - Speech and the server-side tools (`search`/`fetch`/`ocr`) only exist on DeepSeek's
@@ -140,7 +169,7 @@ repository.
   scrollable panel viewer, `s` saves it under `~/.dst/tmp/`. Ctrl+A/Ctrl+E move the cursor, Ctrl+W deletes a word;
   Home/End jump to the top/bottom of the scrollback when not editing.
 - Menus show a `current/total` position in the title when the list is longer
-  than the panel (config 1/15, help 1/15, long resume/task lists).
+  than the panel (config 1/16, help 1/16, long resume/task lists).
 - Menu right-hand text truncates with `…` instead of silently cutting words;
   `/help`, `/rewind`, `/config` and onboarding show a live description/preview
   for the highlighted row.
@@ -233,6 +262,7 @@ configured; Esc keeps `auto`, and `/config` changes it later.
   config.yml     all settings, including api.key (mode 600)
   sessions/      resumable conversation logs
   skills/        skill packages (SKILL.md per folder)
+  apps/          creator-mode app packages (<category>/<name>/{app.json,APP.md,…})
   mcp.json       MCP server definitions
   jobs.json      cron / file-watch jobs
   cache/         transient audio and scratch files
@@ -377,13 +407,21 @@ command palette, artifact panel, `rename`+`/resume` session menu across a
 restart, onboarding menu, sandbox auto/strict/full, background jobs, watchers,
 searchable resume, push-to-talk with mocked speech, `speak`, the nine-step
 WeChat login chain, provider auth/rate-limit failures and their recovery, long
-input scrolling/editing (including CJK), the multi-entry tool-output viewer and
-the scrolling artifact panel) and asserts on captured screens *and* on the
-request log
+input scrolling/editing (including CJK), the multi-entry tool-output viewer,
+the scrolling artifact panel, and creator mode `creator_mode`, `creator_build`,
+`creator_run`, `creator_run_esc`, `creator_apps_zh`, `creator_nudge`) and
+asserts on captured screens *and* on the request log
 (e.g. that a `<goal_round>` prompt was sent, or that a checkpoint message
 reached the next request). `check_memory.py` samples RSS across a 20-turn
 session, and `run_all.py` runs them together.
 
+PNG captures are rendered at the panel's native resolution: a 320×170
+framebuffer with a 53×12 grid of 6×14 px cells (6×13 glyph box), the public
+domain X11 6×13 bitmap font (`tools/sim/fonts/`) for Latin and a 12×13
+subpixel-antialiased CJK fallback, then integer-upscaled for viewing — see
+`tools/sim/README.md`. `live_creator_check.py` proves creator mode end-to-end with the same live
+endpoint: the model must call `app_save`/`app_file`, a package must appear under
+`~/.dst/apps` and `/apps` must show it (`docs/live-creator.png`).
 `run_live.py` is the common-usage visual pass: it uses the **real local vLLM
 endpoint** from `~/.dsh/settings.yaml` (real reasoning/streaming/tool calls)
 and mocks only TTS/ASR (`DST_MOCK_SPEECH=1`), capturing startup, streaming,
@@ -419,6 +457,7 @@ src/cmd.rs       human commands (/model, /compact, /goal, /resume, ...)
 src/dsh_login.rs real DSH/WeChat nine-step login (curl + std crypto)
 src/login.rs     login HTTP page (WeChat QR + API key) and QR rendering
 src/skills.rs    skill catalog and loader
+src/apps.rs      creator mode: app packages, catalog, screen takeover runtime
 src/mcp.rs       MCP stdio client
 src/jobs.rs      cron + file-watch scheduler
 src/voice.rs     TTS/ASR, resampling, WAV framing, recorder
@@ -426,6 +465,7 @@ src/json.rs      minimal JSON
 tools/sim/       pty screen simulator + scripted mock API + live-API walkthrough
 docs/UX-AUDIT.md 12-row screen-by-screen UX audit checklist and known limits
 docs/UX-LIVE.md  common-usage walkthrough against the real local vLLM model
+docs/CREATOR.md  creator mode: requirements, data layout, prompt + takeover contract
 tools/sim/mock_login.py  mock of the nine-step DSH login chain (host tests)
 tools/sim/qr_scan.js     jsQR decoder for the panel QR image
 tools/sim/check_qr_scan.py  renders the panel QR and proves it decodes

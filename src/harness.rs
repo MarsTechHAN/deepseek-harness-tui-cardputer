@@ -164,6 +164,17 @@ pub trait Ui {
     fn steer(&mut self) -> Option<String> {
         None
     }
+    /// Creator mode: hand the panel to a saved app until it exits, is stopped
+    /// by a long-press of Esc, or times out. Front ends without an interactive
+    /// screen reject the request instead of hanging.
+    fn run_app(
+        &mut self,
+        _app: &crate::apps::App,
+        _timeout_s: u64,
+    ) -> Result<String, String> {
+        Err("app_run needs the interactive screen (the TUI); this front end cannot take over the panel"
+            .to_string())
+    }
 }
 
 /// Bridges the tool executor's host callbacks back onto the UI, so a running
@@ -187,6 +198,9 @@ impl<'a> tool::ToolHost for UiHost<'a> {
         }
     }
     fn cancel(&mut self) -> bool {
+        // A tool may be waiting for the panel (creator mode app_run): service
+        // that request before pumping keys, so the app starts within 15 ms.
+        crate::apps::service_launch(self.ui);
         self.ui.pump() == Action::Cancel
     }
     fn tick(&mut self, name: &str, secs: f32) {

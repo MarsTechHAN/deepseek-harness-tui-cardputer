@@ -1,0 +1,22 @@
+{
+ "responses": [
+  {
+   "reasoning": "The app exists already; run it for the user.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "r1",
+     "name": "app_run",
+     "arguments": {
+      "name": "battery_viewer",
+      "timeout_s": 2
+     }
+    }
+   ]
+  },
+  {
+   "reasoning": "Back.",
+   "content": "It ran on the panel and the time limit brought the chat back."
+  }
+ ]
+}

@@ -326,6 +326,10 @@ pub fn classify(name: &str, args: &J) -> Class {
         | "artifact" | "rename" | "get_goal" | "create_goal" | "update_goal"
         | "job_list" | "job_output" | "job_wait" | "job_kill"
         | "watcher_list" | "watcher_stop" => Class::Safe,
+        // Creator mode: app_save/app_file can only write inside the app root
+        // (the tools validate every path), and app_run runs a package the user
+        // explicitly asked dst to build. Registered only in creator mode.
+        "app_save" | "app_file" | "app_run" => Class::Safe,
         "edit_file" => {
             let path = crate::tool::str_arg(args, "path").unwrap_or_default();
             if path_is_system(&path) { Class::Danger }
@@ -537,6 +541,17 @@ mod tests {
         for c in ["./deploy.sh", "systemctl freeze foo", "sed -i s/a/b/ f", "echo $(cat /etc/shadow)"] {
             assert_eq!(classify_command(c), Class::Unknown, "expected unknown: {c}");
         }
+    }
+
+    #[test]
+    fn creator_app_tools_are_safe() {
+        // app_save/app_file validate every path inside the app root, and
+        // app_run is the explicit creator-mode action; none should trigger an
+        // extra judge request.
+        let args = crate::json::parse(r#"{"name":"x","path":"run.sh","content":"y"}"#).unwrap();
+        assert_eq!(classify("app_save", &args), Class::Safe);
+        assert_eq!(classify("app_file", &args), Class::Safe);
+        assert_eq!(classify("app_run", &args), Class::Safe);
     }
 
     #[test]

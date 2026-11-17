@@ -1,0 +1,274 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/apps"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 450,
+   "snap": "list"
+  },
+  {
+   "key": "Right"
+  },
+  {
+   "wait_ms": 350,
+   "snap": "preview"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 250
+  },
+  {
+   "send": "/config"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 500
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "off"
+  },
+  {
+   "send": "/config"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 500
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "on"
+  },
+  {
+   "send": "/config"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 500
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "wait_ms": 300,
+   "snap": "config"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 250
+  },
+  {
+   "send": "/apps"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "list2"
+  },
+  {
+   "send": "x"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "delete_ask"
+  },
+  {
+   "send": "y"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "deleted"
+  },
+  {
+   "send": "/apps"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "empty"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 200
+  }
+ ]
+}

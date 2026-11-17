@@ -114,6 +114,12 @@ pub const COMMANDS: &[Command] = &[
         input_hint: Some("[wizard]"),
     },
     Command {
+        name: "apps",
+        category: "cat_tools",
+        description: "browse, run or delete the apps dst built (menu)",
+        input_hint: Some("[run <name>]"),
+    },
+    Command {
         name: "clear",
         category: "cat_session",
         description: "clear the transcript",
@@ -199,6 +205,10 @@ pub struct Outcome {
     pub extensions_menu: bool,
     /// Open the command palette menu (/help).
     pub help_menu: bool,
+    /// Open the saved-app manager (creator mode /apps).
+    pub apps_menu: bool,
+    /// Run this saved app on the screen after the command handling (/apps run).
+    pub run_app: Option<String>,
 }
 
 impl Outcome {
@@ -214,6 +224,8 @@ impl Outcome {
             rewind_menu: false,
             extensions_menu: false,
             help_menu: false,
+            apps_menu: false,
+            run_app: None,
             compact: false,
         }
     }
@@ -229,6 +241,8 @@ impl Outcome {
             rewind_menu: false,
             extensions_menu: false,
             help_menu: false,
+            apps_menu: false,
+            run_app: None,
             compact: false,
         }
     }
@@ -271,6 +285,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             rewind_menu: false,
             extensions_menu: false,
             help_menu: true,
+            apps_menu: false,
+            run_app: None,
         },
         "model" => {
             if arg.is_empty() {
@@ -285,6 +301,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             rewind_menu: false,
             extensions_menu: false,
             help_menu: false,
+            apps_menu: false,
+            run_app: None,
                     compact: false,
                 }
             } else if arg.len() > 120 {
@@ -387,6 +405,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             rewind_menu: false,
             extensions_menu: false,
             help_menu: false,
+            apps_menu: false,
+            run_app: None,
                     compact: false,
                 }
             }
@@ -396,11 +416,15 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             quit: false, clear: false, login: false, config_wizard: false,
             resume_menu: false, model_menu: false, compact: false,
             rewind_menu: true, extensions_menu: false, help_menu: false,
+            apps_menu: false,
+            run_app: None,
         },
         "extensions" => Outcome {
             lines: Vec::new(), quit: false, clear: false, login: false,
             config_wizard: false, resume_menu: false, model_menu: false,
             compact: false, rewind_menu: false, extensions_menu: true, help_menu: false,
+            apps_menu: false,
+            run_app: None,
         },
         "rename" => {
             if arg.is_empty() {
@@ -423,6 +447,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             rewind_menu: false,
             extensions_menu: false,
             help_menu: false,
+            apps_menu: false,
+            run_app: None,
             compact: true,
         },
         "goal" => {
@@ -474,6 +500,59 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 Err(e) => Outcome::many(vec![(e, KIND_ERR)]),
             }
         }
+        "apps" => {
+            let apps = crate::apps::load();
+            // `/apps run <name>` runs one app directly; bare `/apps` opens the menu.
+            if let Some(rest) = arg.strip_prefix("run ").or_else(|| arg.strip_prefix("run\t")) {
+                let name = rest.trim();
+                if name.is_empty() {
+                    usage("/apps run <name>")
+                } else {
+                    match crate::apps::find(name) {
+                        None => Outcome::many(vec![(
+                            crate::i18n::tf("apps_not_found", &[name]),
+                            KIND_ERR,
+                        )]),
+                        Some(app) => Outcome {
+                            lines: vec![(crate::i18n::tf("apps_launching", &[&app.label()]), KIND_DIM)],
+                            quit: false,
+                            clear: false,
+                            login: false,
+                            config_wizard: false,
+                            resume_menu: false,
+                            model_menu: false,
+                            rewind_menu: false,
+                            extensions_menu: false,
+                            help_menu: false,
+                            apps_menu: false,
+                            run_app: Some(app.label()),
+                            compact: false,
+                        },
+                    }
+                }
+            } else if apps.is_empty() {
+                Outcome::many(vec![(
+                    crate::i18n::t("cmd_apps_empty").to_string(),
+                    KIND_DIM,
+                )])
+            } else {
+                Outcome {
+                    lines: Vec::new(),
+                    quit: false,
+                    clear: false,
+                    login: false,
+                    config_wizard: false,
+                    resume_menu: false,
+                    model_menu: false,
+                    rewind_menu: false,
+                    extensions_menu: false,
+                    help_menu: false,
+                    apps_menu: true,
+            run_app: None,
+                    compact: false,
+                }
+            }
+        }
         "clear" => Outcome {
             lines: Vec::new(),
             quit: false,
@@ -485,6 +564,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             rewind_menu: false,
             extensions_menu: false,
             help_menu: false,
+            apps_menu: false,
+            run_app: None,
             compact: false,
         },
         "quit" | "exit" | "q" => Outcome {
@@ -498,6 +579,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             rewind_menu: false,
             extensions_menu: false,
             help_menu: false,
+            apps_menu: false,
+            run_app: None,
             compact: false,
         },
         "" => usage("/"),
@@ -595,5 +678,23 @@ mod tests {
     fn quit_and_clear_flags() {
         assert!(dispatch("/quit", &mut cfg()).unwrap().quit);
         assert!(dispatch("/clear", &mut cfg()).unwrap().clear);
+    }
+
+    #[test]
+    fn apps_command_and_mode_location() {
+        let mut c = cfg();
+        // Creator mode is a /config row, not a top-level command.
+        assert!(!COMMANDS.iter().any(|c| c.name == "creator"));
+        let out = evaluate("/creator", &mut c, false).unwrap();
+        assert!(!c.creator, "there is no /creator command to toggle the mode");
+        assert!(out.lines[0].1 == KIND_ERR, "{:?}", out.lines[0]);
+        // No apps in this process: the empty state or the menu, never a panic.
+        let out = evaluate("/apps", &mut c, false).unwrap();
+        assert!(out.apps_menu || !out.lines.is_empty());
+        let out = evaluate("/apps run nope", &mut c, false).unwrap();
+        assert!(out.run_app.is_none());
+        assert!(out.lines[0].1 == KIND_ERR, "{:?}", out.lines[0]);
+        assert!(COMMANDS.iter().any(|c| c.name == "apps"));
+        assert_eq!(palette("/app")[0].0, "apps");
     }
 }

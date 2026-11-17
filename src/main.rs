@@ -11,6 +11,7 @@
 //! Zero external crates: JSON is hand-rolled, HTTP goes through `curl`.
 
 mod api;
+mod apps;
 mod art;
 mod bg;
 mod checkpoint;
@@ -94,6 +95,10 @@ pub struct Scr {
     live: Option<(u8, String)>,
     /// Strict-mode permission pop-up.
     approval: Option<ApprovalView>,
+    /// Creator mode is on: idle hint, app manager and system prompt follow it.
+    creator: bool,
+    /// Tool names called during the current turn (creator-mode nudge).
+    turn_tools: Vec<String>,
     /// Messages produced by background watchers: (model text, transcript label).
     auto_queue: Vec<(String, String)>,
     /// Label for the auto message edit() is about to return.
@@ -199,6 +204,8 @@ impl Scr {
             queue: Vec::new(),
             live: None,
             approval: None,
+            creator: false,
+            turn_tools: Vec::new(),
             auto_queue: Vec::new(),
             auto_label: None,
             last_esc: None,
@@ -526,7 +533,11 @@ impl Scr {
         }
         // Idle status line doubles as a key-hint area.
         if live_line.is_empty() && !self.busy && self.input.is_empty() && self.scroll == 0 {
-            live_line = i18n::t("idle_hint").to_string();
+            live_line = if self.creator {
+                i18n::t("creator_hint").to_string()
+            } else {
+                i18n::t("idle_hint").to_string()
+            };
             hot = false;
         }
         if self.scroll > 0 {
@@ -904,7 +915,7 @@ impl Scr {
                     self.draw();
                     true
                 }
-                0x1b => match self.read_key_timeout() {
+                0x1b => match self.read_key_after_esc() {
                     Some(b'[') | Some(b'O') => {
                         match self.read_key_timeout() {
                             Some(b'A') => self.artifact_scroll(-1),
@@ -937,11 +948,7 @@ impl Scr {
     fn read_key_now(&self) -> Option<u8> {
         let mut b = [0u8; 1];
         let n = std::io::stdin().read(&mut b).unwrap_or(0);
-        if n == 1 {
-            Some(b[0])
-        } else {
-            None
-        }
+        if n == 1 { Some(b[0]) } else { None }
     }
 
     fn read_key(&self) -> u8 {
@@ -956,13 +963,19 @@ impl Scr {
         }
     }
 
+    /// A byte that may follow Esc (arrow/function-key sequences). Read without
+    /// waiting: a plain Esc tap must not swallow the next typed character and
+    /// must not delay the cancel by the poll-loop timeout.
+    fn read_key_after_esc(&self) -> Option<u8> {
+        poll_mode(true);
+        self.read_key_now()
+    }
+
     fn read_key_timeout(&self) -> Option<u8> {
-        let _ = std::process::Command::new("stty")
-            .args(["-F", "/dev/tty", "min", "0", "time", "3"]).output();
+        stty_tty(&["min", "0", "time", "3"]);
         let mut b = [0u8; 1];
         let n = std::io::stdin().read(&mut b).unwrap_or(0);
-        let _ = std::process::Command::new("stty")
-            .args(["-F", "/dev/tty", "min", "1", "time", "0"]).output();
+        stty_tty(&["min", "1", "time", "0"]);
         if n == 1 { Some(b[0]) } else { None }
     }
 
@@ -1506,7 +1519,7 @@ impl Scr {
                     // still playing after its turn was cancelled. Waiting for
                     // a second byte (the old `read_key`) blocked the editor
                     // until some other key was pressed.
-                    let b1 = match self.read_key_timeout() {
+                    let b1 = match self.read_key_after_esc() {
                         Some(b) => b,
                         None => {
                             // Double Esc within 600 ms opens the rewind picker
@@ -1537,6 +1550,7 @@ impl Scr {
                         continue;
                     }
                     if b1 == b'[' || b1 == b'O' {
+                        poll_mode(false);
                         let b2 = self.read_key();
                         if b2.is_ascii_digit() {
                             // Extended key: ESC [ 1 3 ; 2 u is Shift+Enter.
@@ -1740,18 +1754,56 @@ fn numbered(t: &str) -> Option<(String, &str)> {
 
 /// Drop inline markup the 6x13 font cannot render: **bold**, `code`,
 /// [text](url) and stray emphasis markers.
+/// Drop inline Markdown emphasis so the transcript reads as plain text, while
+/// keeping characters that only look like markers: `snake_case` identifiers and
+/// `2*3` are content, not emphasis (this used to print app names as
+/// `batteryviewer` in creator mode).
 fn strip_inline(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
         match c {
-            '*' | '_' | '`' => { /* drop emphasis markers */ }
+            '*' | '_' | '`' => {
+                if c == '`' {
+                    i += 1;
+                    continue;
+                }
+                // Run of identical markers, e.g. **bold** / __bold__.
+                let mut n = 1usize;
+                while i + n < chars.len() && chars[i + n] == c {
+                    n += 1;
+                }
+                let prev = if i == 0 { ' ' } else { chars[i - 1] };
+                let next = if i + n < chars.len() { chars[i + n] } else { ' ' };
+                let prev_word = prev.is_alphanumeric();
+                let next_word = next.is_alphanumeric();
+                let keep = if c == '_' {
+                    // Intraword underscore is part of the identifier.
+                    prev_word && next_word
+                } else if n == 1 {
+                    // Multiplicative `a * b` / `2*3`, and a lone bullet-ish `*`.
+                    prev_word == next_word
+                } else {
+                    false
+                };
+                if keep {
+                    for _ in 0..n {
+                        out.push(c);
+                    }
+                }
+                i += n;
+                continue;
+            }
             '[' => {
-                // [text](url) -> text (url)
+                let mut j = i + 1;
                 let mut label = String::new();
                 let mut depth = 0;
                 let mut closed = false;
-                for d in chars.by_ref() {
+                while j < chars.len() {
+                    let d = chars[j];
+                    j += 1;
                     if d == '[' {
                         depth += 1;
                     }
@@ -1764,14 +1816,16 @@ fn strip_inline(s: &str) -> String {
                     }
                     label.push(d);
                 }
-                if closed && chars.peek() == Some(&'(') {
-                    chars.next();
+                if closed && j < chars.len() && chars[j] == '(' {
+                    j += 1;
                     let mut url = String::new();
-                    for d in chars.by_ref() {
-                        if d == ')' {
+                    while j < chars.len() {
+                        if chars[j] == ')' {
+                            j += 1;
                             break;
                         }
-                        url.push(d);
+                        url.push(chars[j]);
+                        j += 1;
                     }
                     out.push_str(&label);
                     out.push_str(" (");
@@ -1784,11 +1838,41 @@ fn strip_inline(s: &str) -> String {
                         out.push(']');
                     }
                 }
+                i = j;
+                continue;
             }
             _ => out.push(c),
         }
+        i += 1;
     }
     out
+}
+
+#[cfg(test)]
+mod inline_tests {
+    use super::strip_inline;
+
+    #[test]
+    fn keeps_identifiers_and_math() {
+        assert_eq!(strip_inline("system/battery_viewer"), "system/battery_viewer");
+        assert_eq!(strip_inline("snake_case_name"), "snake_case_name");
+        assert_eq!(strip_inline("3 * 4 = 12"), "3 * 4 = 12");
+        assert_eq!(strip_inline("2*3"), "2*3");
+    }
+
+    #[test]
+    fn drops_emphasis_and_code_markers() {
+        assert_eq!(strip_inline("**bold** text"), "bold text");
+        assert_eq!(strip_inline("_italic_ text"), "italic text");
+        assert_eq!(strip_inline("`code` here"), "code here");
+        assert_eq!(strip_inline("__bold__"), "bold");
+    }
+
+    #[test]
+    fn keeps_links_readable() {
+        assert_eq!(strip_inline("see [docs](https://x.y)"), "see docs (https://x.y)");
+        assert_eq!(strip_inline("[unclosed"), "[unclosed");
+    }
 }
 
 /// Display width in terminal cells (CJK counts as two).
@@ -1887,7 +1971,11 @@ fn term_size() -> (usize, usize) {
     // stdin), then /dev/tty. Whatever comes back is clamped to the panel:
     // 320x170 / 6x13 = 53 columns x 13 rows. Sizing to a larger default is
     // what made long lines run past the edge and soft-wrap.
-    let probes: [&[&str]; 2] = [&["size"], &["-F", "/dev/tty", "size"]];
+    let probes: [&[&str]; 3] = [
+        &["size"],
+        &["-F", "/dev/tty", "size"],
+        &["-f", "/dev/tty", "size"],
+    ];
     for probe in probes {
         if let Ok(o) = std::process::Command::new("stty").args(probe).output() {
             let s = String::from_utf8_lossy(&o.stdout);
@@ -1904,15 +1992,28 @@ fn term_size() -> (usize, usize) {
     (12, 53)
 }
 
+/// Run `stty` against the controlling terminal. GNU stty takes `-F`, the BSD
+/// stty on macOS takes `-f`; try both so the host simulator really exercises
+/// the same raw/poll modes the device gets (otherwise the simulator's own
+/// VTIME setting silently stands in for dst's).
+pub(crate) fn stty_tty(args: &[&str]) -> bool {
+    for flag in ["-F", "-f"] {
+        let mut cmd = std::process::Command::new("stty");
+        cmd.arg(flag).arg("/dev/tty").args(args);
+        if let Ok(o) = cmd.output() {
+            if o.status.success() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn raw_mode(on: bool) {
     let arg = if on { "raw" } else { "-raw" };
-    let _ = std::process::Command::new("stty")
-        .args(["-F", "/dev/tty", arg, "-echo"])
-        .output();
+    stty_tty(&[arg, "-echo"]);
     if !on {
-        let _ = std::process::Command::new("stty")
-            .args(["-F", "/dev/tty", "sane"])
-            .output();
+        stty_tty(&["sane"]);
     }
 }
 
@@ -1929,7 +2030,7 @@ DEVICE
   returns one tool message per call carrying its tool_call_id.
 
 SCREEN - this shapes every reply
-- 53 columns x 13 rows. The chat log shows about 9 lines; one row is the status
+- 53 columns x 12 rows. The chat log shows about 8 lines; one row is the status
   line and one is the input line.
 - A reply must be readable without scrolling: aim for <= 8 lines, each under
   53 characters. Short lines beat long paragraphs.
@@ -2105,6 +2206,16 @@ impl<'a> TermUi<'a> {
 }
 
 impl<'a> harness::Ui for TermUi<'a> {
+    fn run_app(
+        &mut self,
+        app: &crate::apps::App,
+        timeout_s: u64,
+    ) -> Result<String, String> {
+        let result = crate::apps::run_on_screen(app, timeout_s);
+        self.scr.draw();
+        result
+    }
+
     fn on(&mut self, ev: Ev) {
         match ev {
             Ev::Delta(d) => {
@@ -2171,6 +2282,7 @@ impl<'a> harness::Ui for TermUi<'a> {
             Ev::ToolCall { id, name, title } => {
                 self.reset_think();
                 self.scr.live = None;
+                self.scr.turn_tools.push(name.clone());
                 let raw = format!("* {name} > {title} \u{2026}");
                 let raw: String = raw.chars().take(self.scr.cols.saturating_sub(4)).collect();
                 self.scr.push(&fit(&raw, self.scr.cols.saturating_sub(1)), K_DIM);
@@ -2282,6 +2394,8 @@ impl<'a> harness::Ui for TermUi<'a> {
         };
         self.scr.approval = None;
         self.scr.draw();
+        // read_key_timeout leaves VMIN=1; the turn's pump needs VMIN=0 again.
+        poll_mode(true);
         verdict
     }
 
@@ -2327,7 +2441,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                     // Esc cancels the turn, including a `speak` clip that is
                     // still playing: the clip is a side effect of the turn, so
                     // the interrupt has to reach the speaker too.
-                    match self.scr.read_key_timeout() {
+                    match self.scr.read_key_after_esc() {
                         Some(b'\r') => {
                             // Steering: deliver at the next step boundary.
                             let line: String = self.scr.input.iter().collect();
@@ -2477,17 +2591,13 @@ fn tail_chars(s: &str, n: usize) -> String {
 }
 
 /// Switch the tty to non-blocking key reads for the duration of a turn.
-fn poll_mode(on: bool) {
-    let _ = std::process::Command::new("stty")
-        .args([
-            "-F",
-            "/dev/tty",
-            "min",
-            if on { "0" } else { "1" },
-            "time",
-            "0",
-        ])
-        .output();
+///
+/// Every loop that calls `Ui::pump` must be in this mode: the pump reads keys
+/// with VMIN=0 and would otherwise block on the first iteration. Turns set it
+/// from the driver loop; manual compaction and the approval pop-up restore it
+/// because they read keys with their own timeout helper in between.
+pub(crate) fn poll_mode(on: bool) {
+    stty_tty(&["min", if on { "0" } else { "1" }, "time", "0"]);
 }
 
 // ------------------------------------------------------------------ splash
@@ -2630,7 +2740,7 @@ fn login_pick(scr: &mut Scr) -> Option<u8> {
         scr.draw();
         let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
         if k == 0x1b {
-            match scr.read_key_timeout() {
+            match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
                     Some(b'A') => sel = sel.saturating_sub(1),
                     Some(b'B') => sel = (sel + 1).min(items.len() - 1),
@@ -2897,10 +3007,6 @@ fn login_web(scr: &mut Scr, port: u16, lang: &str) -> Result<LoginResult, String
 }
 
 fn login_type(scr: &mut Scr) -> Option<LoginResult> {
-    let items = vec![
-        MenuItem { label: i18n::t("login_opt_wechat").into(), value: String::new() },
-        MenuItem { label: i18n::t("onboard_key").into(), value: String::new() },
-    ];
     // Direct typing offers the two credential types instead of the QR paths.
     let items = vec![
         MenuItem { label: i18n::t("login_token_prompt").trim_end_matches(':').into(), value: String::new() },
@@ -2918,7 +3024,7 @@ fn login_type(scr: &mut Scr) -> Option<LoginResult> {
         scr.draw();
         let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
         if k == 0x1b {
-            match scr.read_key_timeout() {
+            match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
                     Some(b'A') => sel = sel.saturating_sub(1),
                     Some(b'B') => sel = (sel + 1).min(items.len() - 1),
@@ -3059,7 +3165,7 @@ fn onboarding_sandbox(scr: &mut Scr, config_rc: &ConfigRc) {
         scr.draw();
         let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
         if k == 0x1b {
-            match scr.read_key_timeout() {
+            match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
                     Some(b'A') => sel = sel.saturating_sub(1),
                     Some(b'B') => sel = (sel + 1).min(modes.len() - 1),
@@ -3123,7 +3229,7 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc) {
             None => continue,
         };
         if k == 0x1b {
-            match scr.read_key_timeout() {
+            match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
                     Some(b'A') => sel = sel.saturating_sub(1),
                     Some(b'B') => sel = (sel + 1).min(items.len() - 1),
@@ -3399,7 +3505,7 @@ fn resume_menu(scr: &mut Scr) -> Option<std::path::PathBuf> {
             None => continue,
         };
         if k == 0x1b {
-            match scr.read_key_timeout() {
+            match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
                     Some(b'A') => {
                         sel = sel.saturating_sub(1);
@@ -3509,7 +3615,7 @@ fn model_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             None => continue,
         };
         if k == 0x1b {
-            match scr.read_key_timeout() {
+            match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
                     Some(b'A') => sel = sel.saturating_sub(1),
                     Some(b'B') => sel = (sel + 1).min(items.len() - 1),
@@ -3570,7 +3676,7 @@ fn rewind_menu(scr: &mut Scr, msgs: &jobs::Msgs) {
         scr.draw();
         let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
         if k == 0x1b {
-            match scr.read_key_timeout() {
+            match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
                     Some(b'A') => sel = sel.saturating_sub(1),
                     Some(b'B') => sel = (sel + 1).min(list.len() - 1),
@@ -3679,7 +3785,7 @@ fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
         scr.draw();
         let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
         if k == 0x1b {
-            match scr.read_key_timeout() {
+            match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
                     Some(b'A') => { sel = sel.saturating_sub(1); preview = None; }
                     Some(b'B') => { sel = (sel + 1).min(items.len() - 1); preview = None; }
@@ -3746,7 +3852,7 @@ fn tool_output_panel(scr: &mut Scr) {
         scr.draw();
         let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
         if k == 0x1b {
-            match scr.read_key_timeout() {
+            match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
                     Some(b'A') => sel = sel.saturating_sub(1),
                     Some(b'B') => sel = (sel + 1).min(entries.len() - 1),
@@ -3846,7 +3952,7 @@ fn help_menu(scr: &mut Scr) -> Option<String> {
         scr.draw();
         let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
         if k == 0x1b {
-            match scr.read_key_timeout() {
+            match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
                     Some(b'A') => sel = sel.saturating_sub(1),
                     Some(b'B') => sel = (sel + 1).min(items.len() - 1),
@@ -3890,7 +3996,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
     let mut sel = 0usize;
     loop {
         let c = config_rc.borrow();
-        let (model, effort, base, kstate, voice, auto, queued, lang, steps, compact, goalr, sandbox_mode, judge_model, caps) = (
+        let (model, effort, base, kstate, voice, auto, queued, lang, mode, steps, compact, goalr, sandbox_mode, judge_model, caps) = (
             c.model.clone(),
             c.effort.clone(),
             c.base.clone(),
@@ -3905,6 +4011,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             c.auto_send_voice,
             c.queued_default,
             c.language.clone(),
+            if c.creator { "creator".to_string() } else { "normal".to_string() },
             if c.max_steps == 0 { i18n::t("unlimited").to_string() } else { c.max_steps.to_string() },
             if c.compact_enabled {
                 format!("{} @ {}", i18n::t("on"), crate::compact::human_tokens(c.compact_threshold))
@@ -3940,6 +4047,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                 value: if queued { i18n::t("queued_mode").into() } else { i18n::t("immediate_mode").into() },
             },
             MenuItem { label: i18n::t("menu_language").into(), value: lang },
+            MenuItem { label: i18n::t("menu_mode").into(), value: mode },
             MenuItem { label: i18n::t("menu_steps").into(), value: steps },
             MenuItem { label: i18n::t("menu_compact").into(), value: compact },
             MenuItem { label: i18n::t("menu_goalrounds").into(), value: goalr },
@@ -3965,6 +4073,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             "cfg_help_autosend",
             "cfg_help_queue",
             "cfg_help_language",
+            "cfg_help_mode",
             "cfg_help_steps",
             "cfg_help_compact",
             "cfg_help_goalrounds",
@@ -3983,7 +4092,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             None => continue,
         };
         if k == 0x1b {
-            match scr.read_key_timeout() {
+            match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
                     Some(b'A') => sel = sel.saturating_sub(1),
                     Some(b'B') => sel = (sel + 1).min(items.len() - 1),
@@ -4006,6 +4115,11 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             continue;
         }
         match sel {
+            8 => {
+                let mut c = config_rc.borrow_mut();
+                c.creator = !c.creator;
+                let _ = c.save();
+            }
             0 => {
                 let cfg = api_cfg(&config_rc.borrow());
                 let models = crate::api::list_models(&cfg).unwrap_or_default();
@@ -4033,7 +4147,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                         scr.draw();
                         let kk = match scr.read_key_timeout() { Some(k) => k, None => continue };
                         if kk == 0x1b {
-                            match scr.read_key_timeout() {
+                            match scr.read_key_after_esc() {
                                 Some(b'[') => {
                                     match scr.read_key_timeout() {
                                         Some(b'A') => msel = msel.saturating_sub(1),
@@ -4075,7 +4189,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                     scr.draw();
                     let kk = match scr.read_key_timeout() { Some(k) => k, None => continue };
                     if kk == 0x1b {
-                        match scr.read_key_timeout() {
+                        match scr.read_key_after_esc() {
                             Some(b'[') => {
                                 match scr.read_key_timeout() {
                                     Some(b'A') => esel = 0,
@@ -4151,7 +4265,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                 i18n::set(next);
                 let _ = config_rc.borrow().save();
             }
-            8 => {
+            9 => {
                 if let Some(v) = menu_prompt(scr, i18n::t("config_prompt_steps"), false) {
                     match v.parse::<u32>() {
                         Ok(n) => {
@@ -4162,7 +4276,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                     }
                 }
             }
-            9 => {
+            10 => {
                 if let Some(v) = menu_prompt(
                     scr,
                     i18n::t("config_prompt_compact"),
@@ -4179,7 +4293,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                     }
                 }
             }
-            10 => {
+            11 => {
                 if let Some(v) = menu_prompt(scr, i18n::t("config_prompt_goal"), false) {
                     match v.parse::<u32>() {
                         Ok(n) => {
@@ -4190,7 +4304,7 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                     }
                 }
             }
-            12 => {
+            13 => {
                 if let Some(v) = menu_prompt(
                     scr,
                     i18n::t("config_prompt_judge"),
@@ -4201,12 +4315,12 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                     let _ = c.save();
                 }
             }
-            13 => {
+            14 => {
                 scr.menu = None;
                 scr.draw();
                 extensions_menu(scr, config_rc);
             }
-            11 => {
+            12 => {
                 let mut c = config_rc.borrow_mut();
                 c.sandbox_mode = crate::sandbox::Mode::parse(&c.sandbox_mode)
                     .unwrap_or(crate::sandbox::Mode::Auto)
@@ -4225,6 +4339,179 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
     }
 }
 
+
+
+/// Saved-app manager (creator mode): list, preview the annotation, run, delete.
+fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let shorten = |p: String| {
+        if !home.is_empty() && p.starts_with(&home) {
+            format!("~{}", &p[home.len()..])
+        } else {
+            p
+        }
+    };
+    let mut sel = 0usize;
+    let mut preview: Option<Vec<String>> = None;
+    let mut confirm: Option<String> = None;
+    let mut pending: Vec<(String, u8)> = Vec::new();
+    loop {
+        let apps = crate::apps::load();
+        if apps.is_empty() {
+            scr.menu = None;
+            pending.push((i18n::t("cmd_apps_empty").to_string(), K_DIM));
+            break;
+        }
+        if sel >= apps.len() {
+            sel = apps.len() - 1;
+        }
+        let items: Vec<MenuItem> = apps
+            .iter()
+            .map(|a| MenuItem {
+                label: if a.title.is_empty() { a.name.clone() } else { a.title.clone() },
+                value: format!("{} · {}", a.category, a.kind),
+            })
+            .collect();
+        // The preview shares the 12-row panel with the list: keep it to six
+        // rows (path, kind/entry, updated, blank, two annotation lines) so the
+        // title, the selected row and the footer all stay on screen.
+        let details: Vec<Vec<String>> = apps
+            .iter()
+            .map(|a| {
+                let mut d = vec![
+                    i18n::tf("apps_path", &[&shorten(a.path())]),
+                    i18n::tf("apps_kind", &[&a.kind]),
+                ];
+                if !a.entry.is_empty() {
+                    d.push(i18n::tf("apps_entry", &[&a.entry]));
+                }
+                d.push(i18n::tf("apps_updated", &[&a.updated]));
+                d.push(String::new());
+                let body = crate::apps::annotation(a);
+                let mut lines: Vec<String> = body
+                    .lines()
+                    .map(|l| l.trim())
+                    .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                    .map(|l| l.trim_start_matches("**").trim_end_matches("**").to_string())
+                    .filter(|l| !l.starts_with("Kind:") && !l.starts_with("Entry:") && !l.starts_with("Path:"))
+                    .collect();
+                if lines.is_empty() {
+                    lines.push(a.description.clone());
+                }
+                d.extend(lines.into_iter().take(2));
+                let files = crate::apps::files(a);
+                if !files.is_empty() {
+                    let joined = files
+                        .iter()
+                        .take(4)
+                        .map(|(n, b)| format!("{n} ({b}B)"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    d.push(i18n::tf("apps_files", &[&joined]));
+                }
+                d
+            })
+            .collect();
+        let hint = match &confirm {
+            Some(name) => i18n::tf("apps_delete_ask", &[name]),
+            None => i18n::t("apps_hint").to_string(),
+        };
+        scr.menu = Some(Menu {
+            title: i18n::t("apps_title").into(),
+            items: items.clone(),
+            sel,
+            hint,
+            preview: preview.clone(),
+        });
+        scr.draw();
+        let k = match scr.read_key_timeout() {
+            Some(k) => k,
+            None => continue,
+        };
+        if let Some(name) = confirm.clone() {
+            confirm = None;
+            if k == b'y' || k == b'Y' {
+                match apps.iter().find(|a| a.label() == name) {
+                    Some(app) => match crate::apps::delete(app) {
+                        Ok(()) => pending.push((i18n::tf("apps_deleted", &[&name]), K_DIM)),
+                        Err(e) => pending.push((
+                            i18n::tf("apps_delete_failed", &[&name, &e]),
+                            K_ERR,
+                        )),
+                    },
+                    None => {}
+                }
+                sel = sel.saturating_sub(0);
+                preview = None;
+            }
+            continue;
+        }
+        if k == 0x1b {
+            match scr.read_key_after_esc() {
+                Some(b'[') => match scr.read_key_timeout() {
+                    Some(b'A') => {
+                        sel = sel.saturating_sub(1);
+                        preview = None;
+                    }
+                    Some(b'B') => {
+                        sel = (sel + 1).min(items.len() - 1);
+                        preview = None;
+                    }
+                    Some(b'C') => preview = Some(details[sel].clone()),
+                    _ => {}
+                },
+                _ => {
+                    scr.menu = None;
+                    break;
+                }
+            }
+            continue;
+        }
+        if k == 0x03 || k == b'q' {
+            scr.menu = None;
+            break;
+        }
+        if k == b'x' || k == b'X' {
+            confirm = Some(apps[sel].label());
+            continue;
+        }
+        if k == b'\r' || k == b'\n' {
+            let app = apps[sel].clone();
+            scr.menu = None;
+            scr.draw();
+            if app.kind == "doc" {
+                let body = crate::apps::annotation(&app);
+                let lines: Vec<String> = if body.trim().is_empty() {
+                    vec![app.description.clone()]
+                } else {
+                    body.lines().map(|l| l.to_string()).collect()
+                };
+                scr.artifact = Some(Artifact {
+                    title: app.title.clone(),
+                    body: lines,
+                    scroll: 0,
+                    notice: None,
+                });
+                scr.draw();
+                while scr.artifact.is_some() {
+                    scr.artifact_keystroke();
+                }
+                scr.draw();
+                continue;
+            }
+            match crate::apps::run_on_screen(&app, crate::apps::DIRECT_TIMEOUT_S) {
+                Ok(_) => pending.push((i18n::tf("apps_exited", &[&app.label()]), K_DIM)),
+                Err(e) => pending.push((e, K_ERR)),
+            }
+            continue;
+        }
+    }
+    scr.menu = None;
+    for (text, kind) in pending {
+        scr.push(&text, kind);
+    }
+    scr.draw();
+}
 
 /// One-time, actionable key tips after the first successful configuration.
 fn maybe_show_tips(scr: &mut Scr, config_rc: &ConfigRc) {
@@ -4249,14 +4536,71 @@ fn maybe_show_tips(scr: &mut Scr, config_rc: &ConfigRc) {
     let _ = c.save();
 }
 
+
+/// Effective tool set: the capability-filtered base registry, the feature
+/// tools, and the creator app tools only while creator mode is on.
+fn build_registry(caps: config::Capabilities, creator: bool) -> Vec<tool::ToolDef> {
+    let mut reg = tools::registry(caps);
+    reg.extend(goal::tool_defs());
+    reg.extend(session::tool_defs());
+    reg.extend(bg::tool_defs());
+    reg.extend(instructions::tool_defs());
+    reg.extend(todo::tool_defs());
+    reg.extend(mcp::tool_defs());
+    if creator {
+        reg.extend(apps::tool_defs());
+    }
+    reg
+}
+
+/// System prompt for the current settings. Rebuilt at startup and before every
+/// turn, because creator mode and the installed-app catalog change at runtime.
+fn build_system_prompt(
+    c: &config::Config,
+    skill_list: &[skills::Skill],
+    caps: config::Capabilities,
+) -> String {
+    let mut system_prompt = format!(
+        "{}{}\n\nGOALS\n{}\n{}\nSESSION\n{}",
+        SYSTEM_PROMPT,
+        skills::catalog_prompt(skill_list),
+        goal::guidance(),
+        TOOL_SAFETY_GUIDANCE,
+        SESSION_GUIDANCE
+    );
+    system_prompt.push_str(&instructions::prompt_section());
+    system_prompt.push_str(
+        "\nTODO AND MEMORY\n- Track multi-step work with todo_write; mark items done as you finish them.\n- Save durable user preferences and project conventions with memory_write (scope=project for workspace rules, global for cross-project). Read them with memory_read / memory_search before changing conventions. Never store secrets in memory.\n",
+    );
+    if !caps.web_tools || !caps.speech {
+        let mut caps_text = String::from("\nCAPABILITIES\n");
+        if !caps.web_tools {
+            caps_text.push_str(
+                "search, fetch and ocr are not registered because this is a third-party \
+OpenAI-compatible endpoint. Use bash/read_file/write_file instead, and do not tell \
+the user you can search the web.\n",
+            );
+        }
+        if !caps.speech {
+            caps_text.push_str(
+                "speech (ASR/TTS) is not available on this endpoint; do not mention the \
+speak tool and do not claim you can listen or talk.\n",
+            );
+        }
+        system_prompt.push_str(&caps_text);
+    }
+    if c.creator {
+        system_prompt.push_str(&apps::prompt_section(true, &apps::load()));
+    }
+    system_prompt
+}
+
 fn main() {
     // A panic must not leave the panel full of half-drawn glyphs and escape
     // sequences: restore the terminal first, then report.
     std::panic::set_hook(Box::new(|info| {
         use std::io::Write as _;
-        let _ = std::process::Command::new("stty")
-            .args(["-F", "/dev/tty", "sane", "min", "1", "time", "0"])
-            .output();
+        crate::stty_tty(&["sane", "min", "1", "time", "0"]);
         let mut o = std::io::stdout();
         let _ = o.write_all(b"\x1b[0m\x1b[?25h\x1b[2J\x1b[H");
         let _ = o.flush();
@@ -4403,43 +4747,10 @@ fn main() {
     let skill_list = skills::load_all();
     tools::set_skills(skill_list.clone());
     mcp::install(mcp::start_all());
-    let mut reg = tools::registry(config_rc.borrow().capabilities());
-    reg.extend(goal::tool_defs());
-    reg.extend(session::tool_defs());
-    reg.extend(bg::tool_defs());
-    reg.extend(instructions::tool_defs());
-    reg.extend(todo::tool_defs());
-    reg.extend(mcp::tool_defs());
     let mut caps_at_start = config_rc.borrow().capabilities();
-    let mut system_prompt = format!(
-        "{}{}\n\nGOALS\n{}\n{}\nSESSION\n{}",
-        SYSTEM_PROMPT,
-        skills::catalog_prompt(&skill_list),
-        goal::guidance(),
-        TOOL_SAFETY_GUIDANCE,
-        SESSION_GUIDANCE
-    );
-    system_prompt.push_str(&instructions::prompt_section());
-    system_prompt.push_str(
-        "\nTODO AND MEMORY\n- Track multi-step work with todo_write; mark items done as you finish them.\n- Save durable user preferences and project conventions with memory_write (scope=project for workspace rules, global for cross-project). Read them with memory_read / memory_search before changing conventions. Never store secrets in memory.\n",
-    );
-    if !caps_at_start.web_tools || !caps_at_start.speech {
-        let mut caps = String::from("\nCAPABILITIES\n");
-        if !caps_at_start.web_tools {
-            caps.push_str(
-                "search, fetch and ocr are not registered because this is a third-party \
-OpenAI-compatible endpoint. Use bash/read_file/write_file instead, and do not tell \
-the user you can search the web.\n",
-            );
-        }
-        if !caps_at_start.speech {
-            caps.push_str(
-                "speech (ASR/TTS) is not available on this endpoint; do not mention the \
-speak tool and do not claim you can listen or talk.\n",
-            );
-        }
-        system_prompt.push_str(&caps);
-    }
+    let mut creator_at_start = config_rc.borrow().creator;
+    let mut reg = build_registry(caps_at_start, creator_at_start);
+    let system_prompt = build_system_prompt(&config_rc.borrow(), &skill_list, caps_at_start);
     let tdefs = tool::definitions(&reg);
 
     let argv: Vec<String> = std::env::args().collect();
@@ -4455,10 +4766,13 @@ speak tool and do not claim you can listen or talk.\n",
     if argv.len() >= 2 && argv[1] == "--tools" {
         // Diagnostics: the exact tool set and capability decision.
         let caps = config_rc.borrow().capabilities();
+        let creator = config_rc.borrow().creator;
         println!("base={}", config_rc.borrow().base);
         println!("official={}", crate::config::is_official(&config_rc.borrow().base));
         println!("web_tools={} speech={}", caps.web_tools, caps.speech);
-        let mut names: Vec<&str> = reg.iter().map(|t| t.name).collect();
+        println!("mode={}", if creator { "creator" } else { "normal" });
+        let mode_reg = build_registry(caps, creator);
+        let mut names: Vec<&str> = mode_reg.iter().map(|t| t.name).collect();
         names.sort();
         println!("tools={}", names.join(","));
         return;
@@ -4502,8 +4816,10 @@ speak tool and do not claim you can listen or talk.\n",
     }
     scr.speech_ok = config_rc.borrow().capabilities().speech;
     scr.auto_send = config_rc.borrow().auto_send_voice;
+    scr.creator = config_rc.borrow().creator;
     let mut session_path: Option<std::path::PathBuf> = None;
     raw_mode(true);
+    crate::apps::set_screen_available(true);
 
     scr.seed_splash(&cfg.model);
     onboarding(&mut scr, &config_rc);
@@ -4521,7 +4837,6 @@ speak tool and do not claim you can listen or talk.\n",
         let tdefs2 = tdefs.clone();
         let msgs2 = msgs.clone();
         let sc = shared_cfg.clone();
-        let crc = config_rc.clone();
         scr.on_tick = Some(Box::new(move |s: &mut Scr| {
             let c = sc.borrow().clone();
             jobs::poll(&c, &tdefs2, &msgs2, s);
@@ -4664,7 +4979,19 @@ speak tool and do not claim you can listen or talk.\n",
                     }
                 }
                 if out.config_wizard {
+                    let creator_before = config_rc.borrow().creator;
                     config_menu(&mut scr, &config_rc);
+                    if creator_before != config_rc.borrow().creator {
+                        let n = crate::apps::load().len().to_string();
+                        if config_rc.borrow().creator {
+                            let dir = crate::config::home_shorten(
+                                &crate::apps::apps_dir().display().to_string(),
+                            );
+                            scr.push(&i18n::tf("cmd_creator_on", &[&dir, &n]), K_NORM);
+                        } else {
+                            scr.push(&i18n::tf("cmd_creator_off", &[&n]), K_DIM);
+                        }
+                    }
                 }
                 if out.model_menu {
                     model_menu(&mut scr, &config_rc);
@@ -4692,17 +5019,19 @@ speak tool and do not claim you can listen or talk.\n",
                 // immediately instead of keeping the startup values.
                 scr.auto_send = config_rc.borrow().auto_send_voice;
                 let caps_now = config_rc.borrow().capabilities();
-                if caps_now.web_tools != caps_at_start.web_tools || caps_now.speech != caps_at_start.speech {
-                    reg = tools::registry(caps_now);
-                    reg.extend(goal::tool_defs());
-                    reg.extend(session::tool_defs());
-                    reg.extend(bg::tool_defs());
-                    reg.extend(instructions::tool_defs());
-                    reg.extend(todo::tool_defs());
-                    reg.extend(mcp::tool_defs());
-                    scr.speech_ok = caps_now.speech;
+                let creator_now = config_rc.borrow().creator;
+                if caps_now.web_tools != caps_at_start.web_tools
+                    || caps_now.speech != caps_at_start.speech
+                    || creator_now != creator_at_start
+                {
                     caps_at_start = caps_now;
+                    creator_at_start = creator_now;
+                    // The registry follows both capabilities and the creator
+                    // mode: the app_* tools exist only while it is on.
+                    reg = build_registry(caps_at_start, creator_at_start);
+                    scr.speech_ok = caps_now.speech;
                 }
+                scr.creator = creator_at_start;
                 cfg = api_cfg(&config_rc.borrow());
                 *shared_cfg.borrow_mut() = cfg.clone();
                 tools::set_cfg(cfg.clone());
@@ -4714,6 +5043,26 @@ speak tool and do not claim you can listen or talk.\n",
                 {
                     goal_seed = None;
                 }
+                // `/apps run <name>` hands the app to the screen; `/apps` opens
+                // the manager. Both own the panel, so run them last.
+                if let Some(name) = out.run_app.clone() {
+                    match crate::apps::find(&name) {
+                        Some(app) => {
+                            match crate::apps::run_on_screen(&app, crate::apps::DIRECT_TIMEOUT_S) {
+                                Ok(_) => scr.push(
+                                    &i18n::tf("apps_exited", &[&app.label()]),
+                                    K_DIM,
+                                ),
+                                Err(e) => scr.push(&e, K_ERR),
+                            }
+                        }
+                        None => scr.push(&i18n::tf("apps_not_found", &[&name]), K_ERR),
+                    }
+                }
+                if out.apps_menu {
+                    apps_menu(&mut scr, &config_rc);
+                }
+                scr.draw();
                 // `/goal <objective>`, `/goal resume`, `/goal edit` re-arm the
                 // driver: start the next automatic round right away.
                 if let Some(after) = goal::current() {
@@ -4756,6 +5105,7 @@ speak tool and do not claim you can listen or talk.\n",
                 },
             }
             turn_no += 1;
+            scr.turn_tools.clear();
             // A session must exist before the turn so `rename` works inside
             // the very first turn and the file is there for /resume.
             if session_path.is_none() {
@@ -4766,6 +5116,17 @@ speak tool and do not claim you can listen or talk.\n",
             }
             cfg = api_cfg(&config_rc.borrow());
             refresh_ctx_window(&mut scr, &cfg);
+            // Rebuild the system prompt each turn: creator mode and the
+            // installed-app catalog must be current (mode switch, new app).
+            {
+                let c = config_rc.borrow();
+                let caps = c.capabilities();
+                let prompt = build_system_prompt(&c, &skill_list, caps);
+                drop(c);
+                if let Some(first) = msgs.borrow_mut().first_mut() {
+                    *first = harness::msg("system", &prompt);
+                }
+            }
             let mut opts = harness::RunOpts::from_config(&config_rc.borrow(), scr.ctx_window);
             opts.turn = turn_no;
             if label.is_some() {
@@ -4797,6 +5158,27 @@ speak tool and do not claim you can listen or talk.\n",
             poll_mode(false);
             scr.busy = false;
             scr.live = None;
+            scr.draw();
+            // Creator mode: name what was saved, or say that nothing was.
+            if config_rc.borrow().creator {
+                let saved = crate::apps::take_saved();
+                if saved.is_empty() {
+                    let mutated = scr.turn_tools.iter().any(|t| {
+                        matches!(t.as_str(), "write_file" | "edit_file" | "app_file")
+                    });
+                    if mutated {
+                        scr.push(i18n::t("creator_nudge"), K_DIM);
+                    }
+                } else {
+                    for (label, _path) in saved {
+                        scr.push(
+                            &i18n::tf("app_saved_notice", &[&label]),
+                            K_DIM,
+                        );
+                    }
+                }
+            }
+            scr.turn_tools.clear();
             scr.draw();
             if scr.voice_pending {
                 scr.voice_pending = false;

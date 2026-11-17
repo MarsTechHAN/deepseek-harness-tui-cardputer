@@ -30,6 +30,10 @@ asserted in code.
 | Login | `/login` menu, direct typing prompts, WeChat QR screen | fixed: choice menus say `select · Enter choose · Esc back` instead of the config-editor wording; three paths, numbered guide left + QR right, live scanned/finishing status, QR validity countdown, `r retry` after repeated failures |
 | Login QA | phone page states, i18n, QR scanability | ok: six-language page, countdown/expired/retry/cancel, QR decodes with jsQR (`https://open.weixin.qq.com/connect/confirm?...`), cancel aborts the flow |
 | Empty states | `/goal` with no goal, CtrlO with no output, `/resume` with no sessions | ok: each shows a localized one-liner and the app stays usable (`empty_states_zh`) |
+| Creator mode | `/config` Mode row, idle hint, saved-app notice, unsaved-work nudge | ok: the mode is switched in `/config` (never silently) and announced in the transcript; it is visible while idle (`creator · /apps · hold Esc`), the config row shows `normal/creator`, a saved app is announced as `saved app system/battery_viewer`, and a turn that wrote files without an app gets a localized one-line nudge (`creator_mode`, `creator_build`, `creator_nudge`) |
+| Apps | `/apps` list, annotation preview, run, delete, doc apps | ok: full-width menu (`Battery viewer   system · sh`), Right shows path/kind/entry/updated plus the APP.md lines, Enter runs the app full-screen (doc apps open the panel instead), `x` asks `delete <name>? y/n` before removing the package; the last delete returns the localized empty state (`creator_apps_zh`) |
+| Screen takeover | model `app_run`, app drawing, time limit, long-press Esc | ok: the panel belongs to the app while it runs (`charge 87%`), the TUI repaints when it returns, tool card reports ran/exited/stopped; long-press Esc is platform-enforced and trailing key repeats are swallowed so the turn is not cancelled (`creator_run`, `creator_run_esc`) |
+| Prompt/catalog | creator system prompt and installed-app catalog | ok: the prompt gains the CREATOR block and a skills-style `INSTALLED APPS` list each turn; after `app_save` the next turn's system message contains the new app, and the post-tool context tells the model to write the program (`creator_build` asserts on the captured requests) |
 | Errors | provider 401 (bad key), 429 (rate limit) + automatic retry | fixed: one red `request failed: …` line, a highlighted yellow `→` recovery hint (`/key`, `/login`, `/model`), localized in all six languages; textual rate limits are retried like HTTP 429; the next prompt works normally |
 | Goal status | `/goal` report, badge, commands | fixed: report rows and the bottom-right badge are localized; the command list sits on its own row instead of wrapping its last command |
 | Sessions | resume preview metadata | fixed: title/model/turns/recent labels are localized |
@@ -84,6 +88,16 @@ asserted in code.
 - long queue entries (and job commands) are ellipsised instead of hard-cut
 - localized empty states for `/goal`, CtrlO and `/resume` covered by
   `empty_states_zh`
+- creator mode: persistent app packages (`app.json` + `APP.md` + program) under
+  `~/.dst/apps`, a skills-style catalog injected into the prompt each turn, and
+  `/apps` to browse/preview/run/delete them; a saved-app notice and an
+  unsaved-work nudge keep the "work is persisted" promise visible
+- screen takeover: `app_run` spawns the app on the panel, forwards the keyboard
+  over a pipe, enforces long-press Esc (trailing repeats swallowed) and time
+  limits, then repaints the TUI; the app never traps the user
+- the mode is visible everywhere it matters: `/config` Mode row, creator idle
+  hint, transcript notice on switch; there is deliberately no `/creator`
+  command (too easy to hit by accident for a whole-contract switch)
 - provider errors: localized `request failed` line plus a yellow `→` recovery
   hint, retry notice localized, textual rate limits treated as transient;
   `mock_api.py` can now serve scripted HTTP errors and `api_error`/`api_retry`
@@ -97,10 +111,13 @@ asserted in code.
 
 ## Verification entry points
 
-- `python3 tools/sim/run_all.py` — demo, all simulator scenarios, login page i18n,
-  login cancel, QR scanability, six-language login layout, long memory session.
+- `python3 tools/sim/run_all.py` — demo, all simulator scenarios (including the
+  six `creator_*` ones), login page i18n, login cancel, QR scanability,
+  six-language login layout, long memory session.
 - `python3 tools/sim/run_live.py` — common-usage walkthrough against the real
   local vLLM endpoint (only TTS/ASR mocked) with a 12-screen contact sheet.
+- `python3 tools/sim/live_creator_check.py` — creator mode with the real model:
+  it must save a package and `/apps` must show it (`docs/live-creator.png`).
 - `dst --dsh-login-test` — runs the real nine-step login against
   `tools/sim/mock_login.py` (or the live platform with no mock env).
 - `dst --qr-ppm <jpeg> <out.ppm>` + `node tools/sim/qr_scan.js` — decodes the
@@ -112,13 +129,23 @@ asserted in code.
 
 ## Known limitations
 
-- Simulator only: PNG captures use the host's CJK fallback font, so the image
-  is a faithful layout/contrast check rather than a font-fidelity check; text
-  captures show the real characters. The device fbterm font still needs a
-  real-hardware pass.
+- Simulator PNGs are now rendered at the panel's native pixel grid (320x170,
+  53x12 cells of 6x14 px, 6x13 glyph box) with the public-domain X11 6x13
+  bitmap font and an RGB-subpixel model for CJK/vector fallbacks, then
+  integer-upscaled (`tools/sim/README.md`). Geometry is exact; the board's
+  exact font family and panel gamma are still assumptions, so the coloured
+  CJK fringes look somewhat stronger than on real hardware and block art is
+  dithered at the bitmap pixel level. A real-hardware visual pass is still
+  needed for font shapes and colour.
 - Inline Markdown emphasis (`**bold**`, backticks) is stripped rather than
   styled: the transcript stores one colour per row, so bold/inline-code would
   need embedded SGR handling in the wrapper. Headings, lists and fenced code
   blocks are styled by row kind and verified against a real vLLM answer.
+- Creator-mode limits by design: apps are shell/python scripts or documents
+  (no on-device compilation, no services, no GUI toolkit), `app_run` captures no
+  output (the screen belongs to the app while it runs) and only works in the
+  interactive TUI; app packages live under `~/.dst/apps` and are not sandboxed
+  beyond the tool's own path validation.
 - Hardware-only checks (physical keyboard/audio/reset double-press, boot time,
-  TTS playback interruption) remain for the device regression run.
+  TTS playback interruption, long-press Esc key repeat rate) remain for the
+  device regression run.

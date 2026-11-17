@@ -6,8 +6,11 @@ a pyte screen model, and renders deterministic snapshots of the resulting
 framebuffer as:
 
   * plain text files (one file per snapshot, plus `final.txt`)
-  * PNG images via Pillow (Menlo for the 6x13-ish monospace grid, a CJK font
-    for East-Asian wide cells, Apple Symbols for odd glyphs), plus `final.png`
+  * PNG images that model the device panel: a 320x170 RGB framebuffer with a
+    53x12 grid of 6x14 px cells (6x13 px glyph box + 1 px line gap, 1 px black
+    margin), rendered 1:1 from the public-domain X11 6x13 bitmap font (with RGB
+    subpixel antialiasing for CJK/vector fallbacks) and then integer-upscaled
+    for review, plus `final.png`
 
 It supports scripted input: text sends, named keys, waits, quiet waits,
 snapshots and a watch mode.  Scenarios can be given on the command line
@@ -47,6 +50,7 @@ import argparse
 import codecs
 import fcntl
 import glob
+import gzip
 import json
 import os
 import pty
@@ -78,9 +82,29 @@ except ImportError:  # pragma: no cover
 
 REPO = os.environ.get("DST_REPO") or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 DEFAULT_BIN = os.environ.get("DST_BIN", os.path.join(REPO, "target", "debug", "dst"))
-DEFAULT_COLS = 53          # device: 320 px / 6 px per cell = 53 columns
-DEFAULT_ROWS = 12          # device: 12 visible rows of 13 px in a 170 px panel
-DEFAULT_SCALE = 3          # PNG: 1 logical cell = 6*scale x 13*scale px
+
+# Device panel model -- the PNG renderer is built on these exact pixel numbers.
+#   320x170 RGB panel, 53x12 terminal grid, 6 px x 14 px cell pitch (a 6x13 px
+#   glyph box at the top of each cell + a 1 px line gap).  The text area is
+#   53*6 x 12*14 = 318x168 px, centred with a 1 px black margin all around.
+#   The panel framebuffer is rendered 1:1 and only then integer-upscaled.
+PANEL_W = 320              # device framebuffer width in RGB pixels
+PANEL_H = 170              # device framebuffer height in RGB pixels
+GRID_COLS = 53             # device terminal columns
+GRID_ROWS = 12             # device terminal rows
+CELL_W = 6                 # cell pitch, px
+CELL_H = 14                # cell pitch, px (13 px glyph box + 1 px line gap)
+GLYPH_W = 6                # glyph box inside one cell, px
+GLYPH_H = 13
+GLYPH_ASCENT = 11          # baseline row of the 6x13 bitmap font (descent 2)
+SUBPIXEL = 3               # LCD RGB stripes: 3 subpixels per device pixel
+PANEL_BORDER = 1           # black margin / text-area origin (native px)
+TEXT_W = GRID_COLS * CELL_W   # 318 px
+TEXT_H = GRID_ROWS * CELL_H   # 168 px
+
+DEFAULT_COLS = GRID_COLS   # device: 320 px / 6 px per cell = 53 columns
+DEFAULT_ROWS = GRID_ROWS   # device: 12 rows of 14 px = 168 px in a 170 px panel
+DEFAULT_SCALE = 3          # output PNG: panel * scale => 320*3 x 170*3 px
 DEFAULT_OUT = "snapshots"
 DEFAULT_STARTUP_MS = 650   # let dst paint the splash before the first snapshot
 DEFAULT_AFTER_MS = 100     # delay inserted after every send/key step
@@ -117,6 +141,14 @@ KEYMAP = {
 }
 
 # Font discovery -------------------------------------------------------------
+# The bitmap font is vendored in tools/sim/fonts (public-domain X11 "Fixed");
+# the vector fonts below are host fallbacks for CJK and for --font-mode ttf.
+FONTS_DIR = os.environ.get("DST_SIM_FONTS") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "fonts")
+BDF_REGULAR = "6x13.bdf.gz"       # X11 6x13 regular (4121 glyphs, no CJK)
+BDF_BOLD = "6x13B.bdf.gz"         # X11 6x13 bold (1282 glyphs)
+MISSING_PROBE_CHAR = "\U0010fffd"  # unmapped private-use char: .notdef probe
+
 MONO_FONT_CANDIDATES = [
     "/System/Library/Fonts/Menlo.ttc",
     "/System/Library/Fonts/Supplemental/Menlo.ttc",
@@ -250,26 +282,172 @@ def find_font(candidates, dirs, patterns):
 
 
 # --------------------------------------------------------------------------- #
-# PNG renderer
+# bitmap font parser (vendored X11 "Fixed" 6x13, public domain)
+# --------------------------------------------------------------------------- #
+
+_BDF_CACHE = {}
+
+
+def _normalise_bdf_rows(rows, bbx, fbb):
+    """Map a BDF glyph bitmap onto the device 6x13 glyph box.
+
+    A BDF glyph is a ``BBX w h xoff yoff`` bitmap whose rows run top-down and
+    whose coordinates are font units (baseline at y=0, +y up).  The device
+    glyph box corresponds to the font's FONTBOUNDINGBOX cell (top row = index
+    0), so the bitmap's first row lands at
+    ``(fby + fbh) - (by + bh)``.  Pixels outside the 6x13 box are dropped.
+    """
+    bw, bh, bx, by = bbx
+    _fbw, fbh, _fbx, fby = fbb
+    top = (fby + fbh) - (by + bh)
+    out = [0] * GLYPH_H
+    for k, (value, bits) in enumerate(rows):
+        row = top + k
+        if row < 0 or row >= GLYPH_H:
+            continue
+        mask = 0
+        # BDF rows are hex bytes padded on the *right*: the leftmost glyph
+        # pixel is the most significant bit of the padded row, so a 6 px wide
+        # glyph in 2 hex digits uses bits 7..2, not bits 5..0.
+        for px in range(min(bw, bits)):
+            if value & (1 << (bits - 1 - px)):
+                x = bx + px
+                if 0 <= x < GLYPH_W:
+                    mask |= 1 << (GLYPH_W - 1 - x)
+        out[row] = mask
+    return tuple(out)
+
+
+def load_bdf(path):
+    """Parse an X11 BDF (optionally gzip-compressed) into ``{cp: 13-row mask}``.
+
+    Row masks are 6-bit ints, MSB = leftmost glyph pixel, index 0 = top of the
+    glyph box.  The result is cached at module level (a renderer is created once
+    per process but a manifest run can build several).  Any parse failure
+    returns ``{}``: a missing font only degrades the PNG, never the text capture.
+    """
+    cached = _BDF_CACHE.get(path)
+    if cached is not None:
+        return cached
+    glyphs = {}
+    try:
+        opener = gzip.open if path.endswith(".gz") else open
+        with opener(path, "rb") as fh:
+            text = fh.read().decode("latin-1")
+    except Exception as exc:
+        log(f"warning: cannot read bitmap font {path}: {exc!r}")
+        _BDF_CACHE[path] = glyphs
+        return glyphs
+    fbb = (GLYPH_W, GLYPH_H, 0, -(GLYPH_H - GLYPH_ASCENT))
+    lines = text.splitlines()
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i]
+        if line.startswith("FONTBOUNDINGBOX"):
+            try:
+                fbb = tuple(int(p) for p in line.split()[1:5])
+            except ValueError:
+                pass
+        elif line.startswith("STARTCHAR"):
+            encoding, bbx, rows = -1, None, []
+            i += 1
+            while i < n and not lines[i].startswith("ENDCHAR"):
+                item = lines[i]
+                if item.startswith("ENCODING"):
+                    try:
+                        encoding = int(item.split()[1])
+                    except (ValueError, IndexError):
+                        encoding = -1
+                elif item.startswith("BBX"):
+                    try:
+                        bbx = tuple(int(p) for p in item.split()[1:5])
+                    except ValueError:
+                        bbx = None
+                elif item.startswith("BITMAP") and bbx is not None:
+                    for k in range(bbx[1]):
+                        j = i + 1 + k
+                        if j >= n:
+                            break
+                        hexrow = lines[j].strip()
+                        try:
+                            value = int(hexrow or "0", 16)
+                        except ValueError:
+                            value = 0
+                        rows.append((value, 4 * len(hexrow) if hexrow else bbx[0]))
+                    i += bbx[1]
+                i += 1
+            if encoding >= 0 and bbx is not None:
+                glyphs.setdefault(encoding, _normalise_bdf_rows(rows, bbx, fbb))
+        i += 1
+    _BDF_CACHE[path] = glyphs
+    log(f"bitmap font: {os.path.basename(path)} ({len(glyphs)} glyphs)")
+    return glyphs
+
+
+# --------------------------------------------------------------------------- #
+# PNG renderer: faithful model of the Cardputer Zero 320x170 panel
 # --------------------------------------------------------------------------- #
 
 class ScreenRenderer:
-    """Renders a pyte.Screen to PNG using a cell grid.
+    """Render a pyte.Screen to a PNG of the device panel.
 
-    The device grid is 6x13 px per cell (53x12 cells => 318x156 px).  We render
-    at `scale`x: each cell is `6*scale` x `13*scale` px.  Menlo is sized so its
-    advance is exactly one cell wide (`font.getlength('M') == 6*scale`); CJK
-    glyphs are drawn into a two-cell box with a CJK font; block glyphs
-    (U+2588/2593/2591) use Menlo, which covers them.
+    Geometry (all native device pixels): the panel is 320x170 RGB; the terminal
+    grid is 53x12 cells with a 6x14 px pitch -- a 6x13 px glyph box at the top
+    of every cell plus a 1 px line gap -- so the 318x168 px text area is
+    centred with a 1 px black margin on every side.  Glyphs are rasterised at
+    that native resolution; the output PNG is the panel integer-upscaled by
+    ``--scale`` with nearest-neighbour sampling (320*N x 170*N), so no font is
+    re-rasterised at the larger size and an upscaled PNG shows exactly the
+    device pixels.  With ``--native`` the 1:1 320x170 image is saved instead.
+
+    Font handling: the vendored X11 6x13 bitmap font (``6x13.bdf.gz`` and, for
+    bold, ``6x13B.bdf.gz``) draws every glyph it covers with exact 6x13 cell
+    geometry (``--font-mode auto`` / ``bitmap``); characters it does not cover
+    (CJK, emoji, odd symbols) and everything in ``--font-mode ttf`` are
+    rasterised from a host vector font at the device box size and composited by
+    the RGB-stripe subpixel filter in :meth:`_subpixel_coverage`.  Every font
+    lookup is guarded: a missing font only degrades the PNG.
     """
 
     def __init__(self, cols, rows, scale=DEFAULT_SCALE,
-                 mono_path=None, cjk_path=None, symbol_path=None):
-        self.cols = cols
-        self.rows = rows
-        self.scale = max(1, int(scale))
-        self.cell_w = 6 * self.scale
-        self.cell_h = 13 * self.scale
+                 mono_path=None, cjk_path=None, symbol_path=None,
+                 font_mode="auto", subpixel=True, native=False,
+                 bdf_dir=None):
+        self.cols = max(1, int(cols))
+        self.rows = max(1, int(rows))
+        self.native = bool(native)
+        self.scale = 1 if self.native else max(1, int(scale))
+        mode = str(font_mode or "auto").lower()
+        self.font_mode = mode if mode in ("auto", "bitmap", "ttf") else "auto"
+        self.subpixel = bool(subpixel)
+
+        # -- device geometry (native px) ----------------------------------- #
+        self.text_w = self.cols * CELL_W
+        self.text_h = self.rows * CELL_H
+        self.panel_w = max(PANEL_W, self.text_w + 2 * PANEL_BORDER)
+        self.panel_h = max(PANEL_H, self.text_h + 2 * PANEL_BORDER)
+        self.text_x = (self.panel_w - self.text_w) // 2
+        self.text_y = (self.panel_h - self.text_h) // 2
+        # Legacy attributes: output pixels per cell at the requested scale.
+        self.cell_w = CELL_W * self.scale
+        self.cell_h = CELL_H * self.scale
+
+        # -- bitmap fonts (the device-faithful default) -------------------- #
+        self.bdf_dir = bdf_dir or FONTS_DIR
+        self.bdf_path = os.path.join(self.bdf_dir, BDF_REGULAR)
+        self.bdf_bold_path = os.path.join(self.bdf_dir, BDF_BOLD)
+        self.bdf = (load_bdf(self.bdf_path) if os.path.exists(self.bdf_path)
+                    else {})
+        self.bdf_bold = (load_bdf(self.bdf_bold_path)
+                         if os.path.exists(self.bdf_bold_path) else {})
+        if not self.bdf:
+            log(f"warning: bitmap font missing ({self.bdf_path}); "
+                "every glyph will be vector-rendered")
+        elif not self.bdf_bold:
+            log(f"warning: bold bitmap font missing ({self.bdf_bold_path}); "
+                "bold cells will use the regular bitmap font")
+
+        # -- vector fonts (subpixel fallback and --font-mode ttf) ---------- #
         self.mono_path = mono_path or find_font(
             MONO_FONT_CANDIDATES, FONT_SEARCH_DIRS, ["Menlo*", "Monaco*", "Courier*"])
         self.cjk_path = cjk_path or find_font(
@@ -277,105 +455,370 @@ class ScreenRenderer:
             ["PingFang*", "Hiragino*", "STHeiti*", "Songti*", "*Unicode*"])
         self.symbol_path = symbol_path or find_font(
             SYMBOL_FONT_CANDIDATES, FONT_SEARCH_DIRS, ["Apple Symbols*", "Symbol*"])
-        self._fonts = {}
-        self.mono = self._load_mono(bold=False)
-        self.mono_bold = self._load_mono(bold=True)
-        self.cjk = self._load_cjk()
-        self.symbol = self._load_symbol()
-        if self.mono is None:
-            raise RuntimeError(
-                "no monospace font found; pass --mono-font PATH (looked in: "
-                + ", ".join(MONO_FONT_CANDIDATES) + ")")
+        self.faces = {}
+        for kind, path in (("mono", self.mono_path), ("cjk", self.cjk_path),
+                           ("symbol", self.symbol_path)):
+            self._register_face(kind, path)
+        # Compatibility attributes: the face descriptor actually loaded (or None).
+        self.mono = self.faces.get("mono")
+        self.cjk = self.faces.get("cjk")
+        self.symbol = self.faces.get("symbol")
+        self._font_cache = {}
+        self._glyph_cache = {}
+        self._coverage_cache = {}
+        self._size_cache = {}
+        self.fonts_used = set()
 
     # -- font loading ------------------------------------------------------ #
     def _try_font(self, path, size, index=0):
-        if not path or not os.path.exists(path):
+        if Image is None or not path or not os.path.exists(path):
             return None
         try:
             return ImageFont.truetype(path, size, index=index)
         except Exception:
             return None
 
-    def _load_mono(self, bold: bool):
-        if Image is None or not self.mono_path:
-            return None
-        # Find the right face inside a .ttc: try regular then scan for "Bold".
-        indices = range(0, 4)
-        regular = bold_candidate = None
-        for idx in indices:
-            f = self._try_font(self.mono_path, 12, idx)
-            if f is None:
+    def _pick_face(self, path, bold):
+        """Pick a face index inside a font file/collection.
+
+        Returns ``(index, label)``.  For ``bold`` it looks for a bold/weighted
+        face (``Menlo Bold``, ``Hiragino Sans GB W6``, ...) and falls back to
+        the first face when the file only ships one weight.
+        """
+        first = None
+        for idx in range(0, 6):
+            font = self._try_font(path, 13, idx)
+            if font is None:
                 continue
             try:
-                name = " ".join(f.getname())
+                name = " ".join(str(p) for p in font.getname()).strip()
             except Exception:
                 name = ""
-            if regular is None:
-                regular = f
-            if "bold" in name.lower():
-                bold_candidate = f
-                break
-        base = bold_candidate if (bold and bold_candidate is not None) else regular
-        if base is None:
-            return None
-        # Size the font so one advance == one cell width.
-        size = max(6, int(round(self.cell_w / 0.60)))
-        font = None
-        for _ in range(8):
-            font = self._try_font(self.mono_path,
-                                  size,
-                                  getattr(base, "index", 0) if hasattr(base, "index") else 0)
+            label = name or f"{os.path.basename(path)}#{idx}"
+            if first is None:
+                first = (idx, label)
+            if bold and any(tok in name.lower() for tok in (
+                    "bold", "w6", "heavy", "black", "semibold", "medium")):
+                return idx, label
+        return first
+
+    def _register_face(self, kind, path):
+        if Image is None or not path or not os.path.exists(path):
+            return
+        regular = self._pick_face(path, bold=False)
+        if regular is None:
+            return
+        self.faces[kind] = {"key": kind, "path": path,
+                            "index": regular[0], "label": regular[1]}
+        if kind in ("mono", "cjk"):
+            bold = self._pick_face(path, bold=True)
+            if bold is not None and bold[0] != regular[0]:
+                self.faces[kind + "_bold"] = {
+                    "key": kind + "_bold", "path": path,
+                    "index": bold[0], "label": bold[1]}
+
+    def _ttf(self, face, size):
+        key = (face["path"], face["index"], int(size))
+        font = self._font_cache.get(key)
+        if font is None:
+            font = self._try_font(face["path"], int(size), face["index"])
+            self._font_cache[key] = font
+        return font
+
+    def _has_glyph(self, face, ch):
+        """True when the face has a real glyph for ``ch`` (not .notdef)."""
+        if face is None:
+            return False
+        key = ("glyph", face["path"], face["index"], ch)
+        hit = self._glyph_cache.get(key)
+        if hit is not None:
+            return hit
+        font = self._ttf(face, 13)
+        has = False
+        if font is not None:
+            try:
+                probe_key = ("notdef", face["path"], face["index"])
+                probe = self._glyph_cache.get(probe_key)
+                if probe is None:
+                    probe = font.getmask(MISSING_PROBE_CHAR)
+                    self._glyph_cache[probe_key] = probe
+                has = bytes(font.getmask(ch)) != bytes(probe)
+            except Exception:
+                has = True
+        self._glyph_cache[key] = has
+        return has
+
+    def _face_candidates(self, wide, bold):
+        order = ["cjk", "symbol", "mono"] if wide else ["mono", "symbol", "cjk"]
+        out = []
+        for kind in order:
+            if bold and (kind + "_bold") in self.faces:
+                out.append(kind + "_bold")
+            if kind in self.faces:
+                out.append(kind)
+        return out
+
+    def _ttf_face_for(self, ch, wide, bold):
+        for kind in self._face_candidates(wide, bold):
+            face = self.faces.get(kind)
+            if face is not None and self._has_glyph(face, ch):
+                return face
+        return None
+
+    # -- glyph source selection -------------------------------------------- #
+    def _bitmap_glyph(self, ch, bold):
+        """Return ``(13-row masks, font label)`` from the bitmap font."""
+        if not self.bdf:
+            return None, None
+        cp = ord(ch)
+        if bold and self.bdf_bold:
+            rows = self.bdf_bold.get(cp)
+            if rows is not None:
+                return rows, "6x13B.bdf"
+        rows = self.bdf.get(cp)
+        if rows is not None:
+            return rows, "6x13.bdf"
+        return None, None
+
+    def _pick_source(self, ch, wide, bold):
+        """Choose ``(kind, payload, label)`` for one character.
+
+        ``auto``/``bitmap`` prefer the exact-shape 6x13 bitmap font and fall
+        back to the vector font only for characters it does not cover; ``ttf``
+        forces the vector font (the bitmap stays as a last resort).
+        """
+        if self.font_mode == "ttf":
+            face = self._ttf_face_for(ch, wide, bold)
+            if face is not None:
+                return "ttf", face, face["label"]
+            if not wide and self.bdf:
+                rows, label = self._bitmap_glyph(ch, bold)
+                if rows is not None:
+                    return "bitmap", rows, label
+            return None, None, None
+        if not wide and self.bdf:
+            rows, label = self._bitmap_glyph(ch, bold)
+            if rows is not None:
+                return "bitmap", rows, label
+        face = self._ttf_face_for(ch, wide, bold)
+        if face is not None:
+            return "ttf", face, face["label"]
+        return None, None, None
+
+    # -- bitmap glyphs ----------------------------------------------------- #
+    def _draw_bitmap(self, px, rows, x0, y0, fg):
+        for gy in range(GLYPH_H):
+            mask = rows[gy]
+            if not mask:
+                continue
+            y = y0 + gy
+            if y < 0 or y >= self.panel_h:
+                continue
+            for gx in range(GLYPH_W):
+                if mask & (1 << (GLYPH_W - 1 - gx)):
+                    x = x0 + gx
+                    if 0 <= x < self.panel_w:
+                        px[x, y] = fg
+
+    # -- subpixel/grayscale antialiased vector glyphs ---------------------- #
+    def _fit_ttf_size(self, face, ch, box_w, box_h):
+        """Pick the high-res TTF pixel size for one glyph and device box.
+
+        The panel cell is 6x14 px, so the font is sized for the *cell*: the
+        advance is fitted to the device box width (6 px for a narrow glyph,
+        12 px for a wide one) and the ink bounding box is then clamped into the
+        6x13 / 12x13 glyph box.  At the 3x supersampling of the subpixel
+        pipeline this is a 30 px em for a 6 px-wide cell and a 36 px em for a
+        12 px-wide (CJK) cell; both are reported in the README.
+        """
+        key = ("size", face["path"], face["index"], ch, box_w)
+        cached = self._size_cache.get(key)
+        if cached is not None:
+            return cached
+        target_adv = box_w * SUBPIXEL
+        ref_size = 39  # 13 device px at 3x: the reference to measure advances
+        ref_font = self._ttf(face, ref_size)
+        size = ref_size
+        if ref_font is not None:
+            try:
+                adv = float(ref_font.getlength(ch))
+            except Exception:
+                adv = 0.0
+            if adv > 0:
+                size = int(round(ref_size * target_adv / adv))
+            size = max(4, min(96, size))
+        best = None
+        for cand in range(max(4, size - 2), size + 3):
+            font = self._ttf(face, cand)
+            if font is None:
+                continue
+            try:
+                adv = float(font.getlength(ch))
+            except Exception:
+                adv = float(target_adv)
+            score = abs(adv - target_adv)
+            if best is None or score < best[0]:
+                best = (score, cand)
+        if best is not None:
+            size = best[1]
+        # Shrink until the ink fits the glyph box (never clip a glyph).
+        hr_w, hr_h = box_w * SUBPIXEL, GLYPH_H * SUBPIXEL
+        for _ in range(10):
+            font = self._ttf(face, size)
             if font is None:
                 break
             try:
-                adv = font.getlength("M")
+                bbox = font.getbbox(ch, anchor="ls")
             except Exception:
-                adv = self.cell_w
-            if abs(adv - self.cell_w) <= 0.75:
+                bbox = None
+            if not bbox:
                 break
-            if adv <= 0:
+            left, top, right, bottom = bbox
+            if (right - left) <= hr_w and (bottom - top) <= hr_h:
                 break
-            size = max(6, int(round(size * self.cell_w / adv)))
-        self._mono_size = size
-        return font or base
+            size = max(4, size - 1)
+        self._size_cache[key] = size
+        return size
 
-    def _load_cjk(self):
-        if Image is None or not self.cjk_path:
+    def _subpixel_coverage(self, face, ch, box_w, box_h):
+        """Rasterise a vector glyph and return RGB subpixel coverages.
+
+        Model (an approximation of an LCD, documented in README):
+          1. render the glyph into an 8-bit "L" mask at ``3*box_w x 3*box_h``
+             (3x horizontal for the RGB stripes, 3x vertical for the filter);
+          2. per device pixel average the mask over each subpixel *column* and
+             box-filter the 3 subpixel rows -> c_r, c_g, c_b in 0..1;
+          3. apply FreeType's default [1,2,1]/4 horizontal FIR across the
+             subpixel samples (RGB order) per device row;
+          4. the caller composites ``bg*(1-c) + fg*c`` per channel.
+        With ``--subpixel off`` the three coverages are replaced by their
+        average (plain grayscale AA), i.e. no coloured fringes.
+        """
+        key = ("cov", face["path"], face["index"], ch, box_w, box_h,
+               self.subpixel)
+        cached = self._coverage_cache.get(key)
+        if cached is not None:
+            return cached
+        size = self._fit_ttf_size(face, ch, box_w, box_h)
+        font = self._ttf(face, size)
+        if font is None:
             return None
-        size = max(8, int(round(self.cell_w * 2 * 0.95)))
-        for idx in range(0, 4):
-            f = self._try_font(self.cjk_path, size, idx)
-            if f is not None:
-                self._cjk_size = size
-                return f
-        return None
+        hr_w, hr_h = box_w * SUBPIXEL, GLYPH_H * SUBPIXEL
+        mask = Image.new("L", (hr_w, hr_h), 0)
+        draw = ImageDraw.Draw(mask)
+        # Same baseline as the bitmap font: ascent 11 device px = 33 subpixels.
+        anchor_x, anchor_y = 0, GLYPH_ASCENT * SUBPIXEL
+        try:
+            bbox = font.getbbox(ch, anchor="ls")
+        except Exception:
+            bbox = None
+        if bbox:
+            left, top, right, bottom = bbox
+            if anchor_x + left < 0:
+                anchor_x -= anchor_x + left
+            if anchor_x + right > hr_w:
+                anchor_x -= anchor_x + right - hr_w
+            if anchor_y + top < 0:
+                anchor_y -= anchor_y + top
+            if anchor_y + bottom > hr_h:
+                anchor_y -= anchor_y + bottom - hr_h
+        try:
+            draw.text((anchor_x, anchor_y), ch, font=font, fill=255, anchor="ls")
+        except Exception:
+            try:
+                draw.text((0, 0), ch, font=font, fill=255)
+            except Exception:
+                return None
+        data = mask.tobytes()
+        rows = []
+        n_sub = box_w * SUBPIXEL
+        for gy in range(box_h):
+            raw = [0.0] * n_sub
+            for sx in range(n_sub):
+                total = 0
+                for k in range(SUBPIXEL):
+                    total += data[(gy * SUBPIXEL + k) * hr_w + sx]
+                raw[sx] = total / (SUBPIXEL * 255.0)
+            if self.subpixel:
+                filtered = [0.0] * n_sub
+                for sx in range(n_sub):
+                    a = raw[sx - 1] if sx > 0 else raw[0]
+                    b = raw[sx]
+                    c = raw[sx + 1] if sx < n_sub - 1 else raw[n_sub - 1]
+                    filtered[sx] = (a + 2.0 * b + c) / 4.0
+            else:
+                filtered = [0.0] * n_sub
+                for gx in range(box_w):
+                    cover = (raw[3 * gx] + raw[3 * gx + 1] + raw[3 * gx + 2]) / 3.0
+                    filtered[3 * gx] = cover
+                    filtered[3 * gx + 1] = cover
+                    filtered[3 * gx + 2] = cover
+            rows.append([0.0 if v <= 0.0 else (1.0 if v >= 1.0 else v)
+                         for v in filtered])
+        self._coverage_cache[key] = rows
+        return rows
 
-    def _load_symbol(self):
-        if Image is None or not self.symbol_path:
-            return None
-        size = max(8, int(round(self.cell_h * 0.80)))
-        f = self._try_font(self.symbol_path, size, 0)
-        self._symbol_size = size
-        return f
+    def _draw_subpixel(self, px, coverage, x0, y0, fg, box_w):
+        fr, fgc, fb = fg
+        for gy, row in enumerate(coverage):
+            y = y0 + gy
+            if y < 0 or y >= self.panel_h:
+                continue
+            for gx in range(box_w):
+                x = x0 + gx
+                if x < 0 or x >= self.panel_w:
+                    continue
+                cr, cg, cb = row[3 * gx], row[3 * gx + 1], row[3 * gx + 2]
+                if cr <= 0.0 and cg <= 0.0 and cb <= 0.0:
+                    continue
+                pr, pg, pb = px[x, y]
+                nr = pr + (fr - pr) * cr
+                ng = pg + (fgc - pg) * cg
+                nb = pb + (fb - pb) * cb
+                px[x, y] = (min(255, max(0, int(nr + 0.5))),
+                            min(255, max(0, int(ng + 0.5))),
+                            min(255, max(0, int(nb + 0.5))))
 
-    # -- glyph choice ------------------------------------------------------ #
-    def _glyph_font(self, ch: str):
-        """Pick (font, cell_span) for one character."""
-        if is_wide(ch):
-            if self.cjk is not None:
-                return self.cjk, 2
-            return self.mono, 2
-        cp = ord(ch)
-        # Block elements and box drawing: Menlo covers them.
-        if 0x2580 <= cp <= 0x259F or 0x2500 <= cp <= 0x257F:
-            return self.mono, 1
-        # Latin/Greek/Cyrillic/punctuation: Menlo.
-        if cp < 0x2000 or 0x2000 <= cp <= 0x206F:
-            return self.mono, 1
-        # Symbols/arrows/geometric shapes: prefer the symbol font, fall back.
-        if self.symbol is not None:
-            return self.symbol, 1
-        return self.mono, 1
+    # -- colours ----------------------------------------------------------- #
+    @staticmethod
+    def _colours(cell):
+        fg = resolve_color(cell.fg, DEFAULT_FG, bold=cell.bold)
+        bg = resolve_color(cell.bg, DEFAULT_BG)
+        if cell.reverse:
+            # Swap foreground/background. With default colours that means a
+            # light fill with dark text, not dark-on-dark.
+            if bg == DEFAULT_BG:
+                fg, bg = DEFAULT_BG, DEFAULT_FG
+            elif fg == DEFAULT_BG:
+                fg, bg = DEFAULT_FG, bg
+            else:
+                fg, bg = bg, fg
+        return fg, bg
+
+    # -- glyph drawing ----------------------------------------------------- #
+    def _draw_glyph(self, px, cell, ch, x0, y0, wide):
+        bold = bool(cell.bold)
+        fg, _bg = self._colours(cell)
+        kind, payload, label = self._pick_source(ch, wide, bold)
+        if kind == "bitmap" and payload is not None:
+            self._draw_bitmap(px, payload, x0, y0, fg)
+            self.fonts_used.add(label)
+        elif kind == "ttf" and payload is not None:
+            box_w = 2 * CELL_W if wide else CELL_W
+            coverage = self._subpixel_coverage(payload, ch, box_w, GLYPH_H)
+            if coverage is not None:
+                self._draw_subpixel(px, coverage, x0, y0, fg, box_w)
+                self.fonts_used.add(label)
+        # Combining marks (rare in this UI) are overlaid in the same cell box.
+        extras = cell.data[1:] if len(cell.data) > 1 else ""
+        for extra in extras:
+            face = self._ttf_face_for(extra, False, bold)
+            if face is None:
+                continue
+            coverage = self._subpixel_coverage(face, extra, CELL_W, GLYPH_H)
+            if coverage is not None:
+                self._draw_subpixel(px, coverage, x0, y0, fg, CELL_W)
+                self.fonts_used.add(face["label"])
 
     # -- text -------------------------------------------------------------- #
     def text(self, screen) -> str:
@@ -393,28 +836,13 @@ class ScreenRenderer:
     def png(self, screen, path: str) -> None:
         if Image is None:
             raise RuntimeError("Pillow is not installed; cannot render PNG")
-        img = Image.new("RGB", (self.cols * self.cell_w, self.rows * self.cell_h), DEFAULT_BG)
+        # The panel framebuffer is native: black outside the text area.
+        img = Image.new("RGB", (self.panel_w, self.panel_h), (0, 0, 0))
         draw = ImageDraw.Draw(img)
-        cw, ch = self.cell_w, self.cell_h
 
-        def colours(cell):
-            fg = resolve_color(cell.fg, DEFAULT_FG, bold=cell.bold)
-            bg = resolve_color(cell.bg, DEFAULT_BG)
-            if cell.reverse:
-                # Swap foreground/background. With default colours that
-                # means a light fill with dark text, not dark-on-dark.
-                if bg == DEFAULT_BG:
-                    fg, bg = DEFAULT_BG, DEFAULT_FG
-                elif fg == DEFAULT_BG:
-                    fg, bg = DEFAULT_FG, bg
-                else:
-                    fg, bg = bg, fg
-            return fg, bg
-
-        # Two passes: paint every cell background first, then draw glyphs.
-        # Wide glyphs overflow their 2-cell box slightly; drawing per-cell in a
-        # single pass let the next cell's background clip the previous glyph
-        # (visible as sliced CJK inside reverse-video rows).
+        # Pass 1: paint every cell background first (the full 6x14 px cell,
+        # line gap included). A wide character's continuation cell inherits its
+        # leading cell's colours, so reverse-video CJK rows are never clipped.
         for r in range(self.rows):
             row = screen.buffer[r]
             for c in range(self.cols):
@@ -422,74 +850,78 @@ class ScreenRenderer:
                 if cell.data == "":
                     prev = row[c - 1] if c > 0 else None
                     if prev is not None and prev.data and is_wide(prev.data[0]):
-                        _fg, bg = colours(prev)
+                        _fg, bg = self._colours(prev)
                     else:
-                        _fg, bg = colours(cell)
+                        _fg, bg = self._colours(cell)
                 else:
-                    _fg, bg = colours(cell)
-                if bg != DEFAULT_BG:
-                    x0, y0 = c * cw, r * ch
-                    draw.rectangle([x0, y0, x0 + cw - 1, y0 + ch - 1], fill=bg)
+                    _fg, bg = self._colours(cell)
+                x0 = self.text_x + c * CELL_W
+                y0 = self.text_y + r * CELL_H
+                draw.rectangle([x0, y0, x0 + CELL_W - 1, y0 + CELL_H - 1],
+                               fill=bg)
 
+        # Pass 2: glyphs on top (bitmap = exact device pixels, vector = RGB
+        # subpixel antialiasing). Glyph pixels never cross their cell box.
+        px = img.load()
         for r in range(self.rows):
             row = screen.buffer[r]
             for c in range(self.cols):
                 cell = row[c]
                 data = cell.data
-                if data == "":
-                    continue  # continuation cell of a wide character
-                fg, _bg = colours(cell)
-                x0, y0 = c * cw, r * ch
-                if not data.strip():
-                    continue
-                font, span = self._glyph_font(data[0] if len(data) == 1 else data)
-                if font is None:
-                    font = self.mono
-                bold = bool(cell.bold)
-                if bold and font is self.mono and self.mono_bold is not None:
-                    font = self.mono_bold
-                box_w = span * cw
+                if not data or not data.strip():
+                    continue  # empty cell or the continuation of a wide glyph
+                x0 = self.text_x + c * CELL_W
+                y0 = self.text_y + r * CELL_H
                 try:
-                    ascent, descent = font.getmetrics()
-                    adv = font.getlength(data)
-                except Exception:
-                    ascent, descent, adv = ch - 4, 4, cw
-                base_y = y0 + max(0, (ch - (ascent + descent)) // 2 + ascent)
-                if span == 2 and adv > 0:
-                    base_x = x0 + max(0, (box_w - adv) / 2.0)
-                else:
-                    base_x = x0
-                kwargs = dict(font=font, fill=fg, anchor="ls")
-                if bold and font is self.mono and self.mono_bold is None:
-                    kwargs["stroke_width"] = max(1, self.scale // 3)
-                    kwargs["stroke_fill"] = fg
-                try:
-                    draw.text((base_x, base_y), data, **kwargs)
-                except Exception:
-                    # Unknown anchor/font quirk: fall back to a plain draw.
-                    draw.text((x0, y0), data, font=font, fill=fg)
+                    self._draw_glyph(px, cell, data[0], x0, y0,
+                                     is_wide(data[0]))
+                except Exception as exc:  # one bad glyph must not kill the PNG
+                    log(f"warning: glyph {data[0]!r} not rendered: {exc!r}")
 
-        # Cursor: pyte tracks it; draw a thin outline so the input caret shows.
+        # Cursor: a 1 px rectangle inside the tracked cell (native pixels).
         try:
             cur = screen.cursor
             if not cur.hidden and 0 <= cur.x < self.cols and 0 <= cur.y < self.rows:
-                x0, y0 = cur.x * cw, cur.y * ch
-                draw.rectangle(
-                    [x0 + 1, y0 + 1, x0 + cw - 2, y0 + ch - 2],
-                    outline=CURSOR_COLOR, width=max(1, self.scale // 2))
+                x0 = self.text_x + cur.x * CELL_W
+                y0 = self.text_y + cur.y * CELL_H
+                draw.rectangle([x0, y0, x0 + CELL_W - 1, y0 + CELL_H - 1],
+                               outline=CURSOR_COLOR, width=1)
         except Exception:
             pass
 
-        img.save(path, "PNG")
+        if self.scale == 1:
+            img.save(path, "PNG")
+        else:
+            big = img.resize((self.panel_w * self.scale,
+                              self.panel_h * self.scale), Image.NEAREST)
+            big.save(path, "PNG")
 
     # -- diagnostics ------------------------------------------------------- #
+    @property
+    def output_size(self):
+        return (self.panel_w * self.scale, self.panel_h * self.scale)
+
     def describe(self) -> dict:
         return {
-            "cell_px": [self.cell_w, self.cell_h],
+            "panel": f"{PANEL_W}x{PANEL_H} RGB device panel",
+            "native_size": [self.panel_w, self.panel_h],
+            "output_size": list(self.output_size),
             "scale": self.scale,
+            "native": self.native,
+            "grid": [self.cols, self.rows],
+            "cell_pitch": [CELL_W, CELL_H],
+            "glyph_box": [GLYPH_W, GLYPH_H],
+            "text_area": [self.text_w, self.text_h],
+            "text_origin": [self.text_x, self.text_y],
+            "cell_px": [CELL_W * self.scale, CELL_H * self.scale],
+            "font_mode": self.font_mode,
+            "subpixel": self.subpixel,
+            "bitmap_font": self.bdf_path if self.bdf else None,
+            "bitmap_bold_font": self.bdf_bold_path if self.bdf_bold else None,
             "mono_font": self.mono_path,
             "cjk_font": self.cjk_path,
             "symbol_font": self.symbol_path,
+            "fonts_used": sorted(self.fonts_used),
         }
 
 
@@ -771,7 +1203,11 @@ class PtySim:
         png_path = None
         if not self.text_only:
             png_path = base + ".png"
-            self.renderer.png(self.screen, png_path)
+            try:
+                self.renderer.png(self.screen, png_path)
+            except Exception as exc:  # a broken PNG must never lose the text
+                log(f"PNG render failed for {name!r} (text snapshot kept): {exc!r}")
+                png_path = None
         entry = {
             "index": self._snap_idx,
             "name": name,
@@ -785,10 +1221,14 @@ class PtySim:
             with open(os.path.join(self.out_dir, "final.txt"), "w", encoding="utf-8") as fh:
                 fh.write(text + "\n")
             if not self.text_only:
-                self.renderer.png(self.screen, os.path.join(self.out_dir, "final.png"))
+                try:
+                    self.renderer.png(self.screen,
+                                      os.path.join(self.out_dir, "final.png"))
+                except Exception as exc:
+                    log(f"PNG render failed for final screen (text kept): {exc!r}")
             entry["final"] = True
-        log(f"snapshot {self._snap_idx:02d} {name!r} -> {base}.txt"
-            + ("" if self.text_only else f" / {base}.png"))
+        png_note = f" / {png_path}" if png_path else ""
+        log(f"snapshot {self._snap_idx:02d} {name!r} -> {base}.txt{png_note}")
         return text
 
     # -- shutdown ---------------------------------------------------------- #
@@ -1118,8 +1558,20 @@ def build_parser():
     p.add_argument("--vtime", type=int, default=3,
                    help="terminal VTIME in tenths of a second for idle reads (default 3)")
     p.add_argument("--scale", type=int, default=DEFAULT_SCALE,
-                   help="PNG scale: cell = 6*scale x 13*scale px (default 3)")
-    p.add_argument("--mono-font", help="override monospace font path (Menlo)")
+                   help="output PNG is the 320x170 device panel upscaled by N "
+                        "with nearest-neighbour sampling -> 320*N x 170*N px "
+                        "(default 3 -> 960x510)")
+    p.add_argument("--native", action="store_true",
+                   help="save the 1:1 320x170 panel framebuffer instead of an "
+                        "upscaled PNG (implies --scale 1; for pixel inspection)")
+    p.add_argument("--font-mode", choices=("auto", "bitmap", "ttf"), default="auto",
+                   help="glyph source: auto/bitmap = vendored X11 6x13 bitmap "
+                        "font (vector+subpixel only for glyphs it lacks), ttf = "
+                        "host vector font for every glyph (comparison mode)")
+    p.add_argument("--subpixel", choices=("on", "off"), default="on",
+                   help="RGB-stripe subpixel antialiasing for vector glyphs "
+                        "(default on; off = grayscale antialiasing)")
+    p.add_argument("--mono-font", help="override monospace font path (Menlo; used by --font-mode ttf)")
     p.add_argument("--cjk-font", help="override CJK font path (PingFang SC etc.)")
     p.add_argument("--symbol-font", help="override symbol font path (Apple Symbols)")
     p.add_argument("--text-only", action="store_true", help="skip PNG rendering")
@@ -1227,12 +1679,16 @@ def main(argv=None):
         renderer = ScreenRenderer(
             args.cols, args.rows, scale=args.scale,
             mono_path=args.mono_font, cjk_path=args.cjk_font,
-            symbol_path=args.symbol_font)
-        if renderer.cjk is None:
-            log("warning: no CJK font found; CJK glyphs will not render")
-        if not renderer.mono_path.endswith("Menlo.ttc") and "Menlo" not in (
-                renderer.mono_path or ""):
-            log(f"warning: Menlo not found, using {renderer.mono_path}")
+            symbol_path=args.symbol_font, font_mode=args.font_mode,
+            subpixel=args.subpixel != "off", native=args.native)
+        out_w, out_h = renderer.output_size
+        log(f"renderer: {renderer.font_mode} font mode, subpixel="
+            f"{'on' if renderer.subpixel else 'off'}, "
+            f"{renderer.panel_w}x{renderer.panel_h} panel -> {out_w}x{out_h} PNG")
+        if renderer.faces.get("cjk") is None:
+            log("warning: no CJK font found; wide glyphs will be blank")
+        if renderer.faces.get("mono") is None and not renderer.bdf:
+            log("warning: no monospace font found; text will be blank")
 
     sim = PtySim(
         binary=os.path.abspath(os.path.expanduser(args.bin)),

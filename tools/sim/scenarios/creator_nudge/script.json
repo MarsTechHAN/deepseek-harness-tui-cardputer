@@ -1,0 +1,22 @@
+{
+ "responses": [
+  {
+   "reasoning": "Write the note the user asked for.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "n1",
+     "name": "write_file",
+     "arguments": {
+      "path": "notes.txt",
+      "content": "buy a new microSD card\n"
+     }
+    }
+   ]
+  },
+  {
+   "reasoning": "Done.",
+   "content": "Saved notes.txt."
+  }
+ ]
+}

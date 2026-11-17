@@ -133,8 +133,11 @@ python3 screen_sim.py --help
 | `--cwd DIR` | working directory for dst (also what `list_dir`/`bash` see) |
 | `--env K=V` | extra child env var (repeatable); `TERM=xterm-256color`, `LANG/LC_ALL=en_US.UTF-8` are preset |
 | `--out DIR` | snapshot directory (default `snapshots`) |
-| `--scale N` | PNG cell size = `6N × 13N` px (default 3 → 18×39 px cells, 954×468 image) |
-| `--mono-font/--cjk-font/--symbol-font PATH` | override font discovery |
+| `--scale N` | output PNG = the 320×170 device panel integer-upscaled by N with nearest-neighbour sampling → exactly `320N × 170N` px (default 3 → 960×510) |
+| `--native` | save the 1:1 320×170 panel framebuffer instead of an upscaled PNG (implies scale 1; pixel inspection) |
+| `--font-mode auto\|bitmap\|ttf` | `auto`/`bitmap` = vendored X11 6×13 bitmap font, vector+subpixel only for glyphs it lacks; `ttf` = host vector font for every glyph (comparison mode) |
+| `--subpixel on\|off` | RGB-stripe subpixel antialiasing for vector glyphs (default `on`; `off` = grayscale AA) |
+| `--mono-font/--cjk-font/--symbol-font PATH` | override host font discovery (CJK fallback and `--font-mode ttf`) |
 | `--text-only` | no PNGs (text snapshots only) |
 | `--scenario FILE` | JSON scenario (`-` reads stdin); its steps run before inline steps |
 | `--watch SECONDS --interval-ms MS --watch-prefix NAME` | capture every `MS` for `SECONDS` |
@@ -206,6 +209,88 @@ For every snapshot the simulator writes `<NN>_<name>.txt` and
 timeline, snapshot list, dst exit code, byte count), and prints the final text
 screen to stdout. dst is then shut down with Ctrl-C (clean exit expected; falls
 back to SIGTERM/SIGKILL). Exit status: 0 ok, 2 usage/setup error, 130 Ctrl-C.
+A font or glyph that cannot be rendered degrades only the PNG: the failure is
+logged and the text snapshot is still written.
+
+### PNG renderer: the device panel model
+
+The PNG is a model of the Cardputer Zero panel pixels, not a generic terminal
+screenshot. The exact geometry:
+
+| quantity | value |
+| --- | --- |
+| panel framebuffer | 320 × 170 RGB px |
+| terminal grid | 53 cols × 12 rows |
+| cell pitch | 6 px wide × 14 px tall |
+| glyph box | 6 × 13 px at the top of the cell, then a 1 px line gap |
+| wide (CJK) glyph box | 12 × 13 px = two cells |
+| text area | 53·6 × 12·14 = 318 × 168 px, centred at origin (1,1) |
+| panel margins | 1 px of black on every side |
+
+`screen_sim.py` builds that 320×170 framebuffer natively and then produces the
+output PNG by *integer nearest-neighbour upscaling*: `--scale N` gives exactly
+`320N × 170N` px (default 3 → 960×510, 6 → 1920×1020) and no font is
+re-rasterised at the larger size, so an upscaled PNG shows the exact device
+pixels. `--native` writes the 1:1 320×170 framebuffer for pixel inspection.
+
+**Fonts**
+* `fonts/6x13.bdf.gz` / `fonts/6x13B.bdf.gz` are the public-domain X11 "Fixed"
+  6×13 bitmap font (regular/bold). Every glyph they cover is drawn as exactly
+  6×13 device pixels, no antialiasing: a bitmap pixel is either the cell
+  foreground colour or the background. This covers Latin, Greek, Cyrillic, most
+  punctuation/arrows, box drawing and the block elements (`█▓░▀▄`).
+* Characters the bitmap font does not cover (CJK/kana, emoji, odd symbols) are
+  rasterised from a host vector font (`--cjk-font` / discovery; Apple Symbols
+  for narrow symbol fallback) at exactly the device box size — 12×13 px for a
+  wide character, 6×13 px for a narrow fallback — with the subpixel compositor
+  below.
+* `--font-mode auto` (default) and `--font-mode bitmap` use the bitmap font
+  first and fall back to the vector font only when the glyph is missing.
+  `--font-mode ttf` uses the host vector font for every glyph, so a reviewer can
+  compare against a TTF-backed fbterm: Latin will not be pixel-crisp and block
+  art will no longer tile, because no host font is designed for a 6×14 cell.
+* Bold cells use the `6x13B` face (falling back to regular when the bold face
+  lacks a glyph, e.g. `█`); bold CJK uses the weighted face of the CJK
+  collection when it has one (Hiragino Sans GB W6 on this machine).
+
+**Subpixel compositor (vector glyphs only)** — an approximation of LCD RGB
+stripe rendering, applied in this order:
+1. rasterise the glyph into an 8-bit `L` mask at 3× horizontal and 3× vertical
+   resolution of the device box (12×13 → 36×39), with the host font sized so
+   the advance fills the cell: a 36 px em for a 12 px wide (CJK) box and a
+   30 px em for a 6 px wide cell (12 / 10 device px per em), baseline at the
+   bitmap font's 11 px ascent;
+2. per device pixel, average each subpixel *column* over the 3×3 block
+   → c_r, c_g, c_b (3 horizontal subpixels per pixel, vertical box-filtered);
+3. apply FreeType's `[1,2,1]/4` horizontal FIR across the subpixel samples in
+   RGB order, per device row;
+4. composite per channel: `out = bg*(1-c) + fg*c`.
+`--subpixel off` uses the average of the three coverages for all channels
+(grayscale antialiasing, no coloured fringes).
+
+**How faithful is it?** The geometry is exact (320×170 panel, 6×14 pitch, 6×13
+glyph box, 2-cell CJK, 1 px margin), the LCD stripe order is real (R,G,B), and
+the bitmap glyphs are drawn with zero antialiasing exactly like a bitmap
+framebuffer font. It is still a *model*: the glyph shapes for Latin come from
+the canonical X11 6×13 bitmap font, not from the exact font on the board — that
+font cannot be read back without device access, so the family is an assumption
+(the geometry is not). The subpixel filter is a `[1,2,1]/4` approximation of
+FreeType's LCD filter (FreeType's default is a 5-tap FIR), there is no panel
+gamma/harmony model, so the coloured fringes are somewhat stronger and more
+saturated than a real panel's, and the ANSI palette is an approximation of the
+panels' colours. CJK/vector glyphs are therefore legible but visibly
+rainbow-fringed at 1:1; that is the compositor, not a capture artefact.
+
+The renderer keeps the two-pass drawing (all cell backgrounds first, then
+glyphs), so the continuation cell of a wide character inherits its leading
+cell's colours and CJK in a reverse-video row is never clipped. The ANSI
+8/256-colour mapping, bold brightening and the cursor rectangle are unchanged.
+
+`manifest.json` → `renderer` records the model and the fonts actually used:
+`native_size` `[320,170]`, `output_size`, `grid`, `cell_pitch` `[6,14]`,
+`glyph_box` `[6,13]`, `text_area`/`text_origin`, `font_mode`, `subpixel`,
+`bitmap_font`/`bitmap_bold_font`, `mono_font`/`cjk_font`/`symbol_font` and
+`fonts_used` (the fonts rasterised during the run).
 
 ---
 
@@ -319,15 +404,15 @@ and "Done: … this is the follow-up reply generated by mock_api.py".
 2. Output is drained with `select()`, decoded with an incremental UTF-8 decoder,
    and fed to `pyte.Stream(pyte.Screen(cols, rows))`. All waits/snapshots run in
    the same thread, so snapshots are deterministic (no reader race).
-3. Each cell is rendered into a Pillow image on a `6*scale × 13*scale` grid.
-   Menlo is sized so `font.getlength("M") == cell width`; pyte's wide-character
-   layout (char in cell N, `""` continuation in cell N+1) is honoured by drawing
-   CJK glyphs into a two-cell box with the CJK font (PingFang SC if installed,
-   else Hiragino Sans GB / STHeiti / Songti / Arial Unicode — discovered under
-   `/System/Library/Fonts` and `/System/Library/Fonts/Supplemental`).
-   Block glyphs █ ▓ ░ come from Menlo. ANSI colours (incl. 256-colour, bold,
-   reverse) map to a fixed dark terminal palette; pyte's cursor is drawn as a
-   thin blue outline.
+3. Each snapshot is rendered from the pyte screen onto a native 320×170 RGB
+   panel image (53×12 cells of 6×14 px, 1 px black margin; see §4 "PNG renderer").
+   The vendored 6×13 bitmap font supplies exact, unantialiased Latin/Greek/
+   Cyrillic/punctuation/arrow/box/block glyphs; CJK (pyte puts the char in cell
+   N and a `""` continuation in cell N+1, which is honoured) and glyphs the
+   bitmap font lacks are rasterised from a host vector font at the device box
+   size with the RGB-subpixel compositor; then the panel is integer-upscaled
+   for the output PNG. ANSI colours (incl. 256-colour, bold, reverse) map to a
+   fixed dark terminal palette; pyte's cursor is drawn as a 1 px blue rectangle.
 4. dst is stopped with a Ctrl-C byte (raw mode turns it into a normal key) so it
    restores the terminal and prints `bye`; SIGTERM/SIGKILL are fallbacks.
 
@@ -353,7 +438,7 @@ and "Done: … this is the follow-up reply generated by mock_api.py".
 ## 8. Verified evidence
 
 Captured by `python3 run_demo.py` against the current `cargo build` output
-(53×12, PNGs are 954×468 px, scale 3):
+(53×12, PNGs are 960×510 px: the 320×170 device panel at scale 3):
 
 | screenshot | state |
 | --- | --- |
@@ -394,11 +479,19 @@ the 10 checks regress.
   italic/strikethrough rendering, limited origin/resize handling). The cursor is
   drawn as an outline at pyte's tracked position, so a few applications that
   position the cursor outside the grid would look clamped.
-* **CJK/wide cells**: wide characters occupy two cells (one char + pyte's `""`
-  continuation cell, which the renderer skips). CJK glyphs are drawn at 0.95 ×
-  two-cell width so they never bleed into the next cell; Menlo block glyphs
-  (█▓░) can overhang one pixel left/right inside their own cell. Ambiguous-width
-  characters (e.g. `·`, `→`) are drawn as one cell.
+* **CJK/wide cells**: wide characters occupy exactly two cells = 12×13 px (one
+  char + pyte's `""` continuation cell, which the renderer skips for glyphs but
+  paints with the leading cell's background, so reverse-video CJK rows are
+  whole). Ambiguous-width characters (e.g. `·`, `→`) are drawn as one cell. A
+  wide character in the last column would be clipped at the panel edge; pyte's
+  wrapping normally prevents that. Block glyphs (█▓░) fill their 6×13 glyph box
+  exactly; the 1 px line gap below each line is background colour (that is the
+  device model, so a multi-row block sprite shows thin horizontal gaps).
+* **The PNG is a model, not a capture.** Geometry is exact, glyph shapes for
+  Latin come from the canonical X11 6×13 bitmap font (the board's exact font
+  cannot be read without device access), and vector glyphs get a `[1,2,1]/4`
+  LCD approximation: coloured fringes are stronger than a real panel's. See
+  §4 "PNG renderer" for the full model.
 * **Colours** are an approximation of a dark xterm-256colour palette, not the
   exact Cardputer panel gamma. Bold base colours are brightened; 256-colour
   cells are mapped through the standard cube.
@@ -409,8 +502,11 @@ the 10 checks regress.
   `mock_api.py` shows as `mockapi.py`; tool lines may show both an in-progress
   and a settled row).
 * The pty is fixed at the requested size; dst clamps to its panel (max 53×13).
-  Running with `--rows 13` gives the full device height; `--rows 12` (default)
-  matches the task's reference size.
+  The device model is 53×12 (12×14 = 168 px high); `--rows 12` is the default
+  and device-faithful size. Non-default `--cols/--rows` grow the model canvas
+  just enough to fit the requested grid (so they are inspectable, not clipped),
+  which means the PNG is no longer exactly 320×170 px before scaling; the
+  default run is always exactly 320×170 → `320N × 170N` PNG.
 
 
 ---

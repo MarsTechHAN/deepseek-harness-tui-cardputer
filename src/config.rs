@@ -329,6 +329,16 @@ pub fn expand(path: &str) -> PathBuf {
     PathBuf::from(p)
 }
 
+/// `~/...` form of a path under HOME, for one-line UI notices.
+pub fn home_shorten(p: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    if !home.is_empty() && p.starts_with(&home) {
+        format!("~{}", &p[home.len()..])
+    } else {
+        p.to_string()
+    }
+}
+
 pub fn config_path() -> PathBuf {
     home().join("config.yml")
 }
@@ -518,6 +528,9 @@ pub struct Config {
     /// Optional judge model for auto mode (empty = session model).
     pub sandbox_judge_model: String,
     pub sandbox_judge_max_tokens: u32,
+    /// UI mode: normal chat, or creator (model owns and builds the device's
+    /// apps, see docs/CREATOR.md).
+    pub creator: bool,
     /// True once a usable API key has been provided.
     pub configured: bool,
 }
@@ -556,6 +569,7 @@ impl Default for Config {
             sandbox_mode: "auto".into(),
             sandbox_judge_model: String::new(),
             sandbox_judge_max_tokens: 48,
+            creator: false,
             configured: false,
         }
     }
@@ -647,6 +661,9 @@ impl Config {
             }
             if let Some(v) = tui.get("tips_shown").and_then(|v| v.as_bool()) {
                 self.tips_shown = v;
+            }
+            if let Some(v) = tui.get("mode").and_then(|v| v.as_str()) {
+                self.creator = v.eq_ignore_ascii_case("creator");
             }
         }
         if let Some(voice) = doc.get("voice") {
@@ -770,6 +787,10 @@ impl Config {
         s.push_str(&format!("  auto_send_voice: {}\n", self.auto_send_voice));
         s.push_str(&format!("  language: {}\n", yaml_quote(&self.language)));
         s.push_str(&format!("  tips_shown: {}\n", self.tips_shown));
+        s.push_str(&format!(
+            "  mode: {}\n",
+            if self.creator { "creator" } else { "normal" }
+        ));
         s.push_str("agent:\n");
         s.push_str(&format!("  max_steps: {}\n", self.max_steps));
         s.push_str("goal:\n");
@@ -917,10 +938,16 @@ mod tests {
     #[test]
     fn roundtrip_yaml() {
         let mut c = Config::default();
+        c.creator = true;
         c.model = "deepseek-v4".into();
         c.disabled_tools.push("speak".into());
         let doc = parse_yaml(&c.to_yaml());
         assert_eq!(doc.get("model").unwrap().as_str(), Some("deepseek-v4"));
+        assert_eq!(
+            doc.get("tui").unwrap().get("mode").unwrap().as_str(),
+            Some("creator"),
+            "the UI mode persists"
+        );
         let rows = doc.get("insert").unwrap().as_seq().unwrap();
         assert_eq!(rows[0].get("disabled").unwrap().as_bool(), Some(true));
     }

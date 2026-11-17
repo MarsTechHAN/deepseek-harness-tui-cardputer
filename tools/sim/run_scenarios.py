@@ -1176,10 +1176,11 @@ def check_config_menu(screens, reqs, work):
     middle = screens.get("middle", "")
     cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
     checks = []
-    checks.append(("Max steps/turn" in menu, "max steps setting visible"))
+    checks.append(("Max steps/turn" in menu or "Max steps/turn" in bottom,
+                   "max steps setting visible"))
     checks.append(("Auto compact" in menu or "Auto compact" in toggled or "Auto compact" in bottom,
                    "compaction setting visible"))
-    checks.append(("1/15" in menu, "config menu shows the scroll position"))
+    checks.append(("1/16" in menu, "config menu shows the scroll position"))
     checks.append(("Goal rounds" in menu or "Goal rounds" in middle or "Goal rounds" in bottom,
                    "goal round setting present"))
     checks.append(("Sandbox mode" in menu or "Sandbox mode" in middle or "Sandbox mode" in bottom,
@@ -1207,7 +1208,7 @@ def check_commands(screens, reqs, work):
                    "palette footer shows the match position"))
     checks.append(("/compact" in help_ or "/clear" in help_,
                    "/help lists commands"))
-    checks.append(("/15" in help_ or "1/15" in help_, "help shows the command count position"))
+    checks.append(("/16" in help_, "help shows the command count position"))
     checks.append(("clear the transcript" in help_ and "Enter run" in help_,
                    "/help shows a description preview and run hint"))
     checks.append(("requests" in usage.lower() or "cache" in usage.lower(),
@@ -1256,7 +1257,168 @@ def check_goal_blocked(screens, reqs, work):
     return checks
 
 
+
+def system_text(req):
+    for m in req.get("messages") or []:
+        if m.get("role") == "system":
+            return m.get("content") or ""
+    return ""
+
+
+def check_creator_mode(screens, reqs, work):
+    on = screens.get("on", "")
+    cfg_normal = screens.get("config_normal", "")
+    cfg_creator = screens.get("config_creator", "")
+    off = screens.get("off", "")
+    again = screens.get("on_again", "")
+    checks = []
+    checks.append(("Mode" in cfg_normal and "normal" in cfg_normal,
+                   "/config shows the Mode row in normal mode"))
+    checks.append(("creator mode on" in on, "switching the mode in /config is announced"))
+    checks.append(("creator \u00b7 /apps \u00b7 hold Esc" in on,
+                   "idle hint switches to the creator hint"))
+    checks.append(("Mode" in cfg_creator and "creator" in cfg_creator,
+                   "/config shows the Mode row as creator"))
+    checks.append(("creator mode off" in off, "creator mode can be switched off"))
+    checks.append(("creator mode on" in again and "creator \u00b7 /apps" in again,
+                   "mode switching is repeatable"))
+    checks.append(("/creator" not in on and "/creator" not in off,
+                   "the mode is not exposed as a command"))
+    checks.append((len(reqs) == 0, "mode switching never calls the model"))
+    return checks
+
+
+def check_creator_build(screens, reqs, work):
+    built = screens.get("built", "")
+    lst = screens.get("apps_list", "")
+    prev = screens.get("apps_preview", "")
+    home = os.path.join(work, "home")
+    base = os.path.join(home, ".dst", "apps", "system", "battery_viewer")
+    manifest = read_file(os.path.join(base, "app.json"))
+    ann = read_file(os.path.join(base, "APP.md"))
+    entry = read_file(os.path.join(base, "run.sh"))
+    sys1 = system_text(reqs[0]) if reqs else ""
+    sys3 = system_text(reqs[2]) if len(reqs) > 2 else ""
+    texts = "\n".join(message_texts(reqs))
+    checks = []
+    checks.append(('"battery_viewer"' in manifest.replace(" ", ""),
+                   "app manifest written under ~/.dst/apps"))
+    checks.append(("Battery viewer" in ann and "Run it from /apps" in ann,
+                   "APP.md annotation written"))
+    checks.append(("Battery: ${cap}%" in entry, "entry program written"))
+    checks.append(("* app_file" in built and "wrote run.sh" in built,
+                   "the file tool card shows the program write"))
+    checks.append(("saved app system/battery_viewer" in built
+                   and "creator: files changed but no app saved" not in built,
+                   "creator mode announces the saved app (and does not nudge)"))
+    checks.append(("Apps" in lst and "Battery viewer" in lst and "system \u00b7 sh" in lst,
+                   "/apps lists the new app"))
+    checks.append(("path: ~/.dst/apps/system/battery_viewer" in prev,
+                   "app preview shows the package path"))
+    checks.append(("kind: sh" in prev and "entry: run.sh" in prev,
+                   "app preview shows kind and entry"))
+    checks.append(("Shows the battery level." in prev,
+                   "app preview shows the annotation"))
+    checks.append(("CREATOR MODE" in sys1 and "INSTALLED APPS (0)" in sys1,
+                   "creator prompt injected before any app exists"))
+    checks.append(("INSTALLED APPS (1)" in sys3
+                   and "battery_viewer \u2014 Battery viewer [sh]" in sys3,
+                   "installed catalog reaches the next turn"))
+    checks.append(("App package 'system/battery_viewer' is installed" in texts,
+                   "app_save explains the next step to the model"))
+    checks.append((len(reqs) == 3, "exactly the scripted requests were made"))
+    return checks
+
+
+def check_creator_run(screens, reqs, work):
+    app = screens.get("app_screen", "")
+    after = screens.get("after_run", "")
+    checks = []
+    checks.append(("charge  87%" in app, "the app draws on the panel"))
+    checks.append(("Battery viewer" in app, "the panel belongs to the app while it runs"))
+    checks.append(("creator \u00b7 /apps" not in app and "Up/Down hist" not in app,
+                   "the chat UI is gone during the takeover"))
+    checks.append(("* app_run" in after, "the tool card records the run"))
+    checks.append(("time limit" in after, "the time limit returns the screen"))
+    checks.append(("It ran on the panel" in after, "the turn finishes after the app returns"))
+    checks.append((len(reqs) == 2, "one request before and one after the app run"))
+    return checks
+
+
+def check_creator_run_esc(screens, reqs, work):
+    app = screens.get("app_screen", "")
+    after = screens.get("after_esc", "")
+    checks = []
+    checks.append(("ESC TEST APP" in app, "long-running app takes the panel"))
+    checks.append(("tick" in app, "the app keeps drawing while it runs"))
+    checks.append(("* app_run" in after, "tool card for the killed run"))
+    results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
+    checks.append(("long-press Esc" in after and "stopped by long-press Esc" in results,
+                   "long-press Esc stops the app"))
+    checks.append(("Back in the chat" in after, "the turn continues after Esc"))
+    checks.append((len(reqs) == 2, "no extra model requests"))
+    return checks
+
+
+def check_creator_apps_zh(screens, reqs, work):
+    lst = screens.get("list", "")
+    prev = screens.get("preview", "")
+    off = screens.get("off", "")
+    on = screens.get("on", "")
+    cfg = screens.get("config", "")
+    checks = []
+    checks.append(("\u5e94\u7528" in lst and "\u7535\u6c60\u67e5\u770b\u5668" in lst,
+                   "localized app menu lists the CJK app title"))
+    checks.append(("system \u00b7 sh" in lst, "localized menu keeps the machine value"))
+    checks.append(("\u8def\u5f84: ~/.dst/apps/system/battery_viewer" in prev,
+                   "preview path label localized"))
+    checks.append(("\u7c7b\u578b: sh" in prev and "\u5165\u53e3: run.sh" in prev,
+                   "preview kind/entry labels localized"))
+    checks.append(("\u663e\u793a\u7535\u91cf" in prev, "preview shows the annotation"))
+    checks.append(("\u521b\u4f5c\u8005\u6a21\u5f0f\u5df2\u5173\u95ed" in off,
+                   "creator-off notice localized"))
+    checks.append(("\u521b\u4f5c\u8005\u6a21\u5f0f\u5df2\u5f00\u542f" in on,
+                   "creator-on notice localized"))
+    checks.append(("\u957f\u6309 Esc \u9000\u51fa\u5e94\u7528" in on,
+                   "creator idle hint localized"))
+    checks.append(("\u6a21\u5f0f" in cfg and "creator" in cfg,
+                   "config mode row localized"))
+    ask = screens.get("delete_ask", "")
+    deleted = screens.get("deleted", "")
+    empty = screens.get("empty", "")
+    base = os.path.join(work, "home", ".dst", "apps", "system", "battery_viewer")
+    checks.append(("\u5220\u9664" in ask and "y/n" in ask,
+                   "delete asks for confirmation in the footer"))
+    checks.append(("\u5df2\u5220\u9664\u5e94\u7528" in deleted,
+                   "delete is confirmed in the transcript"))
+    checks.append((not os.path.isdir(base), "the app package is removed from the device"))
+    checks.append(("\u8fd8\u6ca1\u6709\u5e94\u7528" in empty,
+                   "localized empty state after the last app is deleted"))
+    checks.append((len(reqs) == 0, "no model request in this scenario"))
+    return checks
+
+
+def check_creator_nudge(screens, reqs, work):
+    turn = screens.get("turn", "")
+    note = read_file(os.path.join(work, "notes.txt"))
+    checks = []
+    checks.append(("creator: files changed but no app saved" in turn,
+                   "creator mode nudges when work was not persisted"))
+    checks.append(("app_save keeps this work" in turn.replace("\n", " "),
+                   "the nudge names the fix"))
+    checks.append(("Saved notes.txt." in turn, "the turn still answers normally"))
+    checks.append(("microSD" in note, "the write itself happened"))
+    checks.append((len(reqs) == 2, "exactly the scripted requests were made"))
+    return checks
+
+
 CHECKS = {
+    "creator_mode": check_creator_mode,
+    "creator_build": check_creator_build,
+    "creator_run": check_creator_run,
+    "creator_run_esc": check_creator_run_esc,
+    "creator_apps_zh": check_creator_apps_zh,
+    "creator_nudge": check_creator_nudge,
     "clear": check_clear,
     "login_menu": check_login_menu,
     "login_type_token": check_login_type_token,

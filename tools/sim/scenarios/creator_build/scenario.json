@@ -1,0 +1,63 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "build me a battery viewer app"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 30000
+   }
+  },
+  {
+   "snap": "built"
+  },
+  {
+   "send": "/apps"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 450,
+   "snap": "apps_list"
+  },
+  {
+   "key": "Right"
+  },
+  {
+   "wait_ms": 350,
+   "snap": "apps_preview"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 250
+  },
+  {
+   "send": "which apps do I have?"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 30000
+   }
+  },
+  {
+   "snap": "second"
+  }
+ ]
+}

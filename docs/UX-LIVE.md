@@ -63,6 +63,38 @@ the device.
   push-to-talk, the transcript insertion and the `speak` tool card can be
   reviewed offline. The mock logs to `~/.dst/logs/voice.log`.
 
+
+## Creator mode live check (real local vLLM)
+
+`tools/sim/live_creator_check.py` is the creator-mode counterpart of the
+walkthrough above: it asks the real model to build a battery app, then opens
+`/apps` and verifies the package on disk. It is a *directed* prompt (it names
+`app_save`/`app_file` and says not to run the app) because the simulator host is
+a Mac without `/sys/class/power_supply` and the point of the pass is the
+save-and-inspect path; the model, streaming, tool arguments and rendering are
+all real. Sandbox `full` keeps the pass fast (no judge request per probe).
+
+```sh
+cd tools/sim
+python3 live_creator_check.py     # ~2-4 min; screenshots + contact sheet
+```
+
+| # | Step | What is checked | Result |
+| --- | --- | --- | --- |
+| 01 | `01_startup` | creator mode is on: `创作者 · /apps · 长按 Esc 退出应用` idle hint | ok |
+| 02 | `02_built` | real model calls `app_save` + `app_file`; transcript shows the answer and the one-line `已保存应用 system/battery` notice | ok: the model wrote `app.json`, `APP.md` and a sysfs-reading `run.sh`, and warned that the host has no battery node |
+| 03 | `03_apps` | `/apps` menu lists the new app (`Battery   system · sh`) with the localized footer | ok |
+| 04 | `04_preview` | Right expands the annotation preview: `路径/类型/入口/更新` + APP.md body | ok |
+
+Hard checks: the transcript shows a saved app, a package exists under
+`~/.dst/apps` with `app.json`, `APP.md` and `run.sh`, and the preview shows the
+package path. Contact sheet: `docs/live-creator.png`.
+
+Evidence and limits: the live model is free to choose a different name,
+structure or description than `creator_build`'s mock script; the check accepts
+any package. It does not replace the deterministic scenarios, which pin the
+exact manifest, catalog injection and screen-takeover behaviour.
+
 ## Evidence and limits
 
 - Contact sheet: [`docs/live-walkthrough.png`](live-walkthrough.png).

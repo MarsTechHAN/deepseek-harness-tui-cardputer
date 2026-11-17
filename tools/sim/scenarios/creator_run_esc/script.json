@@ -1,0 +1,22 @@
+{
+ "responses": [
+  {
+   "reasoning": "Run the forever app; the user will stop it with a long Esc press.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "r1",
+     "name": "app_run",
+     "arguments": {
+      "name": "forever",
+      "timeout_s": 300
+     }
+    }
+   ]
+  },
+  {
+   "reasoning": "Stopped.",
+   "content": "The long-press Esc stopped the app. Back in the chat."
+  }
+ ]
+}

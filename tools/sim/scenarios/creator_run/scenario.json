@@ -1,0 +1,41 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "run the battery app"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "charge  87",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "wait_ms": 150,
+   "snap": "app_screen"
+  },
+  {
+   "wait_for": {
+    "text": "time limit",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 30000
+   }
+  },
+  {
+   "snap": "after_run"
+  }
+ ]
+}

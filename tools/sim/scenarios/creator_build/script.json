@@ -1,0 +1,40 @@
+{
+ "responses": [
+  {
+   "reasoning": "The user wants a reusable battery viewer, so build it as an app package.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "c1",
+     "name": "app_save",
+     "arguments": {
+      "name": "battery_viewer",
+      "category": "system",
+      "title": "Battery viewer",
+      "description": "Shows the charge level and charging state.",
+      "annotation": "Shows the battery level.\n\nRun it from /apps (Enter) or ask me to run it.\nIt reads /sys/class/power_supply/BAT0/capacity once a second.",
+      "kind": "sh",
+      "entry": "run.sh"
+     }
+    },
+    {
+     "id": "c2",
+     "name": "app_file",
+     "arguments": {
+      "name": "battery_viewer",
+      "path": "run.sh",
+      "content": "#!/bin/sh\nwhile :; do\n  cap=$(cat /sys/class/power_supply/BAT0/capacity 2>/dev/null || echo 0)\n  echo \"Battery: ${cap}%\"\n  sleep 1\ndone\n"
+     }
+    }
+   ]
+  },
+  {
+   "reasoning": "Saved.",
+   "content": "Battery viewer saved as system/battery_viewer. Open /apps and press Enter to run it."
+  },
+  {
+   "reasoning": "Answering from the catalog.",
+   "content": "You have one app: system/battery_viewer (Battery viewer)."
+  }
+ ]
+}

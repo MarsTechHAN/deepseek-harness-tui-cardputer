@@ -1,0 +1,1 @@
+{"name": "battery_viewer", "title": "电池查看器", "category": "system", "description": "显示电量与充电状态。", "kind": "sh", "entry": "run.sh", "version": 2, "created": "2026-01-01T10:00:00+08:00", "updated": "2026-01-01T10:00:00+08:00"}

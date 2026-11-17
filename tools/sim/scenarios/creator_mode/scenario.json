@@ -1,0 +1,345 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/config"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 500
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "wait_ms": 300,
+   "snap": "config_normal"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 250
+  },
+  {
+   "send": "/config"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 500
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "on"
+  },
+  {
+   "send": "/config"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 500
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "wait_ms": 300,
+   "snap": "config_creator"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 250
+  },
+  {
+   "send": "/config"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 500
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "off"
+  },
+  {
+   "send": "/config"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 500
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 80
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "on_again"
+  }
+ ]
+}

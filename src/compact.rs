@@ -503,6 +503,9 @@ fn stream_summary(
     defs: &J,
     ui: &mut dyn harness::Ui,
 ) -> Result<String, String> {
+    // The summariser pumps the keyboard; the caller may be idle mode (manual
+    // /compact) where key reads are blocking, so establish the pump context.
+    crate::poll_mode(true);
     let chat = api::spawn_chat(cfg, messages, defs)?;
     let mut text = String::new();
     loop {
