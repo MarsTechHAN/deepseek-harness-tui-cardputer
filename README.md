@@ -101,12 +101,12 @@ intelligence, and `curl` for the wire.
 </tr>
 <tr>
 <td width="50%"><img src="docs/splash.gif" alt="Animated splash: the DeepSeek whale breaches out of a night sea on the 53x9 pixel grid"><br><sub><b>Splash</b> — a 14-frame whale breach drawn on the device pixel grid, deterministic so snapshots are reproducible.</sub></td>
-<td width="50%"><img src="docs/login-page.png" alt="Phone login page with a WeChat QR, live steps and a manual API-key form"><br><sub><b>Sign-in</b> — scan a WeChat QR on the panel, use the LAN page from a phone, or type the credential on the device.</sub></td>
+<td width="50%"><img src="docs/login-qr-screen.png" alt="WeChat QR and the phone-page URL rendered on the 53x12 panel"><br><sub><b>Sign-in</b> — a real WeChat QR on the panel, a LAN page for the phone, or the credential typed on the device.</sub></td>
 </tr>
 </table>
 
 <div align="center">
-<sub><a href="docs/splash-frames.png">Frame sheet</a> · <a href="docs/login-qr-screen.png">QR on the panel</a> · <a href="docs/login-i18n-sheet.png">login in six languages</a></sub>
+<sub><a href="docs/splash-frames.png">Splash frame sheet</a> · <a href="docs/login-page.png">phone login page</a> · <a href="docs/login-i18n-sheet.png">login in six languages</a></sub>
 </div>
 
 ---
