@@ -81,7 +81,7 @@ pub fn apps_dir() -> PathBuf {
     crate::config::home().join("apps")
 }
 
-fn now_stamp() -> String {
+pub(crate) fn now_stamp() -> String {
     let out = Command::new("date").arg("+%Y-%m-%dT%H:%M:%S%z").output();
     match out {
         Ok(o) => {
@@ -752,12 +752,16 @@ or ignores the Esc/timeout backstop.\n\
 - Verify before you show it: call app_test (headless pipes, captured stdout/stderr/exit, log \
 file under ~/.dst/tmp) and fix failures; test the happy path plus bad input. app_run is for \
 the user to see the real full-screen behaviour.\n\
+- app_export / app_import move a package as a .tar.gz under ~/.dst/tmp (backup, copy off the \
+device, restore later); an imported archive must contain exactly one <category>/<name>/ tree \
+and is validated before it is installed (replace=true to overwrite).\n\
 \n\
 WHAT TO PERSIST — app vs skill vs memory\n\
 - app: something runnable on the device (app_save/app_file, verified with app_test).\n\
 - skill: a systematic, self-contained engineering package you worked out (procedure, format, \
-checklist, support files) that will be useful again — save it with skill_save/skill_file. It \
-joins the SKILLS catalog next turn and is read with the skill tool.\n\
+checklist, support files) that will be useful again — save it with skill_save/skill_file. \
+Updating a skill bumps its version and keeps the old body under .history/; it joins the SKILLS \
+catalog next turn and is read with the skill tool (also usable in the same turn).\n\
 - memory: short durable facts or preferences (memory_write); memory is fragments, a skill is \
 a complete procedure. Prefer a skill over dumping a long procedure into memory.\n\
 \n\
@@ -1122,6 +1126,192 @@ fn export_exec(args: &J) -> Result<J, Fail> {
     ]))
 }
 
+fn count_tree(dir: &Path) -> (usize, u64) {
+    let mut files = 0usize;
+    let mut bytes = 0u64;
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            match e.metadata() {
+                Ok(m) if m.is_dir() => {
+                    let (f, b) = count_tree(&e.path());
+                    files += f;
+                    bytes += b;
+                }
+                Ok(m) if m.is_file() => {
+                    files += 1;
+                    bytes += m.len();
+                }
+                _ => {}
+            }
+        }
+    }
+    (files, bytes)
+}
+
+fn cleanup(dir: &Path) {
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn import_exec(args: &J) -> Result<J, Fail> {
+    let raw = str_arg(args, "path").unwrap_or_default();
+    if raw.trim().is_empty() {
+        return Err(Fail::new("missing 'path': an archive under ~/.dst/tmp"));
+    }
+    let replace = args
+        .get("replace")
+        .map(|b| matches!(b, J::Bool(true)))
+        .unwrap_or(false);
+    let tmp_root = crate::config::tmp_dir();
+    let _ = std::fs::create_dir_all(&tmp_root);
+    let candidate = if raw.trim().starts_with('/') || raw.trim().starts_with('~') {
+        crate::config::expand(raw.trim())
+    } else {
+        tmp_root.join(raw.trim())
+    };
+    let canon_tmp = std::fs::canonicalize(&tmp_root)
+        .map_err(|e| Fail::new(format!("tmp dir: {e}")))?;
+    let archive = std::fs::canonicalize(&candidate)
+        .map_err(|e| Fail::new(format!("archive not found: {e}")))?;
+    if !archive.starts_with(&canon_tmp) {
+        return Err(Fail::new(
+            "refusing to import from outside ~/.dst/tmp; copy the archive there first",
+        ));
+    }
+    let name = archive
+        .file_name()
+        .and_then(|x| x.to_str())
+        .unwrap_or("archive");
+    if !(name.ends_with(".tar.gz") || name.ends_with(".tgz")) {
+        return Err(Fail::new("archive must be a .tar.gz (use app_export)"));
+    }
+    if let Ok(m) = archive.metadata() {
+        if m.len() > 4 * 1024 * 1024 {
+            return Err(Fail::new("archive is larger than 4 MB"));
+        }
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let work = tmp_root.join(format!("import-{}-{stamp}", std::process::id()));
+    cleanup(&work);
+    std::fs::create_dir_all(&work).map_err(|e| Fail::new(format!("{}: {e}", work.display())))?;
+    let out = Command::new("tar")
+        .arg("-xzf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(&work)
+        .output()
+        .map_err(|e| {
+            cleanup(&work);
+            Fail::new(format!("tar is not available: {e}"))
+        })?;
+    if !out.status.success() {
+        cleanup(&work);
+        return Err(Fail::new(format!(
+            "tar failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    // The archive must be exactly one <category>/<name>/ package; anything else
+    // (dotfiles, multiple roots, absolute paths escaping the temp dir) fails.
+    let mut roots: Vec<PathBuf> = std::fs::read_dir(&work)
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
+        .unwrap_or_default();
+    if roots.len() != 1 {
+        cleanup(&work);
+        return Err(Fail::new(
+            "archive must contain exactly one <category>/<name>/ package",
+        ));
+    }
+    let cat_dir = roots.pop().unwrap();
+    let cat_name = cat_dir
+        .file_name()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_string();
+    if !valid_slug(&cat_name) {
+        cleanup(&work);
+        return Err(Fail::new(format!("invalid category in archive: '{cat_name}'")));
+    }
+    let mut apps_found: Vec<PathBuf> = std::fs::read_dir(&cat_dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
+        .unwrap_or_default();
+    if apps_found.len() != 1 {
+        cleanup(&work);
+        return Err(Fail::new(
+            "archive must contain exactly one app directory inside the category",
+        ));
+    }
+    let src_dir = apps_found.pop().unwrap();
+    let src_app = match parse_manifest(&src_dir) {
+        Some(a) => a,
+        None => {
+            cleanup(&work);
+            return Err(Fail::new("archive has no valid app.json"));
+        }
+    };
+    let (files, bytes) = count_tree(&src_dir);
+    if files > 200 || bytes > MAX_APP_BYTES as u64 {
+        cleanup(&work);
+        return Err(Fail::new(format!(
+            "archive package is too big ({files} files, {bytes} bytes)"
+        )));
+    }
+    let target = apps_dir().join(&src_app.category).join(&src_app.name);
+    let existed = target.exists();
+    if existed && !replace {
+        cleanup(&work);
+        return Err(Fail::new(format!(
+            "app {} already exists; pass replace=true to overwrite",
+            src_app.label()
+        )));
+    }
+    if existed {
+        std::fs::remove_dir_all(&target)
+            .map_err(|e| Fail::new(format!("{}: {e}", target.display())))?;
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| Fail::new(format!("{}: {e}", parent.display())))?;
+    }
+    std::fs::rename(&src_dir, &target).map_err(|e| {
+        cleanup(&work);
+        Fail::new(format!("could not install into {}: {e}", target.display()))
+    })?;
+    cleanup(&work);
+    Ok(obj(vec![
+        ("name", J::s(&src_app.label())),
+        ("path", J::s(&target.display().to_string())),
+        ("files", J::Num(files as f64)),
+        ("replaced", J::Bool(existed)),
+    ]))
+}
+
+fn import_render(_a: &J, v: &J) -> String {
+    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("");
+    let files = v.get("files").and_then(|x| x.as_num()).unwrap_or(0.0) as usize;
+    let replaced = v
+        .get("replaced")
+        .map(|b| matches!(b, J::Bool(true)))
+        .unwrap_or(false);
+    format!(
+        "{} app {name} ({files} files) at {}; it appears in INSTALLED APPS next turn",
+        if replaced { "replaced" } else { "imported" },
+        v.get("path").and_then(|x| x.as_str()).unwrap_or("")
+    )
+}
+
+fn import_present(a: &J) -> String {
+    format!(
+        "import {}",
+        str_arg(a, "path")
+            .unwrap_or_default()
+            .rsplit('/')
+            .next()
+            .unwrap_or("archive")
+    )
+}
+
 fn export_render(_a: &J, v: &J) -> String {
     format!(
         "exported app {} to {} ({} bytes); keep it as a backup or copy it off the device",
@@ -1236,6 +1426,24 @@ without touching the panel.",
             execute: export_exec,
             render: export_render,
             present: export_present,
+            post: None,
+            schema_override: None,
+            dynamic: None,
+        },
+        ToolDef {
+            name: "app_import",
+            description: "Restore an app package from a .tar.gz under ~/.dst/tmp (as produced by \
+app_export). The archive must contain exactly one <category>/<name>/ tree; it is validated and \
+installed into ~/.dst/apps. Pass replace=true to overwrite an installed app.",
+            params: vec![
+                Param::req("path", "string", "Archive path under ~/.dst/tmp (absolute, ~/..., or a bare file name)."),
+                Param::opt("replace", "boolean", "Overwrite an already installed app with the same name."),
+            ],
+            concurrency_safe: false,
+            timeout_ms: 20_000,
+            execute: import_exec,
+            render: import_render,
+            present: import_present,
             post: None,
             schema_override: None,
             dynamic: None,
@@ -1860,7 +2068,7 @@ echo hi
         let names: Vec<&str> = defs.iter().map(|d| d.name).collect();
         assert_eq!(
             names,
-            vec!["app_save", "app_file", "app_test", "app_export", "app_run"]
+            vec!["app_save", "app_file", "app_test", "app_export", "app_import", "app_run"]
         );
         let schema = crate::tool::definitions(&defs).dump();
         assert!(schema.contains("\"kind\""));

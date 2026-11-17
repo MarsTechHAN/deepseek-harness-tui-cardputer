@@ -329,7 +329,7 @@ pub fn classify(name: &str, args: &J) -> Class {
         // Creator mode: app_save/app_file can only write inside the app root
         // (the tools validate every path), and app_run runs a package the user
         // explicitly asked dst to build. Registered only in creator mode.
-        "app_save" | "app_file" | "app_export" | "app_run" | "app_test"
+        "app_save" | "app_file" | "app_export" | "app_import" | "app_run" | "app_test"
         | "skill_save" | "skill_file" => Class::Safe,
         "edit_file" => {
             let path = crate::tool::str_arg(args, "path").unwrap_or_default();

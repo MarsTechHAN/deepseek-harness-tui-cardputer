@@ -14,6 +14,15 @@
      }
     },
     {
+     "id": "s1b",
+     "name": "skill_save",
+     "arguments": {
+      "name": "battery-report",
+      "description": "Use when the user asks for a battery status report",
+      "instructions": "# Battery report\n\nUPDATED: read capacity and status, render a three-line summary and one action line.\n"
+     }
+    },
+    {
      "id": "s2",
      "name": "skill_save",
      "arguments": {
@@ -33,7 +42,7 @@
   },
   {
    "reasoning": "Saved.",
-   "content": "Saved the `battery-report` and `battery-probe` skills; they join the SKILLS catalog next turn."
+   "content": "Saved the `battery-report` (v2) and `battery-probe` skills; they join the SKILLS catalog next turn."
   },
   {
    "reasoning": "Reading the catalog.",

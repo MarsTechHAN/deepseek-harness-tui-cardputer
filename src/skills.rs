@@ -35,6 +35,9 @@ pub struct Skill {
     pub dir: PathBuf,
     /// "model" for skills the agent wrote itself; empty for hand-installed ones.
     pub origin: String,
+    /// Bumped by skill_save; hand-installed skills default to 1.
+    pub version: u32,
+    pub updated: String,
 }
 
 impl Skill {
@@ -107,6 +110,21 @@ fn safe_rel(path: &str) -> Option<String> {
     Some(parts.join("/"))
 }
 
+/// Keep at most five snapshots in a skill's .history directory.
+fn prune_history(history: &Path) {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(history)
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect())
+        .unwrap_or_default();
+    if files.len() <= 5 {
+        return;
+    }
+    files.sort();
+    let drop = files.len() - 5;
+    for p in files.into_iter().take(drop) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
 fn dir_bytes(dir: &Path) -> u64 {
     let mut total = 0u64;
     if let Ok(rd) = std::fs::read_dir(dir) {
@@ -131,9 +149,9 @@ fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
 }
 
 /// Static list of skills saved during this turn, for the transcript notice.
-static SAVED: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+static SAVED: std::sync::Mutex<Vec<(String, String, u32)>> = std::sync::Mutex::new(Vec::new());
 
-pub fn take_saved() -> Vec<(String, String)> {
+pub fn take_saved() -> Vec<(String, String, u32)> {
     match SAVED.lock() {
         Ok(mut g) => std::mem::take(&mut *g),
         Err(_) => Vec::new(),
@@ -142,7 +160,7 @@ pub fn take_saved() -> Vec<(String, String)> {
 
 fn note_saved(sk: &Skill) {
     if let Ok(mut g) = SAVED.lock() {
-        g.push((sk.name.clone(), sk.dir.display().to_string()));
+        g.push((sk.name.clone(), sk.dir.display().to_string(), sk.version));
     }
 }
 
@@ -185,8 +203,28 @@ pub fn save_at(
     let dir = root.join(&name);
     let existed = dir.join("SKILL.md").is_file();
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    // Versioned updates: keep the previous SKILL.md under .history/v<N>.md so a
+    // user can read or restore it, and bump the visible version.
+    let version = if existed {
+        let old_text = std::fs::read_to_string(dir.join("SKILL.md")).unwrap_or_default();
+        let (meta, _body) = frontmatter(&old_text);
+        let old_version = meta
+            .iter()
+            .find(|(k, _)| k == "version")
+            .and_then(|(_, v)| v.trim().parse::<u32>().ok())
+            .unwrap_or(1);
+        let history = dir.join(".history");
+        if std::fs::create_dir_all(&history).is_ok() {
+            let _ = write_atomic(&history.join(format!("v{old_version}.md")), &old_text);
+            prune_history(&history);
+        }
+        old_version.saturating_add(1)
+    } else {
+        1
+    };
+    let updated = crate::apps::now_stamp();
     let text = format!(
-        "---\nname: {name}\ndescription: {description}\norigin: model\n---\n\n{body}\n"
+        "---\nname: {name}\ndescription: {description}\norigin: model\nversion: {version}\nupdated: {updated}\n---\n\n{body}\n"
     );
     write_atomic(&dir.join("SKILL.md"), &text)?;
     let sk = Skill {
@@ -195,6 +233,8 @@ pub fn save_at(
         body: body.to_string(),
         dir,
         origin: "model".to_string(),
+        version,
+        updated,
     };
     note_saved(&sk);
     Ok((sk, !existed))
@@ -238,6 +278,8 @@ pub fn write_file(name: &str, path: &str, content: &str) -> Result<(Skill, Strin
         body: String::new(),
         dir,
         origin: "model".to_string(),
+        version: 1,
+        updated: String::new(),
     };
     Ok((sk, rel, content.len()))
 }
@@ -266,14 +308,16 @@ fn save_exec(args: &J) -> Result<J, crate::tool::Fail> {
         ("name", J::s(&sk.name)),
         ("path", J::s(&sk.dir.display().to_string())),
         ("created", J::Bool(created)),
+        ("version", J::Num(sk.version as f64)),
     ]))
 }
 
 fn save_render(_a: &J, v: &J) -> String {
     let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("");
     let path = v.get("path").and_then(|x| x.as_str()).unwrap_or("");
+    let version = v.get("version").and_then(|x| x.as_num()).unwrap_or(1.0) as u32;
     format!(
-        "saved skill {name} at {path}; it joins the SKILLS catalog from your next turn and is loaded with the skill tool"
+        "saved skill {name} v{version} at {path}; the previous body is kept under .history/, and the skill is loadable with the skill tool (catalog updates next turn)"
     )
 }
 
@@ -321,8 +365,9 @@ pub fn tool_defs() -> Vec<crate::tool::ToolDef> {
             description: "Create or update one of your own reusable skills. Use this for a systematic, \
 self-contained engineering package you worked out (a procedure with steps, formats, checklists, \
 required files) that will be useful again. NOT for short facts or preferences (use memory_write) \
-and NOT for runnable device programs (use app_save). The skill joins the SKILLS catalog on your \
-next turn and is loaded with the skill tool.",
+and NOT for runnable device programs (use app_save). Updating keeps the previous body under \
+.history/vN.md and bumps the version; the skill joins the SKILLS catalog on your next turn and \
+is loaded with the skill tool.",
             params: vec![
                 Param::req("name", "string", "Slug: lowercase letters/digits/_/-, unique."),
                 Param::req("description", "string", "One line: when the model should use this skill (max 200 chars)."),
@@ -401,12 +446,24 @@ pub fn load_meta() -> Vec<Skill> {
                 .find(|(k, _)| k == "origin")
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default();
+            let version = meta
+                .iter()
+                .find(|(k, _)| k == "version")
+                .and_then(|(_, v)| v.trim().parse::<u32>().ok())
+                .unwrap_or(1);
+            let updated = meta
+                .iter()
+                .find(|(k, _)| k == "updated")
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
             out.push(Skill {
                 name,
                 description,
                 body,
                 dir,
                 origin,
+                version,
+                updated,
             });
         }
     }
@@ -434,7 +491,11 @@ pub fn catalog_prompt(skills: &[Skill]) -> String {
 one, call the `skill` tool with its name before acting; do not guess at its contents.\n",
     );
     for sk in skills {
-        s.push_str(&format!("- {}: {}\n", sk.name, sk.description));
+        if sk.version > 1 {
+            s.push_str(&format!("- {} (v{}): {}\n", sk.name, sk.version, sk.description));
+        } else {
+            s.push_str(&format!("- {}: {}\n", sk.name, sk.description));
+        }
     }
     s
 }
@@ -500,6 +561,7 @@ mod tests {
         let text = std::fs::read_to_string(sk.dir.join("SKILL.md")).unwrap();
         assert!(text.starts_with("---\nname: battery-report\n"));
         assert!(text.contains("origin: model"));
+        assert!(text.contains("version: 1"));
         assert!(text.contains("description: Use when the user asks for a battery report"));
         assert!(text.contains("# Steps"));
         assert!(save_at(&root, "bad/name", "d", "b").is_err());
@@ -518,6 +580,8 @@ mod tests {
             body: "body".into(),
             dir: PathBuf::from("/tmp/demo"),
             origin: String::new(),
+            version: 1,
+            updated: String::new(),
         };
         let all = vec![sk];
         let got = body_for(&all, "demo").unwrap();

@@ -135,6 +135,10 @@ Rules:
 - `app_export` packs the whole package (manifest, annotation, program, state)
   into `~/.dst/tmp/app-<category>-<name>.tar.gz` for backups or for copying an
   app off the device; it is the model-side export path.
+- `app_import` restores an archive from `~/.dst/tmp`: it extracts into a temp
+  dir, requires exactly one `<category>/<name>/` tree with a valid manifest,
+  caps the package (200 files / 256 KB) and refuses paths outside the tmp dir;
+  `replace=true` overwrites an installed app.
 - Model-written skills use the existing skills layout:
   `~/.dst/skills/<name>/{SKILL.md, …supporting files}`; `skill_save` writes the
   frontmatter + body (including `origin: model`), `skill_file` adds support
@@ -146,6 +150,10 @@ Rules:
   full SKILL.md body in the panel viewer, `x` disables/enables, `d` deletes the
   selected user-owned package after `delete skill <name>? y/n`. Packages under
   `/etc/dst/skills` are read-only (no delete).
+- Saving a skill **versions** it: `skill_save` bumps `version` in the
+  frontmatter, stamps `updated`, copies the previous body to
+  `.history/v<N>.md` (last five kept), and shows `(vN)` in the SKILLS catalog
+  from v2 on; `/extensions` details show version/updated.
 - The `skill` tool reloads from disk when the startup catalog misses a name, so
   a skill the model just wrote can be loaded and followed in the same turn (the
   SKILLS catalog itself updates on the next turn).
@@ -166,7 +174,7 @@ Rules:
 |---|---|---|
 | system prompt | base | base + `CREATOR MODE` block + installed-app catalog |
 | tools | base set | + `app_save`, `app_file`, `app_test`, `app_run`,
-  `app_export`, `skill_save`, `skill_file` |
+  `app_export`, `app_import`, `skill_save`, `skill_file` |
 | idle hint | `idle_hint` | `creator_hint` (mentions `/apps` and long-Esc) |
 | after a turn | nothing | saved-app notice, or a nudge when files changed but no app was saved |
 | conversation | unchanged | unchanged (apps are additive) |
@@ -353,8 +361,13 @@ model → app_run{name, timeout_s?, args?}
 - Simulator scenarios (`tools/sim/run_scenarios.py`):
   - `creator_mode` — toggle on/off from the `/config` Mode row, idle hint,
     transcript notice; no model request.
+  - `creator_import` — restores a seeded `~/.dst/tmp/app-tools-greeter.tar.gz`,
+    refuses an archive outside the tmp dir, replaces the installed app with
+    `replace=true`, keeps the executable bit, and the app is listed by `/apps`
+    and in the next turn's catalog.
   - `creator_skill` — the model writes skills (`SKILL.md` with frontmatter and
-    `origin: model`), the transcript announces them, the next turn's system
+    `origin: model`), updates one to v2 (`SKILL.md` version bump plus
+    `.history/v1.md`), the transcript announces them, the next turn's system
     prompt contains them in the SKILLS catalog (no nudge), `/extensions` marks
     them `[model]`, `→` shows the full body, the `skill` tool loads a skill in
     the same turn it was written, and `d` + `y` deletes the selected package

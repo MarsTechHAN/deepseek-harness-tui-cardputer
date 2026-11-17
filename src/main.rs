@@ -3829,6 +3829,12 @@ fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             if sk.origin == "model" {
                 d.push(format!("origin: {}", i18n::t("ext_model_tag")));
             }
+            if sk.version > 1 {
+                d.push(format!("version: {}", sk.version));
+            }
+            if !sk.updated.is_empty() {
+                d.push(format!("updated: {}", sk.updated));
+            }
             d.push(String::new());
             d.push(sk.description.clone());
             details.push(d);
@@ -5522,8 +5528,11 @@ fn main() {
                 for (label, _path) in &saved_apps {
                     scr.push(&i18n::tf("app_saved_notice", &[label]), K_DIM);
                 }
-                for (name, _path) in &saved_skills {
-                    scr.push(&i18n::tf("ui_skill_saved", &[name]), K_DIM);
+                for (name, _path, version) in &saved_skills {
+                    scr.push(
+                        &i18n::tf("ui_skill_saved", &[name, &version.to_string()]),
+                        K_DIM,
+                    );
                 }
                 if saved_apps.is_empty() && saved_skills.is_empty() {
                     let mutated = scr.turn_tools.iter().any(|t| {

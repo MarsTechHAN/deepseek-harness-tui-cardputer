@@ -1482,15 +1482,20 @@ def check_creator_skill(screens, reqs, work):
     checks.append(("* skill_save" in built and "saved skill battery-report" in built,
                    "skill_save is shown and announced"))
     results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
-    checks.append(("# Battery report" in results and "package:" in results,
-                   "the skill tool loads a skill written in the same turn"))
+    checks.append(("UPDATED: read capacity" in results and "package:" in results,
+                   "the skill tool loads the latest body written in the same turn"))
+    checks.append(("version: 2" in md and "origin: model" in md,
+                   "skill_save bumps the version in SKILL.md"))
+    hist = read_file(os.path.join(home, ".dst", "skills", "battery-report", ".history", "v1.md"))
+    checks.append(("1. Read /sys/class/power_supply" in hist,
+                   "the previous skill body is kept under .history/v1.md"))
     checks.append((md.startswith("---\nname: battery-report\n")
                    and "description: Use when the user asks for a battery status report" in md
                    and "# Battery report" in md,
                    "SKILL.md written with frontmatter and body"))
     checks.append(("- battery-report:" not in sys1,
                    "the skill is not in the catalog before it exists"))
-    checks.append(("- battery-report: Use when the user asks for a battery status report" in sys3,
+    checks.append(("- battery-report (v2): Use when the user asks for a battery status report" in sys3,
                    "the new skill joins the SKILLS catalog on the next turn"))
     checks.append(("creator: files changed but no app saved" not in built,
                    "saving a skill counts as persisted work (no nudge)"))
@@ -1512,7 +1517,7 @@ def check_creator_skill(screens, reqs, work):
                    "only the selected skill package is removed"))
     checks.append(("deleted skill battery-probe" in after,
                    "the deletion is reported in the transcript"))
-    checks.append(("- battery-probe:" not in sys4 and "- battery-report:" in sys4,
+    checks.append(("- battery-probe:" not in sys4 and "- battery-report (v2):" in sys4,
                    "the deleted skill leaves the catalog on the next turn"))
     checks.append((len(reqs) == 4, "exactly the scripted requests were made"))
     return checks
@@ -1582,7 +1587,35 @@ def check_creator_kinds(screens, reqs, work):
     return checks
 
 
+
+def check_creator_import(screens, reqs, work):
+    home = os.path.join(work, "home")
+    base = os.path.join(home, ".dst", "apps", "tools", "greeter")
+    results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
+    lst = screens.get("list", "")
+    sys3 = system_text(reqs[2]) if len(reqs) > 2 else ""
+    checks = []
+    checks.append((os.path.isfile(os.path.join(base, "app.json"))
+                   and os.path.isfile(os.path.join(base, "APP.md"))
+                   and os.path.isfile(os.path.join(base, "run.sh")),
+                   "app_import restores the package under ~/.dst/apps"))
+    checks.append((os.access(os.path.join(base, "run.sh"), os.X_OK),
+                   "the executable bit survives the archive round-trip"))
+    checks.append(("imported app tools/greeter" in results
+                   and "replaced app tools/greeter" in results,
+                   "import and replace are reported to the model"))
+    checks.append(("refusing to import from outside" in results,
+                   "archives outside ~/.dst/tmp are refused"))
+    checks.append(("Greeter" in lst and "tools \u00b7 sh" in lst,
+                   "/apps lists the imported app"))
+    checks.append(("- tools/greeter \u2014 Greeter [sh:run.sh]" in sys3,
+                   "the imported app joins INSTALLED APPS next turn"))
+    checks.append((len(reqs) == 3, "exactly the scripted requests were made"))
+    return checks
+
+
 CHECKS = {
+    "creator_import": check_creator_import,
     "creator_skill": check_creator_skill,
     "creator_app_test": check_creator_app_test,
     "creator_kinds": check_creator_kinds,

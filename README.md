@@ -146,7 +146,8 @@ repository.
   `last_test` with outcome, duration and time), shown in the `/apps` annotation
   panel (a `!` on the list row marks a failing app), and a failed last run/test
   is flagged in the model's app catalog so it fixes the app before reusing it.
-  `app_export` packs the package into `~/.dst/tmp/app-*.tar.gz` for backups.
+  `app_export` packs the package into `~/.dst/tmp/app-*.tar.gz` for backups and
+  `app_import` restores/validates such an archive (`replace=true` overwrites).
 - A skills-style catalog (`- system/battery_viewer — Battery viewer [sh:run.sh]:
   …`, one line per app, capped) is injected into the system prompt each turn, so
   the model knows what already exists and which file to rewrite instead of
@@ -168,7 +169,8 @@ repository.
   frontmatter + body + support files, marked `origin: model`). It joins the
   SKILLS catalog on the next turn and is loaded with the `skill` tool, exactly
   like hand-installed skills and can be loaded with the `skill` tool in the
-  same turn they are written (the catalog updates next turn).
+  same turn they are written; updates bump the SKILL.md version and keep the
+  previous body under `.history/vN.md` (catalog updates next turn).
   `/extensions` badges model-written skills, opens
   the full SKILL.md body with `→`, and lets the user disable (`x`) or delete
   (`d`, with y/n) them; `/etc/dst/skills` stays read-only.
