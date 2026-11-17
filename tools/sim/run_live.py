@@ -69,6 +69,20 @@ def log(msg):
     print(f"[live] {msg}", flush=True)
 
 
+def endpoint_label(base):
+    """Contact-sheet label for an endpoint, with address literals redacted.
+
+    The walkthrough can run against a private devbox. The committed PNG in
+    docs/ must not carry that address, so a bare IPv4/IPv6 host is replaced
+    with a generic label; hostnames are kept (truncated).
+    """
+    host = base.split("//")[-1].split("/")[0]
+    host = host.rsplit("@", 1)[-1]
+    bare = host.startswith("[") or re.fullmatch(r"[0-9.]+(:\d+)?", host) \
+        or re.fullmatch(r"[0-9a-fA-F:]{4,}(:\d+)?", host)
+    return "local vLLM" if bare else host[:40]
+
+
 # --------------------------------------------------------------------------- #
 # endpoint discovery
 # --------------------------------------------------------------------------- #
@@ -402,7 +416,7 @@ def main(argv):
     sheet = make_contact_sheet(
         out_dir, panels,
         os.path.join(out_dir, "contact_sheet.png"),
-        f"dst live walkthrough - {model} @ {base.split('//')[-1][:40]}  ({time.time()-t0:.0f}s)")
+        f"dst live walkthrough - {model} @ {endpoint_label(base)}  ({time.time()-t0:.0f}s)")
     if sheet and args.doc:
         os.makedirs(os.path.dirname(args.doc), exist_ok=True)
         shutil.copyfile(sheet, args.doc)

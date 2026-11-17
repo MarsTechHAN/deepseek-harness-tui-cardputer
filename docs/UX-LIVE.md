@@ -108,3 +108,7 @@ exact manifest, catalog injection and screen-takeover behaviour.
 - Limits: there is no real microphone, speaker, physical keyboard or panel.
   WeChat login against the live platform still needs a device pass; the
   nine-step flow is covered by `mock_login.py`.
+- **Addresses are redacted.** The endpoint the pass runs against is a private
+  devbox, so `run_live.py` labels it `local vLLM` in the contact-sheet title and
+  the `/config` panel is captured with a neutral endpoint; the committed PNG
+  never carries the real address.
