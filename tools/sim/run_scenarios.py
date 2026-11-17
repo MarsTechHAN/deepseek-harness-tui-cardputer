@@ -1404,8 +1404,9 @@ def check_creator_apps_zh(screens, reqs, work):
     checks.append(("\u5df2\u5220\u9664\u5e94\u7528" in deleted,
                    "delete is confirmed in the transcript"))
     checks.append((not os.path.isdir(base), "the app package is removed from the device"))
-    checks.append(("\u8fd8\u6ca1\u6709\u5e94\u7528" in empty,
-                   "localized empty state after the last app is deleted"))
+    checks.append(("+ \u65b0\u5efa\u5e94\u7528" in empty
+                   and "\u5e94\u7528 \u00b7 0" in empty,
+                   "the creator launcher offers + new app after the last delete"))
     checks.append((len(reqs) == 0, "no model request in this scenario"))
     return checks
 
@@ -1669,7 +1670,28 @@ def check_creator_capture(screens, reqs, work):
     return checks
 
 
+
+def check_creator_home(screens, reqs, work):
+    launcher = screens.get("launcher", "")
+    prefilled = screens.get("prefilled", "")
+    asked = screens.get("asked", "")
+    texts = "\n".join(message_texts(reqs))
+    checks = []
+    checks.append(("Apps \u00b7 0 \u00b7 skills 1" in launcher,
+                   "the launcher title counts apps and skills"))
+    checks.append(("+ new app" in launcher,
+                   "creator mode offers a + new app row even with no apps"))
+    checks.append(("Build an app:" in prefilled,
+                   "Enter on + new app pre-fills the prompt for the user"))
+    checks.append(("Build an app: battery viewer" in texts,
+                   "the described app request reaches the model"))
+    checks.append(("Got it" in asked, "the model answers the build request"))
+    checks.append((len(reqs) == 1, "exactly the scripted request was made"))
+    return checks
+
+
 CHECKS = {
+    "creator_home": check_creator_home,
     "creator_capture": check_creator_capture,
     "creator_skill_rollback": check_creator_skill_rollback,
     "creator_import": check_creator_import,

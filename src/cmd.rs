@@ -530,7 +530,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                         },
                     }
                 }
-            } else if apps.is_empty() {
+            } else if apps.is_empty() && !cfg.creator {
                 Outcome::many(vec![(
                     crate::i18n::t("cmd_apps_empty").to_string(),
                     KIND_DIM,
@@ -696,5 +696,10 @@ mod tests {
         assert!(out.lines[0].1 == KIND_ERR, "{:?}", out.lines[0]);
         assert!(COMMANDS.iter().any(|c| c.name == "apps"));
         assert_eq!(palette("/app")[0].0, "apps");
+        // In creator mode even an empty /apps opens the launcher so the
+        // "+ new app" row (and the app-building flow) is reachable.
+        c.creator = true;
+        let out = evaluate("/apps", &mut c, false).unwrap();
+        assert!(out.apps_menu, "creator mode opens the launcher");
     }
 }

@@ -1,0 +1,40 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "/apps"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 500,
+   "snap": "launcher"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "prefilled"
+  },
+  {
+   "send": "battery viewer"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 1200,
+    "timeout_ms": 30000
+   },
+   "snap": "asked"
+  }
+ ]
+}

@@ -4549,9 +4549,18 @@ fn review_prompt_app(scr: &mut Scr, app: &crate::apps::App) -> bool {
     scr.artifact_action == 1
 }
 
-/// Returns a `(label, prompt)` pair when the selected app is a prompt app: the
-/// caller submits it as the next conversation request.
-fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
+/// What the /apps launcher wants done after it closes.
+enum AppsAction {
+    None,
+    /// Submit this prompt app's request as the next conversation turn.
+    RunPrompt(String, String),
+    /// Pre-fill the prompt so the user can describe an app to build.
+    NewApp,
+}
+
+/// Creator app launcher: run/read/delete apps, replay captured output, search,
+/// and (in creator mode) a "+ new app" row that seeds the prompt.
+fn apps_menu(scr: &mut Scr, config_rc: &ConfigRc) -> AppsAction {
     let home = std::env::var("HOME").unwrap_or_default();
     let shorten = |p: String| {
         if !home.is_empty() && p.starts_with(&home) {
@@ -4616,9 +4625,6 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
     fn open_panel(scr: &mut Scr, app: &crate::apps::App, short_path: String) {
         scr.menu = None;
         scr.draw();
-        // Wrap here, exactly like the artifact tool does: a raw long APP.md
-        // line would soft-wrap in the terminal and push the title row (and the
-        // top of the metadata) off the 12-row panel.
         let mut body: Vec<String> = Vec::new();
         for line in panel_body(app, short_path) {
             Scr::wrap_into(&mut body, &line, scr.cols);
@@ -4636,18 +4642,22 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
         }
         scr.draw();
     }
+    #[derive(Clone, Copy)]
+    enum Row {
+        App(usize),
+        New,
+    }
     let mut sel = 0usize;
     let mut confirm: Option<String> = None;
     let mut pending: Vec<(String, u8)> = Vec::new();
-    // `/` starts search mode so every letter stays available as filter text
-    // (`x` delete / `q` quit never steal the first character of a name).
     let mut searching = false;
     let mut filter = String::new();
     let mut filter_before_search = String::new();
     let mut utf8: Vec<u8> = Vec::new();
     loop {
+        let creator = config_rc.borrow().creator;
         let apps = crate::apps::load();
-        if apps.is_empty() {
+        if !creator && apps.is_empty() {
             scr.menu = None;
             pending.push((i18n::t("cmd_apps_empty").to_string(), K_DIM));
             break;
@@ -4670,36 +4680,37 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
                 .then_with(|| a.category.cmp(&b.category))
                 .then_with(|| a.name.cmp(&b.name))
         });
-        if sel >= filtered.len() {
-            sel = filtered.len().saturating_sub(1);
+        let mut rows: Vec<Row> = (0..filtered.len()).map(Row::App).collect();
+        if creator {
+            rows.push(Row::New);
         }
-        let items: Vec<MenuItem> = filtered
+        if sel >= rows.len() {
+            sel = rows.len().saturating_sub(1);
+        }
+        let items: Vec<MenuItem> = rows
             .iter()
-            .map(|a| {
-                // A failed last run/test is a user-facing health flag too: one
-                // "!" in the value column without opening the panel.
-                let bad = [&a.last_run, &a.last_test].iter().any(|st| {
-                    st.as_ref()
-                        .map(|r| {
-                            !(r.outcome.is_empty()
-                                || r.outcome == "exit 0"
-                                || r.outcome == "esc")
-                        })
-                        .unwrap_or(false)
-                });
-                let used = crate::apps::last_used_hhmm(a)
-                    .map(|t| format!(" · {t}"))
-                    .unwrap_or_default();
-                MenuItem {
-                    label: if a.title.is_empty() { a.name.clone() } else { a.title.clone() },
-                    value: format!(
-                        "{} · {}{}{}",
-                        a.category,
-                        a.kind,
-                        if bad { " !" } else { "" },
-                        used
-                    ),
+            .map(|row| match row {
+                Row::App(i) => {
+                    let a = filtered[*i];
+                    let bad = crate::apps::is_broken(a);
+                    let used = crate::apps::last_used_hhmm(a)
+                        .map(|t| format!(" · {t}"))
+                        .unwrap_or_default();
+                    MenuItem {
+                        label: if a.title.is_empty() { a.name.clone() } else { a.title.clone() },
+                        value: format!(
+                            "{} · {}{}{}",
+                            a.category,
+                            a.kind,
+                            if bad { " !" } else { "" },
+                            used
+                        ),
+                    }
                 }
+                Row::New => MenuItem {
+                    label: i18n::t("apps_new_row").to_string(),
+                    value: String::new(),
+                },
             })
             .collect();
         let hint = if let Some(name) = &confirm {
@@ -4711,12 +4722,26 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
         } else {
             i18n::t("apps_hint").to_string()
         };
-        let title = if filter.is_empty() {
+        let title = if creator {
+            let skills = crate::skills::load_meta().len().to_string();
+            let skills = i18n::tf("apps_skills_count", &[&skills]);
+            if filter.is_empty() {
+                format!("{} · {} · {}", i18n::t("apps_title"), apps.len(), skills)
+            } else {
+                format!(
+                    "{} · {}/{} · {}",
+                    i18n::t("apps_title"),
+                    filtered.len(),
+                    apps.len(),
+                    skills
+                )
+            }
+        } else if filter.is_empty() {
             format!("{} · {}", i18n::t("apps_title"), apps.len())
         } else {
             format!("{} · {}/{}", i18n::t("apps_title"), filtered.len(), apps.len())
         };
-        let preview = if filtered.is_empty() && !confirm.is_some() {
+        let preview = if filtered.is_empty() && !needle.is_empty() && !confirm.is_some() {
             Some(vec![i18n::t("apps_no_match").to_string()])
         } else {
             None
@@ -4752,17 +4777,12 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
         if searching {
             match k {
                 0x1b => {
-                    // Cancel the edit: back to the filter the menu had before.
                     searching = false;
                     filter = filter_before_search.clone();
                     utf8.clear();
                     sel = 0;
                 }
-                0x0d | 0x0a => {
-                    // Accept the filter: the list stays filtered, keys go back
-                    // to normal (Enter now runs the app).
-                    searching = false;
-                }
+                0x0d | 0x0a => searching = false,
                 0x7f | 0x08 => {
                     filter.pop();
                     sel = 0;
@@ -4797,12 +4817,13 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
                 Some(b'[') => match scr.read_key_timeout() {
                     Some(b'A') => sel = sel.saturating_sub(1),
                     Some(b'B') => {
-                        if !items.is_empty() {
-                            sel = (sel + 1).min(items.len() - 1);
+                        if !rows.is_empty() {
+                            sel = (sel + 1).min(rows.len() - 1);
                         }
                     }
                     Some(b'C') => {
-                        if let Some(app) = filtered.get(sel) {
+                        if let Row::App(i) = rows[sel] {
+                            let app = filtered[i];
                             open_panel(scr, app, shorten(app.path()));
                         }
                     }
@@ -4825,88 +4846,100 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
             break;
         }
         if k == b'/' {
-            // Search mode: every letter is filter text, so x/q keep their
-            // normal meaning outside it. `/` edits the current filter.
             searching = true;
             filter_before_search = filter.clone();
             utf8.clear();
             sel = 0;
             continue;
         }
-        if filtered.is_empty() {
+        if rows.is_empty() {
             continue;
         }
-        if k == b'x' || k == b'X' {
-            confirm = Some(filtered[sel].label());
-            continue;
-        }
-        if k == b'l' || k == b'L' {
-            // Replay the app's captured stdout/stderr (capture=true runs).
-            let app = filtered[sel].clone();
-            let log_path = app.dir.join("state").join("last-run.log");
-            let text = std::fs::read_to_string(&log_path).unwrap_or_default();
-            let mut body: Vec<String> = Vec::new();
-            if text.trim().is_empty() {
-                Scr::wrap_into(&mut body, i18n::t("apps_no_log"), scr.cols);
-            } else {
-                if let Some(r) = &app.last_run {
-                    body.push(i18n::tf(
-                        "apps_last_run",
-                        &[&r.outcome, &crate::apps::stamp_hhmm(&r.at)],
-                    ));
-                }
-                body.push(String::new());
-                for line in text.lines() {
-                    let mut wrapped = Vec::new();
-                    Scr::wrap_into(&mut wrapped, line, scr.cols);
-                    if wrapped.is_empty() {
-                        body.push(String::new());
-                    } else {
-                        body.extend(wrapped);
-                    }
-                }
-            }
-            scr.menu = None;
-            scr.artifact_action = 0;
-            scr.artifact = Some(Artifact {
-                title: format!("{} · {}", app.title, i18n::t("apps_log")),
-                body,
-                scroll: 0,
-                notice: None,
-                submit: false,
-            });
-            scr.draw();
-            while scr.artifact.is_some() {
-                scr.artifact_keystroke();
-            }
-            scr.draw();
-            continue;
-        }
-        if k == b'\r' || k == b'\n' {
-            let app = filtered[sel].clone();
-            if app.kind == "doc" {
-                open_panel(scr, &app, shorten(app.path()));
-                continue;
-            }
-            if app.kind == "prompt" {
-                // Show the request first: Enter sends it, Esc returns to the
-                // menu so the user never submits a prompt app by accident.
-                if review_prompt_app(scr, &app) {
-                    for (text, kind) in pending {
+        match rows[sel] {
+            Row::New => {
+                if k == b'\r' || k == b'\n' {
+                    scr.menu = None;
+                    for (text, kind) in pending.drain(..) {
                         scr.push(&text, kind);
                     }
                     scr.draw();
-                    return Some((app.label(), crate::apps::prompt_body(&app)));
+                    return AppsAction::NewApp;
                 }
                 continue;
             }
-            scr.menu = None;
-            scr.draw();
-            match crate::apps::run_on_screen(&app, crate::apps::DIRECT_TIMEOUT_S) {
-                Ok(_) => pending.push((i18n::tf("apps_exited", &[&app.label()]), K_DIM)),
-                Err(e) => pending.push((e, K_ERR)),
+            Row::App(i) => {
+                let app = filtered[i].clone();
+                if k == b'x' || k == b'X' {
+                    confirm = Some(app.label());
+                    continue;
+                }
+                if k == b'l' || k == b'L' {
+                    let log_path = app.dir.join("state").join("last-run.log");
+                    let text = std::fs::read_to_string(&log_path).unwrap_or_default();
+                    let mut body: Vec<String> = Vec::new();
+                    if text.trim().is_empty() {
+                        Scr::wrap_into(&mut body, i18n::t("apps_no_log"), scr.cols);
+                    } else {
+                        if let Some(r) = &app.last_run {
+                            body.push(i18n::tf(
+                                "apps_last_run",
+                                &[&r.outcome, &crate::apps::stamp_hhmm(&r.at)],
+                            ));
+                        }
+                        body.push(String::new());
+                        for line in text.lines() {
+                            let mut wrapped = Vec::new();
+                            Scr::wrap_into(&mut wrapped, line, scr.cols);
+                            if wrapped.is_empty() {
+                                body.push(String::new());
+                            } else {
+                                body.extend(wrapped);
+                            }
+                        }
+                    }
+                    scr.menu = None;
+                    scr.artifact_action = 0;
+                    scr.artifact = Some(Artifact {
+                        title: format!("{} · {}", app.title, i18n::t("apps_log")),
+                        body,
+                        scroll: 0,
+                        notice: None,
+                        submit: false,
+                    });
+                    scr.draw();
+                    while scr.artifact.is_some() {
+                        scr.artifact_keystroke();
+                    }
+                    scr.draw();
+                    continue;
+                }
+                if k == b'\r' || k == b'\n' {
+                    if app.kind == "doc" {
+                        open_panel(scr, &app, shorten(app.path()));
+                        continue;
+                    }
+                    if app.kind == "prompt" {
+                        if review_prompt_app(scr, &app) {
+                            for (text, kind) in pending.drain(..) {
+                                scr.push(&text, kind);
+                            }
+                            scr.draw();
+                            return AppsAction::RunPrompt(
+                                app.label(),
+                                crate::apps::prompt_body(&app),
+                            );
+                        }
+                        continue;
+                    }
+                    scr.menu = None;
+                    scr.draw();
+                    match crate::apps::run_on_screen(&app, crate::apps::DIRECT_TIMEOUT_S) {
+                        Ok(_) => pending.push((i18n::tf("apps_exited", &[&app.label()]), K_DIM)),
+                        Err(e) => pending.push((e, K_ERR)),
+                    }
+                    continue;
+                }
             }
-            continue;
         }
     }
     scr.menu = None;
@@ -4914,7 +4947,7 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
         scr.push(&text, kind);
     }
     scr.draw();
-    None
+    AppsAction::None
 }
 
 /// One-time, actionable key tips after the first successful configuration.
@@ -5469,16 +5502,26 @@ fn main() {
                     }
                 }
                 if out.apps_menu {
-                    if let Some((label, prompt)) = apps_menu(&mut scr, &config_rc) {
-                        if prompt.trim().is_empty() {
-                            scr.push(&i18n::tf("apps_prompt_empty", &[&label]), K_ERR);
-                        } else {
-                            scr.prompt_label = Some(i18n::tf("apps_prompt_run", &[&label]));
-                            pending_line = Some(format!(
-                                "Run the prompt app '{label}' for me and follow its instructions.\n\n{}",
-                                prompt.trim()
-                            ));
+                    match apps_menu(&mut scr, &config_rc) {
+                        AppsAction::RunPrompt(label, prompt) => {
+                            if prompt.trim().is_empty() {
+                                scr.push(&i18n::tf("apps_prompt_empty", &[&label]), K_ERR);
+                            } else {
+                                scr.prompt_label = Some(i18n::tf("apps_prompt_run", &[&label]));
+                                pending_line = Some(format!(
+                                    "Run the prompt app '{label}' for me and follow its instructions.\n\n{}",
+                                    prompt.trim()
+                                ));
+                            }
                         }
+                        AppsAction::NewApp => {
+                            // Seed the prompt so the user only types what the app
+                            // should do; the model (creator mode) builds it.
+                            scr.input = i18n::t("apps_new_prompt").chars().collect();
+                            scr.cursor = scr.input.len();
+                            scr.push(&format!("+ {}", i18n::t("apps_new_hint")), K_DIM);
+                        }
+                        AppsAction::None => {}
                     }
                     scr.refresh_apps_count();
                 }

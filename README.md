@@ -177,7 +177,9 @@ repository.
   same turn they are written; updates bump the SKILL.md version and keep the
   previous body under `.history/vN.md` and `skill_rollback` restores an
   earlier body as a new version (catalog updates next turn).
-  `/extensions` badges model-written skills, opens
+  In creator mode `/apps` is always available — even with zero apps it shows
+  the app/skill counts and a `+ new app` row that pre-fills "Build an app: " in
+  the prompt. `/extensions` badges model-written skills, opens
   the full SKILL.md body with `→`, and lets the user disable (`x`) or delete
   (`d`, with y/n) them; `/etc/dst/skills` stays read-only.
   The prompt spells out the split: app = runnable device thing, skill = complete
@@ -457,7 +459,7 @@ WeChat login chain, provider auth/rate-limit failures and their recovery, long
 input scrolling/editing (including CJK), the multi-entry tool-output viewer,
 the scrolling artifact panel, and creator mode `creator_mode`, `creator_build`,
 `creator_run`, `creator_run_esc`, `creator_run_args`, `creator_apps_run`,
-`creator_apps_zh`, `creator_skill`, `creator_app_test`, `creator_kinds`,
+`creator_apps_zh`, `creator_home`, `creator_skill`, `creator_app_test`, `creator_kinds`,
 `creator_nudge`; app run/test history and skill management are asserted there)
 and
 asserts on captured screens *and* on the request log

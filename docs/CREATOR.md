@@ -323,7 +323,8 @@ model → app_run{name, timeout_s?, args?}
   `creator mode on · apps: ~/.dst/apps (2)` / `creator mode off · 2 apps stay
   installed`, and the idle hint switches immediately.
 - `/apps` is a full-width menu with the app count in the title
-  (`Apps · 3`), rows `Battery viewer   system · sh · 18:20` — most recently
+  (`Apps · 3 · skills 2` in creator mode — apps and the skill catalog count),
+  rows `Battery viewer   system · sh · 18:20` — most recently
   used apps first, with the last-run/test time in the value column (a `!`
   after the kind means its last run/test failed) — footer
   `↑↓·Enter run·→ read·l log·/ find·x del·Esc`. Enter runs (doc apps
@@ -345,6 +346,12 @@ model → app_run{name, timeout_s?, args?}
   battery-report` and appears in the SKILLS catalog and `/extensions` next turn.
 - `l` in `/apps` replays the selected app's last recorded output
   (`state/last-run.log`, capture apps only) in the panel viewer.
+- In creator mode the launcher always exists: with zero apps it still opens
+  (title `Apps · 0 · skills N`) and ends with a `+ new app` row. Enter on it
+  closes the launcher and pre-fills the prompt with the localized
+  "Build an app: " seed plus a one-line hint, so the user only types what the
+  app should do and Enter sends it to the model to build. In normal mode an
+  empty `/apps` stays a one-line text notice.
 - Launching a prompt app from `/apps` first opens its request in the panel
   viewer (Enter sends, Esc goes back), then submits it as the next turn marked
   `> prompt app <name>` — an accidental Enter no longer fires a stored prompt.
@@ -378,6 +385,9 @@ model → app_run{name, timeout_s?, args?}
     transcript notice; no model request.
   - `creator_skill_rollback` — two saves build v1/v2, `skill_rollback` restores
     the v1 body as v3 with the pre-rollback body archived under `.history/v2.md`.
+  - `creator_home` — creator mode with no apps: `/apps` opens the launcher
+    (`Apps · 0 · skills 1`), `+ new app` pre-fills `Build an app:`, typing the
+    description and Enter sends it to the model.
   - `creator_capture` — a capture app prints ANSI lines and a CR progress line;
     the panel echoes them, `state/last-run.log` holds cleaned text, the tool
     result names it, and `/apps` `l` replays it.
