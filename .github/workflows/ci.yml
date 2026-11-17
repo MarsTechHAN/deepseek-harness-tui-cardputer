@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: build + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build (release, LTO)
+        run: cargo build --release --locked
+
+      - name: Unit tests
+        run: cargo test --locked
+
+      - name: Report binary size
+        run: |
+          ls -lh target/release/dst
+          echo "binary: $(stat -c%s target/release/dst) bytes"
