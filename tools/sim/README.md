@@ -13,11 +13,13 @@ Two tools, both pure Python (stdlib + `pyte` + `Pillow`):
 | `sample_script.json` | per-request mock responses used by the scenario |
 | `sample_home/.dst/config.yml` | ready-made dst config pointing at `http://127.0.0.1:8765/v1` |
 | `run_demo.py` | one-command end-to-end demo: starts mock, writes temp HOME, runs simulator, validates, builds contact sheet |
-| `run_scenarios.py` | automated feature checks: `/clear`, `/goal` round driver, automatic compaction (asserts on screens **and** the request log) |
+| `run_scenarios.py` | automated feature checks: `/clear`, `/goal` round driver, compaction, voice, login (asserts on screens **and** the request log) |
+| `run_live.py` | common-usage visual walkthrough against the real local vLLM endpoint from `~/.dsh/settings.yaml`; only TTS/ASR are mocked (`DST_MOCK_SPEECH=1`), writes a 12-screen PNG contact sheet |
 | `scenarios/<name>/` | per-feature `config.yml` + `scenario.json` + `script.json` for `run_scenarios.py` |
 | `screenshots/` | generated evidence from `run_demo.py` (created on first run) |
 
-Everything binds/connects only to `127.0.0.1`.
+Everything binds/connects only to `127.0.0.1` except `run_live.py`, which talks
+to the local vLLM endpoint configured in the DSH settings.
 
 ---
 
@@ -60,6 +62,28 @@ Expected tail of a successful run:
 [demo] check ok: Authorization: Bearer test forwarded from config
 [demo] validation passed (10 checks)
 ```
+
+## 2b. Live walkthrough against the real model
+
+`run_live.py` reviews the UI with real generations instead of the scripted
+mock: reasoning, streaming, tool calls and latency all come from the local
+vLLM endpoint in `~/.dsh/settings.yaml`. Speech is the only mocked part
+(no microphone/speaker on the host, and a vLLM endpoint has no DeepSeek
+ASR/TTS APIs), so push-to-talk and the `speak` tool are still reviewable.
+
+```bash
+cd tools/sim
+python3 run_live.py                 # ~20 s -> screenshots/live/ + docs/live-walkthrough.png
+python3 run_live.py --quick         # skip the tool and voice turns
+python3 run_live.py --base URL --model ID --effort high
+```
+
+Endpoint discovery: `DST_LIVE_BASE` / `DST_LIVE_MODEL`, else the first
+`baseURL` plus the `agent-default-model` model in the DSH settings. The
+walkthrough captures 12 steps (startup, streaming, reply, tool running/done,
+push-to-talk REC, voice streaming/reply, `/help`, `/config`, `/resume`,
+`/login`) and fails only on hard layout failures; model wording differences are
+warnings. Mocked speech leaves a line in `$HOME/.dst/logs/voice.log`.
 
 ## 3. Manual run (two terminals)
 

@@ -1,0 +1,34 @@
+{
+ "env": {
+  "DST_MOCK_SPEECH": "1",
+  "DST_MOCK_TTS_MS": "120"
+ },
+ "steps": [
+  {
+   "wait_for": {
+    "text": "Tab",
+    "timeout_ms": 12000
+   }
+  },
+  {
+   "send": "say hello out loud"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "spoke",
+    "timeout_ms": 20000
+   },
+   "snap": "spoke"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 20000
+   },
+   "snap": "final"
+  }
+ ]
+}

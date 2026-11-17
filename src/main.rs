@@ -324,7 +324,11 @@ impl Scr {
         for l in art_frame_lines(0, self.cols) {
             self.lines.push((l, K_ART));
         }
-        self.lines.push((format!("  {}", i18n::tf("hints", &[model])), K_DIM));
+        // One row is all the room under the 9-row sprite; ellipsise long
+        // model names instead of letting the hint wrap and push art off the
+        // top of the panel.
+        let hint = format!("  {}", i18n::tf("hints", &[model]));
+        self.lines.push((fit_ellipsis(&hint, self.cols), K_DIM));
         self.art_on = true;
         self.draw();
     }
@@ -695,9 +699,11 @@ impl Scr {
                 // text is truncated instead of squeezing the label.
                 let value = fit_ellipsis(&item.value, self.cols / 2 - 2);
                 let value_w = dw(&value);
+                // Reserve the selection marker, its space, the label and at
+                // least two cells of breathing room before the value.
                 let label_room = self
                     .cols
-                    .saturating_sub(2 + if value_w > 0 { value_w + 1 } else { 0 })
+                    .saturating_sub(if value_w > 0 { value_w + 4 } else { 2 })
                     .max(12);
                 let label = format!("{mark} {}", fit_ellipsis(&item.label, label_room));
                 let gap = self.cols.saturating_sub(dw(&label) + value_w);
@@ -721,7 +727,7 @@ impl Scr {
             }
         }
         s.push_str("\x1b[90m");
-        s.push_str(&fit(&m.hint, self.cols));
+        s.push_str(&fit_ellipsis(&m.hint, self.cols));
         s.push_str("\x1b[0m\x1b[K");
         let mut out = std::io::stdout();
         let _ = out.write_all(s.as_bytes());
@@ -932,10 +938,7 @@ impl Scr {
 
     fn voice_input(&mut self) {
         if !self.speech_ok {
-            self.push(
-                "\u{8bed}\u{97f3}\u{4ec5}\u{652f}\u{6301} DeepSeek \u{5b98}\u{65b9} API\u{ff08}\u{7b2c}\u{4e09}\u{65b9} endpoint \u{65e0} ASR/TTS\u{ff09}",
-                K_ERR,
-            );
+            self.push(i18n::t("voice_official_only"), K_ERR);
             return;
         }
         // Open the mic BEFORE the hold is confirmed: the codec takes a moment
@@ -1998,7 +2001,15 @@ impl<'a> harness::Ui for TermUi<'a> {
                     }
                     let cw = Scr::cw(ch);
                     if !self.think_cur.is_empty() && dw(&self.think_cur) + cw > wrap_cols {
-                        self.think_flush();
+                        // Break at the last space so the reasoning panel reads
+                        // as words instead of splitting mid-word at the edge.
+                        if let Some(pos) = self.think_cur.rfind(' ') {
+                            let tail = self.think_cur.split_off(pos + 1);
+                            self.think_flush();
+                            self.think_cur = tail;
+                        } else {
+                            self.think_flush();
+                        }
                     }
                     self.think_cur.push(ch);
                 }
@@ -2467,7 +2478,7 @@ fn login_pick(scr: &mut Scr) -> Option<u8> {
             title: i18n::t("login_menu_title").into(),
             items: items.clone(),
             sel,
-            hint: i18n::t("menu_hint").into(),
+            hint: i18n::t("choose_hint").into(),
             preview: None,
         });
         scr.draw();
@@ -2755,7 +2766,7 @@ fn login_type(scr: &mut Scr) -> Option<LoginResult> {
             title: i18n::t("login_opt_type").into(),
             items: items.clone(),
             sel,
-            hint: i18n::t("menu_hint").into(),
+            hint: i18n::t("choose_hint").into(),
             preview: None,
         });
         scr.draw();
@@ -3666,10 +3677,12 @@ fn help_menu(scr: &mut Scr) -> Option<String> {
     loop {
         let c = &sorted[sel];
         let hint = c.input_hint.map(|h| format!(" {h}")).unwrap_or_default();
+        // Only two footer rows: the command line and what it does. The
+        // key hints below already say Enter runs (and completes) it, which
+        // buys the list one more visible row on the 12-row panel.
         let preview = Some(vec![
             format!("/{}{hint}", c.name),
             cmd::describe(c.name),
-            i18n::t("help_enter_hint").to_string(),
         ]);
         scr.menu = Some(Menu {
             title: i18n::t("cmd_help_title").into(),
@@ -3783,11 +3796,14 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             MenuItem { label: i18n::t("menu_extensions").into(), value: String::new() },
             MenuItem { label: i18n::t("menu_save").into(), value: String::new() },
         ];
-        let hint = if caps.web_tools && caps.speech {
-            i18n::t("menu_hint").to_string()
-        } else {
-            i18n::t("menu_hint_gated").to_string()
-        };
+        let hint = match (caps.web_tools, caps.speech) {
+            // Speech is only mocked open in the simulator; keep the banner
+            // honest about what this endpoint really provides.
+            (true, true) => i18n::t("menu_hint"),
+            (false, true) => i18n::t("menu_hint_no_web"),
+            _ => i18n::t("menu_hint_gated"),
+        }
+        .to_string();
         let help_keys = [
             "cfg_help_model",
             "cfg_help_effort",
@@ -4065,11 +4081,13 @@ fn maybe_show_tips(scr: &mut Scr, config_rc: &ConfigRc) {
     if !configured || shown {
         return;
     }
-    // Tips are the first real screen: drop the splash so they start at row 0.
+    // Tips are the first real screen: drop the splash art so they start at
+    // row 0, but keep `splash_done` false so the very first prompt clears
+    // them again instead of leaving stale onboarding text in the transcript.
     scr.lines.clear();
     scr.scroll = 0;
-    scr.splash_done = true;
     scr.art_on = false;
+    scr.push(i18n::t("tagline"), K_HEAD);
     for key in ["tip1", "tip2", "tip3"] {
         scr.push(&format!("- {}", i18n::t(key)), K_DIM);
     }
@@ -4253,11 +4271,22 @@ fn main() {
     system_prompt.push_str(
         "\nTODO AND MEMORY\n- Track multi-step work with todo_write; mark items done as you finish them.\n- Save durable user preferences and project conventions with memory_write (scope=project for workspace rules, global for cross-project). Read them with memory_read / memory_search before changing conventions. Never store secrets in memory.\n",
     );
-    if !caps_at_start.web_tools {
-        system_prompt.push_str(
-            "\nCAPABILITIES\nThe configured endpoint is a third-party OpenAI-compatible API. search, fetch, ocr and speech tools are not registered because they only exist on DeepSeek's official API. Use bash/read_file/write_file instead, and do not tell the \
-user you can search the web or speak.\n",
-        );
+    if !caps_at_start.web_tools || !caps_at_start.speech {
+        let mut caps = String::from("\nCAPABILITIES\n");
+        if !caps_at_start.web_tools {
+            caps.push_str(
+                "search, fetch and ocr are not registered because this is a third-party \
+OpenAI-compatible endpoint. Use bash/read_file/write_file instead, and do not tell \
+the user you can search the web.\n",
+            );
+        }
+        if !caps_at_start.speech {
+            caps.push_str(
+                "speech (ASR/TTS) is not available on this endpoint; do not mention the \
+speak tool and do not claim you can listen or talk.\n",
+            );
+        }
+        system_prompt.push_str(&caps);
     }
     let tdefs = tool::definitions(&reg);
 
@@ -4320,6 +4349,7 @@ user you can search the web or speak.\n",
         }
     }
     scr.speech_ok = config_rc.borrow().capabilities().speech;
+    scr.auto_send = config_rc.borrow().auto_send_voice;
     let mut session_path: Option<std::path::PathBuf> = None;
     raw_mode(true);
 
@@ -4500,6 +4530,9 @@ user you can search the web or speak.\n",
                     }
                 }
                 i18n::set(&config_rc.borrow().language);
+                // The config wizard edits these live; the screen must follow
+                // immediately instead of keeping the startup values.
+                scr.auto_send = config_rc.borrow().auto_send_voice;
                 let caps_now = config_rc.borrow().capabilities();
                 if caps_now.web_tools != caps_at_start.web_tools || caps_now.speech != caps_at_start.speech {
                     reg = tools::registry(caps_now);

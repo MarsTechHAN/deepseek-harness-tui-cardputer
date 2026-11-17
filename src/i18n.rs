@@ -60,11 +60,11 @@ pub const CODES: &[&str] = &["en", "zh", "es", "ja", "de", "it"];
 
 const EN: &[(&str, &str)] = &[
     ("tagline", "dst | a DeepSeek harness on a Cardputer Zero"),
-    ("hints", "{} | hold Tab to talk | /help | /quit"),
+    ("hints", "{} | hold Tab to talk | /help"),
     ("unconfigured", "No API configured - type /login to set up"),
     ("busy", "Enter queues \u{b7} Shift+Enter steers \u{b7} Esc interrupts"),
     ("idle_hint", "Up/Down hist \u{b7} PgUp/PgDn \u{b7} CtrlO out \u{b7} /help"),
-    ("help_hint", "\u{2191}\u{2193} select \u{b7} Enter run \u{b7} Esc close"),
+    ("help_hint", "\u{2191}\u{2193} select \u{b7} Enter run/complete \u{b7} Esc close"),
     ("tip1", "hold Tab to talk; the transcript sends itself"),
     ("tip2", "Esc interrupts; Shift+Enter steers"),
     ("tip3", "CtrlO: full tool output; /rewind: roll back"),
@@ -77,6 +77,7 @@ const EN: &[(&str, &str)] = &[
     ("queued", "{} queued"),
     ("force_sent", "\u{26a1} interrupted, sending now: {}"),
     ("voice_queued", "\u{1f3a4} recording queued (starts after this turn)"),
+    ("voice_official_only", "voice input needs the DeepSeek official API (this endpoint has no ASR/TTS)"),
     ("scrolled", "\u{2191}{} lines \u{b7} End"),
     ("onboard_welcome", "Welcome to dst"),
     ("onboard_choose", "No API configured yet. Choose how to connect:"),
@@ -151,7 +152,9 @@ const EN: &[(&str, &str)] = &[
     ("jobs_none", "No background jobs or watchers"),
     ("menu_save", "Save & exit"),
     ("menu_hint", "\u{2191}\u{2193} move \u{b7} Enter change \u{b7} Esc exit"),
-    ("menu_hint_gated", "third-party API: search/fetch/ocr/voice unavailable \u{b7} \u{2191}\u{2193} Enter Esc"),
+    ("choose_hint", "\u{2191}\u{2193} select \u{b7} Enter choose \u{b7} Esc back"),
+    ("menu_hint_gated", "3rd-party API: no web/speech tools \u{b7} \u{2191}\u{2193} Enter Esc"),
+    ("menu_hint_no_web", "3rd-party API: no search/fetch/ocr \u{b7} \u{2191}\u{2193} Enter Esc"),
     ("menu_model_hint", "\u{2191}\u{2193} select \u{b7} Enter confirm \u{b7} Esc back"),
     ("resume_title", "Resume session"),
     ("resume_hint", "type=search · ↑↓ · →/Tab expand · Enter · Esc"),
@@ -169,7 +172,6 @@ const EN: &[(&str, &str)] = &[
     ("approval_tool", "tool:"),
     ("approval_reason", "reason:"),
     ("approval_keys", "[y] allow    [n] reject    Esc reject"),
-    ("help_enter_hint", "Enter runs it (or completes the command)"),
     ("onboard_prev_official_1", "DeepSeek official: key at platform.deepseek.com"),
     ("onboard_prev_official_2", "QR login opens a page on your phone to paste it."),
     ("onboard_prev_custom_1", "Custom endpoint: any OpenAI-compatible /v1 URL + key."),
@@ -314,12 +316,13 @@ const EN: &[(&str, &str)] = &[
 
 const ZH: &[(&str, &str)] = &[
     ("tagline", "dst | 运行在 Cardputer Zero 上的 DeepSeek harness"),
-    ("hints", "{} | 长按 Tab 说话 | /help | /quit"),
+    ("hints", "{} | 长按 Tab 说话 | /help"),
     ("unconfigured", "还没有配置 API，输入 /login 开始设置"),
     ("busy", "Enter 排队 \u{b7} Shift+Enter 立即打断 \u{b7} Esc 中止"),
     ("queued", "{} 条排队"),
     ("force_sent", "\u{26a1} 已打断，立即发送: {}"),
     ("voice_queued", "\u{1f3a4} 已排队录音（本轮结束后开始）"),
+    ("voice_official_only", "语音输入仅支持 DeepSeek 官方 API（当前 endpoint 无 ASR/TTS）"),
     ("scrolled", "\u{2191}{} 行 \u{b7} End 回底"),
     ("onboard_welcome", "欢迎使用 dst"),
     ("onboard_choose", "还没有配置 API，请选择接入方式："),
@@ -394,7 +397,9 @@ const ZH: &[(&str, &str)] = &[
     ("jobs_none", "没有后台任务或监视器"),
     ("menu_save", "保存并退出"),
     ("menu_hint", "\u{2191}\u{2193} 移动 \u{b7} Enter 修改 \u{b7} Esc 退出"),
-    ("menu_hint_gated", "第三方 API：search/fetch/ocr/语音不可用 \u{b7} \u{2191}\u{2193} Enter Esc"),
+    ("choose_hint", "\u{2191}\u{2193} 选择 \u{b7} Enter 确认 \u{b7} Esc 返回"),
+    ("menu_hint_gated", "第三方 API：无联网/语音工具 \u{b7} \u{2191}\u{2193} Enter Esc"),
+    ("menu_hint_no_web", "第三方 API：无 search/fetch/ocr \u{b7} \u{2191}\u{2193} Enter Esc"),
     ("menu_model_hint", "\u{2191}\u{2193} 选择 \u{b7} Enter 确认 \u{b7} Esc 返回"),
     ("resume_title", "恢复会话"),
     ("resume_hint", "输入搜索 · ↑↓ · →/Tab 展开 · Enter · Esc"),
@@ -412,7 +417,6 @@ const ZH: &[(&str, &str)] = &[
     ("approval_tool", "工具:"),
     ("approval_reason", "原因:"),
     ("approval_keys", "[y] 允许    [n] 拒绝    Esc 拒绝"),
-    ("help_enter_hint", "Enter 执行（需要参数时会补齐）"),
     ("onboard_prev_official_1", "DeepSeek 官方：key 在 platform.deepseek.com"),
     ("onboard_prev_official_2", "扫码登录会在手机上打开页面，粘贴 key 即可。"),
     ("onboard_prev_custom_1", "自定义 endpoint：任意 OpenAI 兼容的 /v1 地址 + key。"),
@@ -437,7 +441,7 @@ const ZH: &[(&str, &str)] = &[
     ("tip_more", "更多: /help · /config · /resume"),
     // ZH completion pass
     ("idle_hint", "↑↓ 历史 · PgUp/PgDn · CtrlO 输出 · /help"),
-    ("help_hint", "↑↓ 选择 · Enter 执行 · Esc 关闭"),
+    ("help_hint", "↑↓ 选择 · Enter 执行/补齐 · Esc 关闭"),
     ("tool_log_title", "工具输出"),
     ("tool_log_hint", "↑↓ 选择 · Enter 打开 · s 保存 · Esc 关闭"),
     ("tool_log_empty", "还没有工具输出"),
@@ -563,12 +567,13 @@ const ZH: &[(&str, &str)] = &[
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
-    ("hints", "{} | mantén Tab para hablar | /help | /quit"),
+    ("hints", "{} | mantén Tab para hablar | /help"),
     ("unconfigured", "API no configurada: escribe /login"),
     ("busy", "Enter encola · Shift+Enter interrumpe · Esc aborta"),
     ("queued", "{} en cola"),
     ("force_sent", "⚡ interrumpido, enviando: {}"),
     ("voice_queued", "🎤 grabación en cola"),
+    ("voice_official_only", "la voz requiere la API oficial de DeepSeek (este endpoint no tiene ASR/TTS)"),
     ("scrolled", "↑{} líneas · End"),
     ("on", "sí"),
     ("off", "no"),
@@ -613,7 +618,6 @@ const ES: &[(&str, &str)] = &[
     ("approval_tool", "herramienta:"),
     ("approval_reason", "motivo:"),
     ("approval_keys", "[y] permitir    [n] rechazar    Esc rechazar"),
-    ("help_enter_hint", "Enter lo ejecuta (o completa el comando)"),
     ("onboard_prev_official_1", "DeepSeek oficial: clave en platform.deepseek.com"),
     ("onboard_prev_official_2", "El QR abre una página en tu teléfono para pegarla."),
     ("onboard_prev_custom_1", "Endpoint propio: URL /v1 compatible con OpenAI + clave."),
@@ -638,7 +642,7 @@ const ES: &[(&str, &str)] = &[
     ("tip_more", "más: /help · /config · /resume"),
     // ES completion pass
     ("idle_hint", "↑↓ hist · PgUp/PgDn · CtrlO out · /help"),
-    ("help_hint", "↑↓ elegir · Enter ejecutar · Esc cerrar"),
+    ("help_hint", "↑↓ elegir · Enter ejecutar/completar · Esc cerrar"),
     ("tool_log_title", "Salida de herramientas"),
     ("tool_log_hint", "↑↓ elegir · Enter abrir · s guardar · Esc cerrar"),
     ("tool_log_empty", "Aún no hay salida de herramientas"),
@@ -683,7 +687,9 @@ const ES: &[(&str, &str)] = &[
     ("jobs_hint", "↑↓ elegir · Enter salida · s guardar · x matar · Esc · f filtro"),
     ("jobs_none", "Sin trabajos ni watchers"),
     ("menu_hint", "↑↓ mover · Enter cambiar · Esc salir"),
-    ("menu_hint_gated", "API de terceros: search/fetch/ocr/voz no disponibles · ↑↓ Enter Esc"),
+    ("choose_hint", "↑↓ elegir · Enter confirmar · Esc volver"),
+    ("menu_hint_gated", "API de terceros: sin web ni voz · ↑↓ Enter Esc"),
+    ("menu_hint_no_web", "API de terceros: sin search/fetch/ocr · ↑↓ Enter Esc"),
     ("menu_model_hint", "↑↓ elegir · Enter confirmar · Esc volver"),
     ("model_none", "Este endpoint no anuncia modelos"),
     ("onboard_hint", "↑↓ elegir · Enter confirmar · Esc cancelar"),
@@ -813,12 +819,13 @@ const ES: &[(&str, &str)] = &[
 
 const JA: &[(&str, &str)] = &[
     ("tagline", "dst | Cardputer Zero 上の DeepSeek harness"),
-    ("hints", "{} | Tab 長押しで音声 | /help | /quit"),
+    ("hints", "{} | Tab 長押しで音声 | /help"),
     ("unconfigured", "API 未設定: /login で設定"),
     ("busy", "Enter キュー · Shift+Enter 中断 · Esc 中止"),
     ("queued", "{} 件キュー"),
     ("force_sent", "⚡ 中断して送信: {}"),
     ("voice_queued", "🎤 録音をキュー"),
+    ("voice_official_only", "音声入力は DeepSeek 公式 API のみ（この endpoint に ASR/TTS はありません）"),
     ("scrolled", "↑{} 行 · End"),
     ("on", "オン"),
     ("off", "オフ"),
@@ -863,7 +870,6 @@ const JA: &[(&str, &str)] = &[
     ("approval_tool", "ツール:"),
     ("approval_reason", "理由:"),
     ("approval_keys", "[y] 許可    [n] 拒否    Esc 拒否"),
-    ("help_enter_hint", "Enter で実行（引数が必要なら補完）"),
     ("onboard_prev_official_1", "DeepSeek 公式: キーは platform.deepseek.com"),
     ("onboard_prev_official_2", "QR ログインでスマホのページにキーを貼れます。"),
     ("onboard_prev_custom_1", "独自 endpoint: OpenAI 互換 /v1 URL + キー。"),
@@ -888,7 +894,7 @@ const JA: &[(&str, &str)] = &[
     ("tip_more", "詳細: /help · /config · /resume"),
     // JA completion pass
     ("idle_hint", "↑↓ 履歴 · PgUp/PgDn · CtrlO 出力 · /help"),
-    ("help_hint", "↑↓ 選択 · Enter 実行 · Esc 閉じる"),
+    ("help_hint", "↑↓ 選択 · Enter 実行/補完 · Esc 閉じる"),
     ("tool_log_title", "ツール出力"),
     ("tool_log_hint", "↑↓ 選択 · Enter 開く · s 保存 · Esc 閉じる"),
     ("tool_log_empty", "ツール出力はまだありません"),
@@ -933,7 +939,9 @@ const JA: &[(&str, &str)] = &[
     ("jobs_hint", "↑↓ 選択 · Enter 出力 · s 保存 · x 終了 · Esc · f 絞込"),
     ("jobs_none", "バックグラウンドタスクはありません"),
     ("menu_hint", "↑↓ 移動 · Enter 変更 · Esc 終了"),
-    ("menu_hint_gated", "サードパーティ API: search/fetch/ocr/音声なし · ↑↓ Enter Esc"),
+    ("choose_hint", "↑↓ 選択 · Enter 決定 · Esc 戻る"),
+    ("menu_hint_gated", "サードパーティ: 音声/web なし · ↑↓ Enter Esc"),
+    ("menu_hint_no_web", "サードパーティ: search/fetch/ocr なし · ↑↓ Enter Esc"),
     ("menu_model_hint", "↑↓ 選択 · Enter 確認 · Esc 戻る"),
     ("model_none", "この endpoint はモデルを公開していません"),
     ("onboard_hint", "↑↓ 選択 · Enter 決定 · Esc 取消"),
@@ -1063,12 +1071,13 @@ const JA: &[(&str, &str)] = &[
 
 const DE: &[(&str, &str)] = &[
     ("tagline", "dst | ein DeepSeek-Harness auf dem Cardputer Zero"),
-    ("hints", "{} | Tab halten zum Sprechen | /help | /quit"),
+    ("hints", "{} | Tab halten zum Sprechen | /help"),
     ("unconfigured", "Keine API konfiguriert: /login"),
     ("busy", "Enter stellt ein · Shift+Enter unterbricht · Esc bricht ab"),
     ("queued", "{} eingereiht"),
     ("force_sent", "⚡ unterbrochen, sende: {}"),
     ("voice_queued", "🎤 Aufnahme eingereiht"),
+    ("voice_official_only", "Sprache braucht die offizielle DeepSeek-API (dieser Endpoint hat kein ASR/TTS)"),
     ("scrolled", "↑{} Zeilen · End"),
     ("on", "an"),
     ("off", "aus"),
@@ -1113,7 +1122,6 @@ const DE: &[(&str, &str)] = &[
     ("approval_tool", "Werkzeug:"),
     ("approval_reason", "Grund:"),
     ("approval_keys", "[y] erlauben    [n] ablehnen    Esc ablehnen"),
-    ("help_enter_hint", "Enter führt aus (oder ergänzt den Befehl)"),
     ("onboard_prev_official_1", "DeepSeek official: Key auf platform.deepseek.com"),
     ("onboard_prev_official_2", "QR-Login öffnet eine Seite am Handy zum Einfügen."),
     ("onboard_prev_custom_1", "Eigener Endpoint: OpenAI-kompatible /v1-URL + Key."),
@@ -1138,7 +1146,7 @@ const DE: &[(&str, &str)] = &[
     ("tip_more", "mehr: /help · /config · /resume"),
     // DE completion pass
     ("idle_hint", "↑↓ Verlauf · PgUp/PgDn · CtrlO Ausgabe · /help"),
-    ("help_hint", "↑↓ wählen · Enter ausführen · Esc schließen"),
+    ("help_hint", "↑↓ wählen · Enter ausf./ergänzen · Esc schließen"),
     ("tool_log_title", "Werkzeugausgabe"),
     ("tool_log_hint", "↑↓ wählen · Enter öffnen · s speichern · Esc schließen"),
     ("tool_log_empty", "Noch keine Werkzeugausgabe"),
@@ -1183,7 +1191,9 @@ const DE: &[(&str, &str)] = &[
     ("jobs_hint", "↑↓ wählen · Enter Ausgabe · s speichern · x beenden · Esc · f Filter"),
     ("jobs_none", "Keine Jobs oder Watcher"),
     ("menu_hint", "↑↓ bewegen · Enter ändern · Esc verlassen"),
-    ("menu_hint_gated", "Drittanbieter-API: search/fetch/ocr/Sprache fehlen · ↑↓ Enter Esc"),
+    ("choose_hint", "↑↓ wählen · Enter bestätigen · Esc zurück"),
+    ("menu_hint_gated", "Drittanbieter: kein web/Sprache · ↑↓ Enter Esc"),
+    ("menu_hint_no_web", "Drittanbieter: kein search/fetch/ocr · ↑↓ Enter Esc"),
     ("menu_model_hint", "↑↓ wählen · Enter bestätigen · Esc zurück"),
     ("model_none", "Dieser Endpoint meldet keine Modelle"),
     ("onboard_hint", "↑↓ wählen · Enter bestätigen · Esc abbrechen"),
@@ -1313,12 +1323,13 @@ const DE: &[(&str, &str)] = &[
 
 const IT: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek su Cardputer Zero"),
-    ("hints", "{} | tieni Tab per parlare | /help | /quit"),
+    ("hints", "{} | tieni Tab per parlare | /help"),
     ("unconfigured", "Nessuna API configurata: /login"),
     ("busy", "Enter accoda · Shift+Enter interrompe · Esc annulla"),
     ("queued", "{} in coda"),
     ("force_sent", "⚡ interrotto, invio: {}"),
     ("voice_queued", "🎤 registrazione in coda"),
+    ("voice_official_only", "la voce richiede l'API ufficiale DeepSeek (questo endpoint non ha ASR/TTS)"),
     ("scrolled", "↑{} righe · End"),
     ("on", "on"),
     ("off", "off"),
@@ -1363,7 +1374,6 @@ const IT: &[(&str, &str)] = &[
     ("approval_tool", "strumento:"),
     ("approval_reason", "motivo:"),
     ("approval_keys", "[y] consenti    [n] rifiuta    Esc rifiuta"),
-    ("help_enter_hint", "Enter lo esegue (o completa il comando)"),
     ("onboard_prev_official_1", "DeepSeek official: chiave su platform.deepseek.com"),
     ("onboard_prev_official_2", "Il QR apre una pagina sul telefono per incollarla."),
     ("onboard_prev_custom_1", "Endpoint proprio: URL /v1 compatibile OpenAI + chiave."),
@@ -1388,7 +1398,7 @@ const IT: &[(&str, &str)] = &[
     ("tip_more", "altro: /help · /config · /resume"),
     // IT completion pass
     ("idle_hint", "↑↓ cronologia · PgUp/PgDn · CtrlO output · /help"),
-    ("help_hint", "↑↓ scegli · Enter esegui · Esc chiudi"),
+    ("help_hint", "↑↓ scegli · Enter esegui/completa · Esc chiudi"),
     ("tool_log_title", "Output strumenti"),
     ("tool_log_hint", "↑↓ scegli · Enter apri · s salva · Esc chiudi"),
     ("tool_log_empty", "Nessun output degli strumenti"),
@@ -1433,7 +1443,9 @@ const IT: &[(&str, &str)] = &[
     ("jobs_hint", "↑↓ scegli · Enter output · s salva · x termina · Esc · f filtro"),
     ("jobs_none", "Nessun job o watcher"),
     ("menu_hint", "↑↓ muovi · Enter modifica · Esc esci"),
-    ("menu_hint_gated", "API di terzi: search/fetch/ocr/voce non disponibili · ↑↓ Enter Esc"),
+    ("choose_hint", "↑↓ scegli · Enter conferma · Esc indietro"),
+    ("menu_hint_gated", "API di terzi: senza web/voce · ↑↓ Enter Esc"),
+    ("menu_hint_no_web", "API di terzi: senza search/fetch/ocr · ↑↓ Enter Esc"),
     ("menu_model_hint", "↑↓ scegli · Enter conferma · Esc indietro"),
     ("model_none", "Questo endpoint non espone modelli"),
     ("onboard_hint", "↑↓ scegli · Enter conferma · Esc annulla"),
@@ -1633,6 +1645,48 @@ mod tests {
         }
     }
 
+    /// Guard against a key that the TUI uses but the catalog forgot: t()
+    /// silently returns "" for that, which shows up as a blank menu footer
+    /// (exactly how the config-menu hint once disappeared).
+    #[test]
+    fn every_literal_key_used_in_source_exists() {
+        let _g = LOCK.lock().unwrap();
+        let mut used = std::collections::BTreeSet::new();
+        let dir = std::path::Path::new("src");
+        if dir.is_dir() {
+            for entry in std::fs::read_dir(dir).expect("read src") {
+                let path = entry.expect("dir entry").path();
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                for pat in ["i18n::t(\"", "i18n::tf(\""] {
+                    let mut rest = text.as_str();
+                    while let Some(at) = rest.find(pat) {
+                        rest = &rest[at + pat.len()..];
+                        match rest.find('"') {
+                            Some(end) => {
+                                let key = &rest[..end];
+                                if !key.is_empty()
+                                    && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                                {
+                                    used.insert(key.to_string());
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                }
+            }
+        }
+        assert!(!used.is_empty(), "source scan found no i18n keys");
+        let en: std::collections::HashSet<&str> =
+            table(Lang::En).iter().map(|(k, _)| *k).collect();
+        let missing: Vec<&str> = used.iter().map(String::as_str)
+            .filter(|k| !en.contains(k)).collect();
+        assert!(missing.is_empty(), "keys used in source but missing from EN: {missing:?}");
+    }
+
     #[test]
     fn new_ui_keys_are_translated() {
         let _g = LOCK.lock().unwrap();
@@ -1641,6 +1695,14 @@ mod tests {
             assert!(!t("approval_title").is_empty());
             assert!(!t("cfg_help_sandbox").is_empty());
             assert!(!t("tip1").is_empty());
+        }
+        for code in super::CODES {
+            set(code);
+            for key in ["menu_hint", "choose_hint", "menu_hint_gated",
+                        "menu_hint_no_web", "help_hint", "hints",
+                        "voice_official_only", "tagline"] {
+                assert!(!t(key).is_empty(), "{code}: empty {key}");
+            }
         }
         set("es");
         assert!(t("approval_title").contains("Permiso"), "{}", t("approval_title"));

@@ -295,6 +295,22 @@ pub fn is_official(base: &str) -> bool {
         .starts_with("https://api.deepseek.com")
 }
 
+/// Testing hook: the simulator has no microphone or speaker, and the local
+/// vLLM endpoint used for offline runs has no DeepSeek speech APIs. With
+/// `DST_MOCK_SPEECH=1` the voice layer fakes recording, ASR and playback so
+/// the voice UI can still be exercised end to end. Never set on a device.
+pub fn mock_speech() -> bool {
+    matches!(
+        std::env::var("DST_MOCK_SPEECH").ok().as_deref(),
+        Some("1") | Some("true") | Some("yes")
+    )
+}
+
+/// Transcript returned by the mocked ASR (also used by the live walkthrough).
+pub fn mock_asr_text() -> String {
+    std::env::var("DST_MOCK_ASR_TEXT").unwrap_or_else(|_| "turn the volume up".into())
+}
+
 pub fn home() -> PathBuf {
     let h = std::env::var("HOME").unwrap_or_else(|_| "/home/hanxiao".into());
     PathBuf::from(h).join(".dst")
@@ -551,7 +567,10 @@ impl Config {
         let official = is_official(&self.base);
         Capabilities {
             web_tools: official,
-            speech: official,
+            // `DST_MOCK_SPEECH` lets the simulator (and the live walkthrough
+            // against a local vLLM endpoint) exercise the voice UI without a
+            // microphone, speaker or DeepSeek speech API.
+            speech: official || mock_speech(),
         }
     }
 

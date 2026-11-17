@@ -242,9 +242,12 @@ def check_thinking(screens, reqs, work):
     live = screens.get("live", "")
     folded = screens.get("folded", "")
     checks = []
-    # Full-width reasoning line: the bug produced one line per 9-char chunk.
-    checks.append(("This is the dst TUI on a 53x12" in live or
-                   "This is the dst TUI on a 53x12" in live.replace("\n", " "),
+    # Full-width reasoning lines: the old bug produced one line per 9-char
+    # chunk. Wrapping happens at words, so assert long reasoned lines rather
+    # than an exact phrase that depends on where the line breaks.
+    reason_lines = [l for l in live.splitlines() if l.startswith("  ")]
+    long_lines = [l for l in reason_lines if len(l.strip()) >= 40]
+    checks.append((len(long_lines) >= 2,
                    "reasoning wraps into full lines"))
     checks.append(("thinking" in live, "live thinking indicator shown"))
     checks.append(("(collapsed)" in folded, "thinking folds to one line when the answer starts"))
@@ -652,8 +655,8 @@ def check_ux(screens, reqs, work):
                    "live status shows the running tool and elapsed time"))
     checks.append(("/compact" in help_menu or "/clear" in help_menu,
                    "/help is a navigable menu"))
-    checks.append(("Enter runs" in help_menu,
-                   "/help shows a description preview"))
+    checks.append(("clear the transcript" in help_menu and "Enter run" in help_menu,
+                   "/help shows a description preview and run hint"))
     checks.append(("\u2191" in paged and "End" in paged,
                    "PgUp scrolls back with a scroll indicator"))
     return checks
@@ -758,6 +761,44 @@ def check_queue_edit(screens, reqs, work):
     return checks
 
 
+def check_voice_input(screens, reqs, work):
+    start = screens.get("start", "")
+    rec = screens.get("recording", "")
+    typed = screens.get("transcribed", "")
+    reply = screens.get("reply", "")
+    voice_log = read_file(os.path.join(work, "home", ".dst", "logs", "voice.log"))
+    texts = "\n".join(message_texts(reqs))
+    checks = []
+    checks.append(("Tab" in start, "idle screen advertises push-to-talk"))
+    checks.append(("REC" in rec, "holding Tab shows the live REC indicator"))
+    checks.append(("read the last file" in typed,
+                   "mocked ASR transcript is inserted into the prompt"))
+    checks.append(("read the last file" in texts,
+                   "Enter sends the transcribed prompt to the model"))
+    checks.append(("Heard you: read the last file." in reply,
+                   "the model reply to the spoken prompt is rendered"))
+    checks.append(("mock asr" in voice_log, "voice.log proves the mocked ASR path ran"))
+    checks.append(("hold Tab to talk" not in reply,
+                   "first prompt clears the one-time onboarding tips"))
+    return checks
+
+
+def check_voice_speak(screens, reqs, work):
+    spoke = screens.get("spoke", "")
+    final = screens.get("final", "")
+    voice_log = read_file(os.path.join(work, "home", ".dst", "logs", "voice.log"))
+    calls = request_tool_calls(reqs)
+    checks = []
+    checks.append((any(c["name"] == "speak" for c in calls),
+                   "model called the speak tool"))
+    checks.append(("spoke 4 words" in spoke and "hello from the pocket" in spoke,
+                   "tool card settles with word count and spoken text"))
+    checks.append(("I said it out loud." in final,
+                   "turn continues to the final reply after mocked playback"))
+    checks.append(("mock tts" in voice_log, "voice.log proves the mocked TTS path ran"))
+    return checks
+
+
 def check_extensions_toggle(screens, reqs, work):
     menu = screens.get("menu", "")
     disabled = screens.get("disabled", "")
@@ -781,6 +822,7 @@ def check_login_menu(screens, reqs, work):
     checks.append(("Type the credentials" in types, "direct-typing entry opens"))
     checks.append(("http://" in web and ("Open this page" in web or "page" in web.lower()),
                    "phone-page option shows the LAN page URL"))
+    checks.append(("Enter choose" in menu, "action menu footer says select/choose"))
     return checks
 
 
@@ -935,6 +977,8 @@ def check_config_menu(screens, reqs, work):
     checks.append(("Sandbox mode" in menu or "Sandbox mode" in middle or "Sandbox mode" in bottom,
                    "sandbox mode setting present"))
     checks.append(("Sandbox judge" in bottom, "sandbox judge setting present"))
+    checks.append(("3rd-party" in menu or "third-party" in menu,
+                   "endpoint capability hint renders in the footer"))
     return checks
 
 
@@ -956,8 +1000,8 @@ def check_commands(screens, reqs, work):
     checks.append(("/compact" in help_ or "/clear" in help_,
                    "/help lists commands"))
     checks.append(("/15" in help_ or "1/15" in help_, "help shows the command count position"))
-    checks.append(("Enter runs" in help_ and "select" in help_,
-                   "/help shows a description preview"))
+    checks.append(("clear the transcript" in help_ and "Enter run" in help_,
+                   "/help shows a description preview and run hint"))
     checks.append(("requests" in usage.lower() or "cache" in usage.lower(),
                    "/usage report rendered"))
 
@@ -1010,6 +1054,8 @@ CHECKS = {
     "login_wechat_switch_typing": check_login_wechat_switch_typing,
     "key_overrides_token": check_key_overrides_token,
     "extensions_toggle": check_extensions_toggle,
+    "voice_input": check_voice_input,
+    "voice_speak": check_voice_speak,
     "queue_edit": check_queue_edit,
     "sandbox_es": check_sandbox_es,
     "history_persist": check_history_persist,

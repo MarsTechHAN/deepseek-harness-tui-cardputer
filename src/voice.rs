@@ -78,10 +78,40 @@ fn short(s: &str) -> String {
 
 // ----------------------------------------------------------------------- TTS
 
+/// Append one line to the voice log (also the evidence trail for the
+/// simulator's mocked speech paths).
+fn vlog(msg: &str) {
+    use std::io::Write as _;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(crate::config::log_dir().join("voice.log"))
+    {
+        let _ = writeln!(f, "{msg}");
+    }
+}
+
 /// Synthesise `text` and play it. Returns once playback has finished.
 pub fn tts(text: &str) -> Result<(), String> {
     if text.trim().is_empty() {
         return Err("nothing to say".into());
+    }
+    // Test mode: no speaker and no DeepSeek TTS API on a local vLLM endpoint.
+    // Still take a moment so the running tool card is visible, and leave a log
+    // line the simulator can assert on.
+    if crate::config::mock_speech() {
+        let ms: u64 = std::env::var("DST_MOCK_TTS_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(150);
+        vlog(&format!(
+            "mock tts {} chars, {} ms: {}",
+            text.chars().count(),
+            ms,
+            short(text)
+        ));
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+        return Ok(());
     }
     let url = endpoint("tools/tts")?;
     let c = cfg()?;
@@ -173,15 +203,28 @@ fn play_pcm24k(pcm: &[u8]) -> Result<(), String> {
 // ----------------------------------------------------------------------- ASR
 
 pub struct Recorder {
-    child: std::process::Child,
+    child: Option<std::process::Child>,
     buf: Arc<Mutex<Vec<i16>>>,
     stop: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
+    /// Mocked take: no `arecord` child and no upload; `finish` returns a
+    /// canned transcript instead (see `DST_MOCK_SPEECH`).
+    mock: bool,
 }
 
 /// Start capturing from the microphone. Call `finish()` to transcribe, or
 /// `cancel()` to throw the take away.
 pub fn start_recording() -> Result<Recorder, String> {
+    if crate::config::mock_speech() {
+        vlog("mock recording started");
+        return Ok(Recorder {
+            child: None,
+            buf: Arc::new(Mutex::new(Vec::new())),
+            stop: Arc::new(AtomicBool::new(false)),
+            handle: None,
+            mock: true,
+        });
+    }
     let mut child = Command::new("arecord")
         .args([
             "-q", "-D", CARD, "-f", "S32_LE", "-r", "48000", "-c", "2", "-t", "raw",
@@ -225,18 +268,21 @@ pub fn start_recording() -> Result<Recorder, String> {
     });
 
     Ok(Recorder {
-        child,
+        child: Some(child),
         buf,
         stop,
         handle: Some(handle),
+        mock: false,
     })
 }
 
 impl Recorder {
     fn stop_capture(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
@@ -245,6 +291,12 @@ impl Recorder {
     /// Stop, convert to 16 kHz mono WAV and upload. Returns the transcript.
     pub fn finish(mut self) -> Result<String, String> {
         self.stop_capture();
+        if self.mock {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            let text = crate::config::mock_asr_text();
+            vlog(&format!("mock asr: {text:?}"));
+            return Ok(text);
+        }
         let samples = {
             let v = self.buf.lock().unwrap();
             v.clone()
@@ -359,6 +411,10 @@ impl Recorder {
 /// Used by `dst --voice-selftest` to separate "mic is dead" from "ASR decided
 /// the take was noise".
 pub fn mic_probe(secs: u32) -> Result<(f64, String), String> {
+    if crate::config::mock_speech() {
+        std::thread::sleep(std::time::Duration::from_millis(secs.min(1) as u64 * 200));
+        return Ok((0.25, crate::config::mock_asr_text()));
+    }
     let mut rec = start_recording()?;
     std::thread::sleep(std::time::Duration::from_secs(secs as u64));
     rec.stop_capture();

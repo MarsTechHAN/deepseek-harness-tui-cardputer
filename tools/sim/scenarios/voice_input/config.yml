@@ -1,0 +1,13 @@
+model: deepseek-flash
+effort: auto
+max_tokens: 512
+api:
+  key: test
+voice:
+  tts_voice: stella
+tui:
+  queued_default: true
+  auto_send_voice: false
+  language: en
+context:
+  time: false

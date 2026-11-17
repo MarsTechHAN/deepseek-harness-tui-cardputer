@@ -1,0 +1,10 @@
+{
+ "responses": [
+  {
+   "reasoning": "The user spoke to me.",
+   "content": "Heard you: read the last file.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

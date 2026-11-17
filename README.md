@@ -365,20 +365,32 @@ cargo build                       # host binary
 
 cd tools/sim
 python3 run_demo.py               # splash / thinking / tool call / reply + PNG contact sheet
-python3 run_scenarios.py          # /clear, /goal round driver, automatic compaction checks
+python3 run_scenarios.py          # feature + voice + login scenario checks
+python3 run_live.py               # UI walkthrough against the real local vLLM model
 ```
 
 `run_demo.py` writes snapshots and a contact sheet under `screenshots/`;
-`run_scenarios.py` runs 26 feature scenarios (thinking panel, tool call ordering,
-tool timeout, Esc interrupt, step limits, repeat/time context injection,
-auto+manual compaction, all `/goal` flows, `/clear`, `/config`, command palette,
-artifact panel, `rename`+`/resume` session menu across a restart, onboarding
-menu, sandbox auto/strict/full, background jobs, watchers, searchable resume)
-and asserts on captured screens *and* on the request log (e.g. that a
-`<goal_round>` prompt was sent, or that a checkpoint message reached the next
-request). `check_memory.py` samples RSS across a 20-turn session, and
-`run_all.py` runs the three together. Everything binds the mock API to
-127.0.0.1 only.
+`run_scenarios.py` runs the feature scenarios (thinking panel, tool call
+ordering, tool timeout, Esc interrupt, step limits, repeat/time context
+injection, auto+manual compaction, all `/goal` flows, `/clear`, `/config`,
+command palette, artifact panel, `rename`+`/resume` session menu across a
+restart, onboarding menu, sandbox auto/strict/full, background jobs, watchers,
+searchable resume, push-to-talk with mocked speech, `speak`, the nine-step
+WeChat login chain) and asserts on captured screens *and* on the request log
+(e.g. that a `<goal_round>` prompt was sent, or that a checkpoint message
+reached the next request). `check_memory.py` samples RSS across a 20-turn
+session, and `run_all.py` runs them together.
+
+`run_live.py` is the common-usage visual pass: it uses the **real local vLLM
+endpoint** from `~/.dsh/settings.yaml` (real reasoning/streaming/tool calls)
+and mocks only TTS/ASR (`DST_MOCK_SPEECH=1`), capturing startup, streaming,
+tool running/done, push-to-talk, `/help`, `/config`, `/resume` and `/login` into
+`docs/live-walkthrough.png`. See `docs/UX-LIVE.md`. Everything else binds the
+mock API to 127.0.0.1 only.
+
+Voice test hooks (never set on the device): `DST_MOCK_SPEECH=1` fakes the
+recorder/ASR (text from `DST_MOCK_ASR_TEXT`) and logs TTS instead of playing
+(`DST_MOCK_TTS_MS`); `~/.dst/logs/voice.log` records both paths.
 
 Unit tests (host, no network): `cargo test` — harness/tool pipeline, compaction
 budgets, goal state machine, context formatting, config round-trip.
@@ -408,8 +420,9 @@ src/mcp.rs       MCP stdio client
 src/jobs.rs      cron + file-watch scheduler
 src/voice.rs     TTS/ASR, resampling, WAV framing, recorder
 src/json.rs      minimal JSON
-tools/sim/       pty screen simulator + scripted mock API (host testing)
+tools/sim/       pty screen simulator + scripted mock API + live-API walkthrough
 docs/UX-AUDIT.md 12-row screen-by-screen UX audit checklist and known limits
+docs/UX-LIVE.md  common-usage walkthrough against the real local vLLM model
 tools/sim/mock_login.py  mock of the nine-step DSH login chain (host tests)
 tools/sim/qr_scan.js     jsQR decoder for the panel QR image
 tools/sim/check_qr_scan.py  renders the panel QR and proves it decodes
@@ -417,6 +430,7 @@ tools/sim/check_login_page_i18n.py  starts the login page in all six languages
 tools/sim/check_login_cancel.py  proves the page's Cancel stops the flow
 tools/sim/render_login_i18n.py  renders the QR login screen in all six languages
                                and asserts the text never overlaps the QR
+tools/sim/run_live.py  real-vLLM UX walkthrough (speech mocked) + contact sheet
 tools/deploy/    scp/build/install and systemd-ordering fix for the device
 ```
 
