@@ -1455,9 +1455,16 @@ impl Scr {
                     let pal = self.palette_items();
                     if !pal.is_empty() {
                         let i = self.palette_sel.min(pal.len() - 1);
-                        let (name, _desc, hint, _cat) = pal[i].clone();
                         let typed: String = self.input.iter().collect();
                         let typed = typed.trim_end();
+                        // An exactly typed command wins over the highlighted
+                        // row, even when a fuzzy description match sorts first.
+                        let chosen = pal
+                            .iter()
+                            .find(|(name, _, _, _)| typed == format!("/{name}"))
+                            .cloned()
+                            .unwrap_or_else(|| pal[i].clone());
+                        let (name, _desc, hint, _cat) = chosen;
                         // A hint in [] is optional, <..> is required: only the
                         // latter completes with a space instead of running.
                         let needs_arg = hint.map(|h| h.starts_with('<')).unwrap_or(false);

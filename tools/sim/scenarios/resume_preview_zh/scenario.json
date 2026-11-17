@@ -1,0 +1,12 @@
+{
+ "steps": [
+  {"wait_for": {"text": "dst", "timeout_ms": 10000}},
+  {"send": "/resume"},
+  {"key": "Enter"},
+  {"wait_for": {"text": "发布检查清单", "timeout_ms": 10000}, "snap": "resume"},
+  {"key": "Right"},
+  {"wait_ms": 400, "snap": "expanded"},
+  {"key": "Esc"},
+  {"wait_ms": 300, "snap": "closed"}
+ ]
+}

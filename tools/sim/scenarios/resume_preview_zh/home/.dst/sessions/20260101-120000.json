@@ -1,0 +1,1 @@
+{"title":"发布检查清单","cwd":"/tmp","model":"deepseek-flash","effort":"auto","messages":[{"role":"system","content":"system prompt"},{"role":"user","content":"请列出发布前的检查项"},{"role":"assistant","content":"1. 检查电池\n2. 检查屏幕\n3. 检查键盘"}]}

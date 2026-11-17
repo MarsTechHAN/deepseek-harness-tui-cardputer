@@ -73,7 +73,6 @@ the device.
   `tips`, `commands`, `config_menu`, `resume_search`, `login_menu`, plus the
   provider-failure paths `api_error` (401 + recovery) and `api_retry`
   (429 + automatic retry) and `goal_status_zh` for the localized goal report.
-- Limits: the simulator's PNG renderer can garble wide glyphs inside
-  reverse-video selected rows, and there is no real microphone, speaker,
-  physical keyboard or panel. WeChat login against the live platform still
-  needs a device pass; the nine-step flow is covered by `mock_login.py`.
+- Limits: there is no real microphone, speaker, physical keyboard or panel.
+  WeChat login against the live platform still needs a device pass; the
+  nine-step flow is covered by `mock_login.py`.

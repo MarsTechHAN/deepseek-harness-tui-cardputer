@@ -21,9 +21,9 @@ asserted in code.
 | Tools | pending card, result row, CtrlO list, artifact viewer | fixed: the result preview is one ellipsised row (long errors used to be cut mid-word); full text stays in CtrlO. Failed calls carry an ASCII `x` marker in the CtrlO list because rows cannot be coloured individually (`tool_log_multi` scenario) |
 | Permissions | strict approval (bash + edit diff) | fixed: `-`/`+` diff lines are coloured red/green; human summary, keys |
 | Usage | `/usage` report | fixed: the report heading was duplicated (one extra row, now one `usage · N requests` header with a localized request count); labels localize in all six languages (`usage_zh` scenario) |
-| Commands | palette, help menu, previews, 1/N position | fixed: `/help` dropped a redundant footer row (8 commands visible, was 7) and its hint now reads `Enter run/complete` |
+| Commands | palette, help menu, previews, 1/N position | fixed: `/help` dropped a redundant footer row (8 commands visible, was 7) and its hint now reads `Enter run/complete`. Palette name matches rank above description matches, and an exactly typed command wins over the highlighted row: in Chinese `/resume` also fuzzy-matched `/rename` (whose description mentions `/resume`) and Enter used to complete `/rename` instead of running `/resume` |
 | Config | all 15 rows, numeric prompts, model/judge/edit, extensions | fixed: the third-party capability footer fits 53 cells in all six languages instead of being cut mid-word; menu values keep a 2-cell gap |
-| Sessions | resume list/search/expanded/resumed, rewind list/preview | fixed: resume hint shortened so it no longer truncates |
+| Sessions | resume list/search/expanded/resumed, rewind list/preview | fixed: resume hint shortened so it no longer truncates. Chinese preview labels verified (`resume_preview_zh`): `标题/模型/轮次/最近`, counts and colon spacing |
 | Background | task list (all/running/watchers), save, full output | fixed: the footer hint fits 53 cells in all six languages (it was cut to `f…`); filter titles and full-width rows |
 | Queue | CtrlQ editor, delete, pull back into prompt | ok: full-width selection |
 | Goal | pursuing / objective / paused / done badges, wrap-up | fixed: state glyphs are ASCII-safe (paused/done rendered as boxes before); the model-facing wrap-up paragraph is now a one-line `+ goal wrap-up …` marker instead of filling the transcript |
@@ -33,7 +33,7 @@ asserted in code.
 | Goal status | `/goal` report, badge, commands | fixed: report rows and the bottom-right badge are localized; the command list sits on its own row instead of wrapping its last command |
 | Sessions | resume preview metadata | fixed: title/model/turns/recent labels are localized |
 | Voice | push-to-talk REC, transcript insertion, `speak` tool card, mocked offline | ok: `DST_MOCK_SPEECH=1` fakes ASR/TTS so the whole voice path is reviewable on the simulator; `auto_send_voice` now actually applies |
-| i18n | en, zh, es, ja, de, it menus/help/approval/login pages/command feedback/dynamic labels | ok; every user-visible string is catalog-backed. Beyond the six-language parity test, a unit test now scans `src/*.rs` for literal `i18n::t("…")` keys and fails if the English catalog lacks one (this caught the config-menu hint disappearing when its key was dropped). Runtime notices (request failed, retries, compaction, goal notices, save/mic/speech failures), the `/goal` report/badge and the resume-preview labels are localized too. Note: the simulator's PNG renderer garbles wide glyphs inside reverse-video rows (selected row) — text snapshots and a real terminal are correct |
+| i18n | en, zh, es, ja, de, it menus/help/approval/login pages/command feedback/dynamic labels | ok; every user-visible string is catalog-backed. Beyond the six-language parity test, a unit test now scans `src/*.rs` for literal `i18n::t("…")` keys and fails if the English catalog lacks one (this caught the config-menu hint disappearing when its key was dropped). Runtime notices (request failed, retries, compaction, goal notices, save/mic/speech failures), the `/goal` report/badge and the resume-preview labels are localized too. The simulator's PNG renderer now paints the continuation cell behind a wide glyph, so selected (reverse-video) menu rows render CJK correctly and can be visually reviewed |
 
 ## Fixes made during the audit
 
@@ -71,6 +71,14 @@ asserted in code.
   covered by `tool_log_multi`
 - `/usage`: single localized header (duplicate title line removed), localized
   request count; Chinese report verified visually
+- command palette: typed-name matches outrank description matches, and exact
+  commands run even when a fuzzy row is highlighted (found via the Chinese
+  resume-preview scenario: `/resume` was being rewritten to `/rename`)
+- Chinese labels use `: ` after labels (`标题: …`, `状态: …`) instead of the
+  full-width colon, which `tidy()` had squashed to a cramped half-width
+- resume preview labels localized and covered by `resume_preview_zh`
+- simulator PNG renderer: paint the continuation cell of wide glyphs so
+  reverse-video (selected) rows no longer cut CJK characters in half
 - provider errors: localized `request failed` line plus a yellow `→` recovery
   hint, retry notice localized, textual rate limits treated as transient;
   `mock_api.py` can now serve scripted HTTP errors and `api_error`/`api_retry`

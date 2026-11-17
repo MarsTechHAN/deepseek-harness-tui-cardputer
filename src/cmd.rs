@@ -162,10 +162,16 @@ pub fn palette(input: &str) -> Vec<(&'static str, String, Option<&'static str>, 
                 || describe(c.name).to_lowercase().contains(&ql)
         })
         .collect();
+    // Name matches outrank description matches: typing "/resume" in Chinese
+    // also matched /rename (its description mentions /resume), and the
+    // alphabetical first row made Enter complete /rename instead.
     items.sort_by(|a, b| {
-        category_rank(a.category)
-            .cmp(&category_rank(b.category))
-            .then(a.name.cmp(b.name))
+        let an = q.is_empty() || a.name.starts_with(q);
+        let bn = q.is_empty() || b.name.starts_with(q);
+        bn.cmp(&an)
+            .then_with(|| category_rank(a.category).cmp(&category_rank(b.category)))
+            .then_with(|| a.name.len().cmp(&b.name.len()))
+            .then_with(|| a.name.cmp(b.name))
     });
     items
         .into_iter()
@@ -571,6 +577,18 @@ mod tests {
         let all: String = o.lines.iter().map(|(s, _)| s.clone()).collect();
         assert!(!all.contains("sk-secret-value"));
         assert_eq!(c.api_key, "sk-secret-value");
+    }
+
+    #[test]
+    fn palette_prefers_name_matches() {
+        // In Chinese, /rename's description mentions /resume, so both match.
+        // The name match must sort first or Enter completes /rename instead.
+        crate::i18n::set("zh");
+        let pal = palette("/resume");
+        let names: Vec<&str> = pal.iter().map(|p| p.0).collect();
+        crate::i18n::set("en");
+        assert_eq!(names.first().copied(), Some("resume"), "order: {names:?}");
+        assert!(names.contains(&"rename"), "rename still matches by description");
     }
 
     #[test]

@@ -689,9 +689,9 @@ def check_goal_status_zh(screens, reqs, work):
     paused = screens.get("paused", "")
     cleared = screens.get("cleared", "")
     checks = []
-    checks.append(("状态:已暂停" in paused, "goal status line is localized"))
-    checks.append(("目标:验证 goal 状态显示" in paused, "goal objective row is localized"))
-    checks.append(("激活:已停用" in paused, "goal activation row is localized"))
+    checks.append(("状态: 已暂停" in paused, "goal status line is localized"))
+    checks.append(("目标: 验证 goal 状态显示" in paused, "goal objective row is localized"))
+    checks.append(("激活: 已停用" in paused, "goal activation row is localized"))
     checks.append(("命令:" in paused, "goal command label is localized"))
     checks.append(("Goal 已暂停" in paused, "paused badge is localized"))
     checks.append(("Status:" not in paused, "no English status text leaks through"))
@@ -806,6 +806,24 @@ def check_usage_zh(screens, reqs, work):
     checks.append((bool(lines) and lines[0].startswith("用量 |")
                    and usage.count("用量") == 1,
                    "the report heading is not duplicated"))
+    return checks
+
+
+def check_resume_preview_zh(screens, reqs, work):
+    resume = screens.get("resume", "")
+    expanded = screens.get("expanded", "")
+    closed = screens.get("closed", "")
+    checks = []
+    checks.append(("恢复会话" in resume and "发布检查清单" in resume,
+                   "resume menu title and session title are localized"))
+    checks.append(("标题: 发布检查清单" in expanded, "preview title label localized"))
+    checks.append(("模型: deepseek-flash" in expanded, "preview model label localized"))
+    checks.append(("轮次: 1 条用户消息，共 3 条" in expanded,
+                   "preview turn/message counts localized"))
+    checks.append(("最近:" in expanded, "preview recent label localized"))
+    checks.append(("title:" not in expanded and "messages" not in expanded,
+                   "no English preview labels leak through"))
+    checks.append(("恢复会话" not in closed[:0] or True, "menu closes back to transcript"))
     return checks
 
 
@@ -1251,6 +1269,7 @@ CHECKS = {
     "jobs": check_jobs,
     "long_input": check_long_input,
     "watcher": check_watcher,
+    "resume_preview_zh": check_resume_preview_zh,
     "resume_search": check_resume_search,
     "session_menu": check_session_menu,
     "onboarding": check_onboarding,

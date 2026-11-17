@@ -397,24 +397,38 @@ class ScreenRenderer:
         draw = ImageDraw.Draw(img)
         cw, ch = self.cell_w, self.cell_h
 
+        def colours(cell):
+            fg = resolve_color(cell.fg, DEFAULT_FG, bold=cell.bold)
+            bg = resolve_color(cell.bg, DEFAULT_BG)
+            if cell.reverse:
+                # Swap foreground/background. With default colours that
+                # means a light fill with dark text, not dark-on-dark.
+                if bg == DEFAULT_BG:
+                    fg, bg = DEFAULT_BG, DEFAULT_FG
+                elif fg == DEFAULT_BG:
+                    fg, bg = DEFAULT_FG, bg
+                else:
+                    fg, bg = bg, fg
+            return fg, bg
+
         for r in range(self.rows):
             row = screen.buffer[r]
             for c in range(self.cols):
                 cell = row[c]
                 data = cell.data
                 if data == "":
-                    continue  # continuation cell of a wide character
-                fg = resolve_color(cell.fg, DEFAULT_FG, bold=cell.bold)
-                bg = resolve_color(cell.bg, DEFAULT_BG)
-                if cell.reverse:
-                    # Swap foreground/background. With default colours that
-                    # means a light fill with dark text, not dark-on-dark.
-                    if bg == DEFAULT_BG:
-                        fg, bg = DEFAULT_BG, DEFAULT_FG
-                    elif fg == DEFAULT_BG:
-                        fg, bg = DEFAULT_FG, bg
-                    else:
-                        fg, bg = bg, fg
+                    # pyte leaves the second cell of a wide glyph empty. Paint
+                    # its background from the glyph's cell, otherwise reverse
+                    # video (selected menu rows) cuts CJK glyphs in half.
+                    prev = row[c - 1] if c > 0 else None
+                    if prev is not None and prev.data and is_wide(prev.data[0]):
+                        _fg, bg = colours(prev)
+                        if bg != DEFAULT_BG:
+                            x0, y0 = c * cw, r * ch
+                            draw.rectangle(
+                                [x0, y0, x0 + cw - 1, y0 + ch - 1], fill=bg)
+                    continue
+                fg, bg = colours(cell)
                 x0, y0 = c * cw, r * ch
                 if bg != DEFAULT_BG:
                     draw.rectangle([x0, y0, x0 + cw - 1, y0 + ch - 1], fill=bg)
