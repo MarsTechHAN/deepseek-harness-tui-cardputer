@@ -96,17 +96,20 @@ intelligence, and `curl` for the wire.
 
 <table>
 <tr>
-<td width="50%"><img src="docs/live-walkthrough.png" alt="Twelve-screen live walkthrough: startup, streaming, reply, tool call, push-to-talk, help, config, resume, login"><br><sub><b>Live walkthrough</b> — 12 real screens against a local model: streaming, reasoning, a tool card, push-to-talk, <code>/help</code>, <code>/config</code>, <code>/resume</code>, <code>/login</code>.</sub></td>
-<td width="50%"><img src="docs/live-creator.png" alt="Creator mode: the model builds, saves and runs a battery app"><br><sub><b>Creator mode</b> — the model writes an app (<code>battery</code>), saves the package, and <code>/apps</code> runs it full-screen.</sub></td>
+<td colspan="2"><a href="docs/live-walkthrough.png"><img src="docs/live-walkthrough.png" alt="Twelve-screen live walkthrough: startup, streaming, reply, tool call, push-to-talk, help, config, resume, login"></a><br><sub><b>Live walkthrough</b> — 12 real screens against a local model: streaming, a folded reasoning line, a tool card, push-to-talk, <code>/help</code>, <code>/config</code>, <code>/resume</code>, <code>/login</code>. Click for full size.</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/splash.gif" alt="Animated splash: the DeepSeek whale breaches out of a night sea on the 53x9 pixel grid"><br><sub><b>Splash</b> — a 14-frame whale breach drawn on the device pixel grid, deterministic so snapshots are reproducible.</sub></td>
+<td width="50%"><a href="docs/live-creator.png"><img src="docs/live-creator.png" alt="Creator mode: the model writes, saves and runs a battery app"></a><br><sub><b>Creator mode</b> — the model writes an app (<code>battery</code>), saves the package and <code>/apps</code> runs it full-screen.</sub></td>
+<td width="50%"><img src="docs/splash.gif" alt="Animated splash: the DeepSeek whale breaches out of a night sea on the device pixel grid"><br><sub><b>Splash</b> — a 14-frame whale breach on the device pixel grid, deterministic so snapshots reproduce.</sub></td>
+</tr>
+<tr>
 <td width="50%"><img src="docs/login-qr-screen.png" alt="WeChat QR and the phone-page URL rendered on the 53x12 panel"><br><sub><b>Sign-in</b> — a real WeChat QR on the panel, a LAN page for the phone, or the credential typed on the device.</sub></td>
+<td width="50%"><img src="docs/login-i18n-sheet.png" alt="The login screen rendered in English, Chinese, Spanish, Japanese, German and Italian"><br><sub><b>Six languages</b> — every screen, menu and dialog is translated: en · zh · es · ja · de · it.</sub></td>
 </tr>
 </table>
 
 <div align="center">
-<sub><a href="docs/splash-frames.png">Splash frame sheet</a> · <a href="docs/login-page.png">phone login page</a> · <a href="docs/login-i18n-sheet.png">login in six languages</a></sub>
+<sub><a href="docs/splash-frames.png">splash frame sheet</a> · <a href="docs/login-page.png">phone login page</a> · <a href="docs/live-walkthrough.png">walkthrough at full size</a></sub>
 </div>
 
 ---
