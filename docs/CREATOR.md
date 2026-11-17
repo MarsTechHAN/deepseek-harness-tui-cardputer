@@ -154,6 +154,10 @@ Rules:
   frontmatter, stamps `updated`, copies the previous body to
   `.history/v<N>.md` (last five kept), and shows `(vN)` in the SKILLS catalog
   from v2 on; `/extensions` details show version/updated.
+- `skill_rollback` restores the body of an earlier version (default: previous
+  step) as a **new** version, archiving the current one first — so a rollback
+  is itself reversible and the version number only goes up. Unknown versions
+  fail with the available version list.
 - The `skill` tool reloads from disk when the startup catalog misses a name, so
   a skill the model just wrote can be loaded and followed in the same turn (the
   SKILLS catalog itself updates on the next turn).
@@ -174,7 +178,7 @@ Rules:
 |---|---|---|
 | system prompt | base | base + `CREATOR MODE` block + installed-app catalog |
 | tools | base set | + `app_save`, `app_file`, `app_test`, `app_run`,
-  `app_export`, `app_import`, `skill_save`, `skill_file` |
+  `app_export`, `app_import`, `skill_save`, `skill_file`, `skill_rollback` |
 | idle hint | `idle_hint` | `creator_hint` (mentions `/apps` and long-Esc) |
 | after a turn | nothing | saved-app notice, or a nudge when files changed but no app was saved |
 | conversation | unchanged | unchanged (apps are additive) |
@@ -361,6 +365,8 @@ model → app_run{name, timeout_s?, args?}
 - Simulator scenarios (`tools/sim/run_scenarios.py`):
   - `creator_mode` — toggle on/off from the `/config` Mode row, idle hint,
     transcript notice; no model request.
+  - `creator_skill_rollback` — two saves build v1/v2, `skill_rollback` restores
+    the v1 body as v3 with the pre-rollback body archived under `.history/v2.md`.
   - `creator_import` — restores a seeded `~/.dst/tmp/app-tools-greeter.tar.gz`,
     refuses an archive outside the tmp dir, replaces the installed app with
     `replace=true`, keeps the executable bit, and the app is listed by `/apps`

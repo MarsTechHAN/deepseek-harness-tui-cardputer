@@ -284,6 +284,100 @@ pub fn write_file(name: &str, path: &str, content: &str) -> Result<(Skill, Strin
     Ok((sk, rel, content.len()))
 }
 
+/// History snapshot versions present for a skill, newest first.
+pub fn history_versions(sk: &Skill) -> Vec<u32> {
+    let mut out: Vec<u32> = std::fs::read_dir(sk.dir.join(".history"))
+        .map(|rd| {
+            rd.flatten()
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    let n = name.strip_prefix('v')?.strip_suffix(".md")?;
+                    n.parse::<u32>().ok()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort_unstable();
+    out.reverse();
+    out
+}
+
+/// Restore the body of an earlier version as a new skill version. The current
+/// body is archived first (same rule as any update), so a rollback is itself
+/// reversible. Returns (new skill, restored-from version, new version).
+pub fn rollback_at(root: &Path, name: &str, version: Option<u32>) -> Result<(Skill, u32, u32), String> {
+    let want = name.trim().to_ascii_lowercase();
+    let dir = root.join(&want);
+    let current = load_meta()
+        .into_iter()
+        .find(|s| s.name.eq_ignore_ascii_case(&want) && s.dir == dir)
+        .or_else(|| {
+        let text = std::fs::read_to_string(dir.join("SKILL.md")).ok()?;
+        let (meta, body) = frontmatter(&text);
+        let name = meta
+            .iter()
+            .find(|(k, _)| k == "name")
+            .map(|(_, v)| v.clone())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| want.clone());
+        let description = meta
+            .iter()
+            .find(|(k, _)| k == "description")
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        Some(Skill {
+            name,
+            description,
+            body,
+            dir: dir.clone(),
+            origin: "model".to_string(),
+            version: 1,
+            updated: String::new(),
+        })
+    })
+    .ok_or_else(|| format!("no skill '{want}'"))?;
+    if !current.is_user() && current.dir != dir {
+        return Err("refusing to roll back a skill outside the user skills dir".into());
+    }
+    let versions = history_versions(&current);
+    if versions.is_empty() {
+        return Err(format!(
+            "skill '{want}' has no history yet; save it again to create versions"
+        ));
+    }
+    let target = match version {
+        Some(v) => versions
+            .iter()
+            .copied()
+            .find(|x| *x == v)
+            .ok_or_else(|| {
+                format!(
+                    "no version v{v} for '{want}'; available: {}",
+                    versions.iter().map(|x| format!("v{x}")).collect::<Vec<_>>().join(", ")
+                )
+            })?,
+        None => {
+            let next = versions.iter().copied().find(|v| *v < current.version).or_else(|| versions.first().copied());
+            next.ok_or_else(|| format!("no version older than v{} for '{want}'", current.version))?
+        }
+    };
+    let old_text = std::fs::read_to_string(current.dir.join(".history").join(format!("v{target}.md")))
+        .map_err(|e| format!("history v{target}: {e}"))?;
+    let (meta, body) = frontmatter(&old_text);
+    let description = meta
+        .iter()
+        .find(|(k, _)| k == "description")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_else(|| current.description.clone());
+    let (sk, _created) = save_at(root, &want, &description, &body)?;
+    let new_version = sk.version;
+    Ok((sk, target, new_version))
+}
+
+pub fn rollback(name: &str, version: Option<u32>) -> Result<(Skill, u32, u32), String> {
+    rollback_at(&crate::config::skills_dir(), name, version)
+}
+
 /// Remove a user-owned skill package (refuses /etc or anything outside the
 /// user skills dir). Returns the package path that was removed.
 pub fn delete(sk: &Skill) -> Result<String, String> {
@@ -355,6 +449,31 @@ fn file_present(a: &J) -> String {
     )
 }
 
+fn rollback_exec(args: &J) -> Result<J, crate::tool::Fail> {
+    let name = crate::tool::str_arg(args, "name").unwrap_or_default();
+    let version = crate::tool::num_arg(args, "version").map(|v| v.max(1.0) as u32);
+    let (sk, from, new) = rollback(&name, version).map_err(crate::tool::Fail::new)?;
+    Ok(ok(vec![
+        ("name", J::s(&sk.name)),
+        ("restored_from", J::Num(from as f64)),
+        ("version", J::Num(new as f64)),
+        ("path", J::s(&sk.dir.display().to_string())),
+    ]))
+}
+
+fn rollback_render(_a: &J, v: &J) -> String {
+    format!(
+        "rolled back skill {} to the body of v{} (now v{}); the previous current body is kept under .history/",
+        v.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+        v.get("restored_from").and_then(|x| x.as_num()).unwrap_or(0.0) as u32,
+        v.get("version").and_then(|x| x.as_num()).unwrap_or(0.0) as u32
+    )
+}
+
+fn rollback_present(a: &J) -> String {
+    format!("rollback {}", crate::tool::str_arg(a, "name").unwrap_or_default())
+}
+
 /// Creator-mode tools for writing the model's own skills. Registered only while
 /// creator mode is on; reading/using skills works in every mode.
 pub fn tool_defs() -> Vec<crate::tool::ToolDef> {
@@ -378,6 +497,24 @@ is loaded with the skill tool.",
             execute: save_exec,
             render: save_render,
             present: save_present,
+            post: None,
+            schema_override: None,
+            dynamic: None,
+        },
+        ToolDef {
+            name: "skill_rollback",
+            description: "Restore the body of an earlier version of one of your skills (skill_save \
+keeps .history/v<N>.md snapshots). The current body is archived first and the restored content \
+becomes a new version, so a rollback is reversible. Omit 'version' to go back one step.",
+            params: vec![
+                Param::req("name", "string", "Skill name."),
+                Param::opt("version", "integer", "History version to restore (e.g. 1); omit for the previous version."),
+            ],
+            concurrency_safe: false,
+            timeout_ms: 10_000,
+            execute: rollback_exec,
+            render: rollback_render,
+            present: rollback_present,
             post: None,
             schema_override: None,
             dynamic: None,
@@ -569,6 +706,35 @@ mod tests {
         assert!(save_at(&root, "x", "d", "").is_err());
         assert!(write_file("battery-report", "notes.txt", "hi").is_err()
             || crate::config::skills_dir() != root);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn rollback_restores_an_earlier_body_as_a_new_version() {
+        let root = std::env::temp_dir().join(format!(
+            "dst-skill-rb-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let (_s, _) = save_at(&root, "report", "when reporting", "ORIGINAL v1 body").unwrap();
+        let (s2, _) = save_at(&root, "report", "when reporting", "SECOND v2 body").unwrap();
+        assert_eq!(s2.version, 2);
+        let dir = root.join("report");
+        assert!(dir.join(".history").join("v1.md").is_file());
+        let (s3, from, new) = rollback_at(&root, "report", Some(1)).unwrap();
+        assert_eq!(from, 1);
+        assert_eq!(new, 3);
+        assert_eq!(s3.version, 3);
+        let text = std::fs::read_to_string(dir.join("SKILL.md")).unwrap();
+        assert!(text.contains("ORIGINAL v1 body"), "{text}");
+        // The current body (v2) was archived before the restore.
+        let v2 = std::fs::read_to_string(dir.join(".history").join("v2.md")).unwrap();
+        assert!(v2.contains("SECOND v2 body"), "{v2}");
+        assert!(rollback_at(&root, "report", Some(9)).is_err(), "unknown version is an error");
         std::fs::remove_dir_all(&root).ok();
     }
 

@@ -1,0 +1,40 @@
+{
+ "responses": [
+  {
+   "reasoning": "Write the skill twice, then roll it back to the first body.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "r1",
+     "name": "skill_save",
+     "arguments": {
+      "name": "report",
+      "description": "Use when the user asks for a report",
+      "instructions": "# Report\n\nORIGINAL: read once and summarise."
+     }
+    },
+    {
+     "id": "r2",
+     "name": "skill_save",
+     "arguments": {
+      "name": "report",
+      "description": "Use when the user asks for a report",
+      "instructions": "# Report\n\nSECOND: read twice and compare."
+     }
+    },
+    {
+     "id": "r3",
+     "name": "skill_rollback",
+     "arguments": {
+      "name": "report",
+      "version": 1
+     }
+    }
+   ]
+  },
+  {
+   "reasoning": "Done.",
+   "content": "Rolled the report skill back to the v1 body; it is now v3."
+  }
+ ]
+}

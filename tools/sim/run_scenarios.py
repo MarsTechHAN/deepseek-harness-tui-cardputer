@@ -1614,7 +1614,28 @@ def check_creator_import(screens, reqs, work):
     return checks
 
 
+
+def check_creator_skill_rollback(screens, reqs, work):
+    home = os.path.join(work, "home")
+    base = os.path.join(home, ".dst", "skills", "report")
+    md = read_file(os.path.join(base, "SKILL.md"))
+    v2 = read_file(os.path.join(base, ".history", "v2.md"))
+    results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
+    checks = []
+    checks.append(("ORIGINAL: read once" in md and "SECOND: read twice" not in md,
+                   "rollback restores the earlier body as the current SKILL.md"))
+    checks.append(("version: 3" in md and "origin: model" in md,
+                   "the restored body becomes a new version (v3)"))
+    checks.append(("SECOND: read twice" in v2,
+                   "the body that was current before the rollback is archived"))
+    checks.append(("rolled back skill report to the body of v1 (now v3)" in results,
+                   "the tool result explains the rollback"))
+    checks.append((len(reqs) == 2, "exactly the scripted requests were made"))
+    return checks
+
+
 CHECKS = {
+    "creator_skill_rollback": check_creator_skill_rollback,
     "creator_import": check_creator_import,
     "creator_skill": check_creator_skill,
     "creator_app_test": check_creator_app_test,

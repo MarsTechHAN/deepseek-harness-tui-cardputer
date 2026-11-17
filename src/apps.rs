@@ -760,8 +760,10 @@ WHAT TO PERSIST — app vs skill vs memory\n\
 - app: something runnable on the device (app_save/app_file, verified with app_test).\n\
 - skill: a systematic, self-contained engineering package you worked out (procedure, format, \
 checklist, support files) that will be useful again — save it with skill_save/skill_file. \
-Updating a skill bumps its version and keeps the old body under .history/; it joins the SKILLS \
-catalog next turn and is read with the skill tool (also usable in the same turn).\n\
+Updating a skill bumps its version and keeps the old body under .history/ (restore one with \
+skill_rollback); it joins the SKILLS catalog next turn and is read with the skill tool (also \
+usable in the same turn).\n\
+
 - memory: short durable facts or preferences (memory_write); memory is fragments, a skill is \
 a complete procedure. Prefer a skill over dumping a long procedure into memory.\n\
 \n\

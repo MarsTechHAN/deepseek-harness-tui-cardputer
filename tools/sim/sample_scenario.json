@@ -1,17 +1,60 @@
 {
-  "description": "dst simulator sample scenario: splash, a streamed thinking+content reply, a list_dir tool round trip, and the final reply. Pairs with sample_script.json served by mock_api.py.",
-  "steps": [
-    {"wait_for": {"text": "dst", "timeout_ms": 10000}},
-    {"snap": "splash"},
-
-    {"send": "hello"},
-    {"key": "Enter"},
-    {"wait_ms": 1100, "snap": "thinking"},
-    {"wait_stable": {"stable_ms": 800, "timeout_ms": 15000}, "snap": "reply"},
-
-    {"send": "list the files here"},
-    {"key": "Enter"},
-    {"wait_ms": 1200, "snap": "tool_call"},
-    {"wait_stable": {"stable_ms": 800, "timeout_ms": 15000}, "snap": "final_reply"}
-  ]
+ "description": "dst simulator sample scenario: splash, a streamed thinking+content reply, a list_dir tool round trip, and the final reply. Pairs with sample_script.json served by mock_api.py.",
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "snap": "splash"
+  },
+  {
+   "send": "hello"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "thinking",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "wait_ms": 300,
+   "snap": "thinking"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 800,
+    "timeout_ms": 15000
+   },
+   "snap": "reply"
+  },
+  {
+   "send": "list the files here"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "list_dir",
+    "timeout_ms": 15000
+   }
+  },
+  {
+   "wait_ms": 300,
+   "snap": "tool_call"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 800,
+    "timeout_ms": 15000
+   },
+   "snap": "final_reply"
+  }
+ ]
 }

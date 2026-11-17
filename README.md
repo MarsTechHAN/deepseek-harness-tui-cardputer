@@ -170,7 +170,8 @@ repository.
   SKILLS catalog on the next turn and is loaded with the `skill` tool, exactly
   like hand-installed skills and can be loaded with the `skill` tool in the
   same turn they are written; updates bump the SKILL.md version and keep the
-  previous body under `.history/vN.md` (catalog updates next turn).
+  previous body under `.history/vN.md` and `skill_rollback` restores an
+  earlier body as a new version (catalog updates next turn).
   `/extensions` badges model-written skills, opens
   the full SKILL.md body with `→`, and lets the user disable (`x`) or delete
   (`d`, with y/n) them; `/etc/dst/skills` stays read-only.

@@ -330,7 +330,7 @@ pub fn classify(name: &str, args: &J) -> Class {
         // (the tools validate every path), and app_run runs a package the user
         // explicitly asked dst to build. Registered only in creator mode.
         "app_save" | "app_file" | "app_export" | "app_import" | "app_run" | "app_test"
-        | "skill_save" | "skill_file" => Class::Safe,
+        | "skill_save" | "skill_file" | "skill_rollback" => Class::Safe,
         "edit_file" => {
             let path = crate::tool::str_arg(args, "path").unwrap_or_default();
             if path_is_system(&path) { Class::Danger }
