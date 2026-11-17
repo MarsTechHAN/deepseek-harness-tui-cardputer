@@ -108,6 +108,7 @@ KEYMAP = {
     "CtrlA": b"\x01",
     "CtrlC": b"\x03",
     "CtrlD": b"\x04",
+    "CtrlE": b"\x05",
     "CtrlL": b"\x0c",
     "CtrlO": b"\x0f",
     "CtrlQ": b"\x11",

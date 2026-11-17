@@ -1,0 +1,62 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "This is a deliberately long prompt that should keep the newest characters visible while the beginning scrolls off the single-line input field."
+  },
+  {
+   "wait_quiet": {
+    "quiet_ms": 400,
+    "timeout_ms": 5000
+   }
+  },
+  {
+   "snap": "tail"
+  },
+  {
+   "key": "CtrlA"
+  },
+  {
+   "wait_quiet": {
+    "quiet_ms": 300,
+    "timeout_ms": 3000
+   }
+  },
+  {
+   "snap": "start"
+  },
+  {
+   "key": "CtrlE"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 20000
+   },
+   "snap": "sent"
+  },
+  {
+   "send": "这是一段很长的中文输入测试用来确认宽字符在单行输入框中正确滚动并且提示符不会换行覆盖底部的状态栏内容"
+  },
+  {
+   "wait_quiet": {
+    "quiet_ms": 400,
+    "timeout_ms": 5000
+   }
+  },
+  {
+   "snap": "cjk"
+  },
+  {
+   "key": "CtrlU"
+  }
+ ]
+}

@@ -1,0 +1,44 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "show the release checklist"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "step 3:",
+    "timeout_ms": 15000
+   },
+   "snap": "top"
+  },
+  {
+   "key": "PgDn"
+  },
+  {
+   "wait_ms": 250,
+   "snap": "paged"
+  },
+  {
+   "send": "s"
+  },
+  {
+   "wait_ms": 250,
+   "snap": "saved"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 500,
+   "snap": "dismissed"
+  }
+ ]
+}

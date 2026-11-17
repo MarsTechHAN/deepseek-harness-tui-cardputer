@@ -592,22 +592,55 @@ impl Scr {
         s.push_str("\x1b[1;33m> \x1b[0m");
         let avail = self.cols.saturating_sub(2 + if ring_w > 0 { ring_w + 1 } else { 0 });
         let cur = self.cursor.min(self.input.len());
-        // Scroll window fills backwards from the cursor so it stays visible.
-        let mut w = 0usize;
+        // One-line input window around the cursor: fill backwards for context,
+        // then forwards, and spend one cell per "…" marker when either side is
+        // hidden. Without the forward pass, Ctrl-A on a long prompt printed the
+        // whole string and wrapped over the status row.
+        let mut lead = false;
+        let mut trail = false;
         let mut start_i = cur;
-        while start_i > 0 {
-            let cw = Self::cw(self.input[start_i - 1]);
-            if w + cw > avail {
+        let mut end_i = cur;
+        for _ in 0..3 {
+            let markers = usize::from(lead) + usize::from(trail);
+            let budget = avail.saturating_sub(markers);
+            let mut w = 0usize;
+            start_i = cur;
+            while start_i > 0 {
+                let cw = Self::cw(self.input[start_i - 1]);
+                if w + cw > budget {
+                    break;
+                }
+                w += cw;
+                start_i -= 1;
+            }
+            end_i = cur;
+            while end_i < self.input.len() {
+                let cw = Self::cw(self.input[end_i]);
+                if w + cw > budget {
+                    break;
+                }
+                w += cw;
+                end_i += 1;
+            }
+            let new_lead = start_i > 0;
+            let new_trail = end_i < self.input.len();
+            if (new_lead, new_trail) == (lead, trail) {
                 break;
             }
-            w += cw;
-            start_i -= 1;
+            lead = new_lead;
+            trail = new_trail;
         }
-        let shown: String = self.input[start_i..].iter().collect();
+        if lead {
+            s.push_str("\u{2026}");
+        }
+        let body: String = self.input[start_i..end_i].iter().collect();
         if self.mask {
-            s.push_str(&"*".repeat(shown.chars().count()));
+            s.push_str(&"*".repeat(body.chars().count()));
         } else {
-            s.push_str(&shown);
+            s.push_str(&body);
+        }
+        if trail {
+            s.push_str("\u{2026}");
         }
         s.push_str("\x1b[K");
 
@@ -617,7 +650,7 @@ impl Scr {
             let rcol = self.cols.saturating_sub(ring_w) + 1;
             s.push_str(&format!("\x1b[{};{}H\x1b[90m{}\x1b[0m", self.rows, rcol, ring));
         }
-        let col = 2 + self.input[start_i..cur]
+        let col = 2 + usize::from(lead) + self.input[start_i..cur]
             .iter()
             .map(|c| Self::cw(*c))
             .sum::<usize>();
@@ -763,21 +796,20 @@ impl Scr {
             s.push_str("\x1b[0m\x1b[K\r\n");
         }
         let hidden = a.body.len().saturating_sub(a.scroll + body_rows);
-        let mut footer = if hidden > 0 {
-            format!(
+        // With a save notice, the notice is what the user needs; the key
+        // hints come back once the notice is dismissed (Esc closes the panel).
+        let footer = match &a.notice {
+            Some(n) => format!(" {} | {}", i18n::t("artifact_back"), n),
+            None if hidden > 0 => format!(
                 " {} | {} | s save | {}",
                 i18n::t("artifact_back"),
                 i18n::t("artifact_scroll"),
                 i18n::tf("artifact_more", &[&hidden.to_string()])
-            )
-        } else {
-            format!(" {} | s save", i18n::t("artifact_back"))
+            ),
+            None => format!(" {} | s save", i18n::t("artifact_back")),
         };
-        if let Some(n) = &a.notice {
-            footer = format!("{footer} | {n}");
-        }
         s.push_str("\x1b[90m");
-        s.push_str(&fit(&footer, self.cols));
+        s.push_str(&fit_dots(&footer, self.cols));
         s.push_str("\x1b[0m\x1b[K");
         let mut out = std::io::stdout();
         let _ = out.write_all(s.as_bytes());
@@ -831,7 +863,23 @@ impl Scr {
             Some(b) => match b {
                 b's' | b'S' => {
                     if let Some(a) = self.artifact.as_mut() {
-                        let name = a.title.chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' }).collect::<String>();
+                        // Keep the file name short enough that the saved-path
+                        // notice fits next to the footer's Esc hint on the
+                        // 53-cell panel (long artifact titles used to be cut
+                        // mid-word).
+                        let name: String = a
+                            .title
+                            .chars()
+                            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+                            .take(20)
+                            .collect();
+                        // Prefer a whole-word short name ("Release-checklist")
+                        // over a mid-word cut ("Release-checklist-fo").
+                        let name = match name.rfind('-') {
+                            Some(pos) if pos >= 8 => name[..pos].to_string(),
+                            _ => name,
+                        };
+                        let name = name.trim_end_matches('-').to_string();
                         let path = crate::config::tmp_dir().join(format!("{name}.txt"));
                         let text = a.body.join("\n");
                         match std::fs::write(&path, text) {
@@ -4565,6 +4613,9 @@ speak tool and do not claim you can listen or talk.\n",
                         };
                         crate::compact::compact(&cfg, &manual, &mut m, window, &defs, &mut ui)
                     };
+                    // The manual path call may leave the live status row set
+                    // when it returns early (e.g. "nothing to compact").
+                    scr.live = None;
                     match result {
                         Ok(r) => scr.push(
                             &i18n::tf(

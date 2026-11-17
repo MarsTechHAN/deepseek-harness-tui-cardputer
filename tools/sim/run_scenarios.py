@@ -71,6 +71,13 @@ def request_tool_results(requests):
             if m.get("role") == "tool"]
 
 
+def _cell_width(text):
+    """Display width in terminal cells (CJK/full-width glyphs count as 2)."""
+    import unicodedata
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1
+               for c in text)
+
+
 def read_file(path):
     try:
         return open(path, encoding="utf-8").read()
@@ -692,6 +699,67 @@ def check_goal_status_zh(screens, reqs, work):
     return checks
 
 
+def check_artifact_scroll(screens, reqs, work):
+    top = screens.get("top", "")
+    paged = screens.get("paged", "")
+    saved = screens.get("saved", "")
+    dismissed = screens.get("dismissed", "")
+    tmp = os.path.join(work, "home", ".dst", "tmp")
+    saved_files = []
+    if os.path.isdir(tmp):
+        saved_files = [f for f in os.listdir(tmp) if f.endswith(".txt")]
+    saved_text = ""
+    if saved_files:
+        saved_text = read_file(os.path.join(tmp, saved_files[0]))
+    checks = []
+    checks.append(("Release checklist for the pocket terminal" in top,
+                   "artifact title shown"))
+    checks.append(("more" in top or "scroll" in top,
+                   "footer advertises scrolling while content is hidden"))
+    checks.append(("step 1:" in top and "Checklist" not in paged or
+                   "step 1:" not in paged,
+                   "PgDn scrolls the artifact body"))
+    checks.append((bool(saved_files) and "step 1:" in saved_text
+                   and "step 15:" in saved_text,
+                   "s saves the full artifact body to ~/.dst/tmp"))
+    checks.append(("saved" in saved and "Release-checkli" in saved
+                   and ".txt" in saved,
+                   "save notice renders the full (shortened) path in the footer"))
+    checks.append(("Checklist is on screen." in dismissed,
+                   "Esc returns to the transcript and the turn continues"))
+    return checks
+
+
+def check_long_input(screens, reqs, work):
+    tail = screens.get("tail", "")
+    start = screens.get("start", "")
+    sent = screens.get("sent", "")
+    tail_prompt = next((l for l in tail.splitlines() if l.startswith("> ")), "")
+    start_prompt = next((l for l in start.splitlines() if l.startswith("> ")), "")
+    checks = []
+    checks.append(("input field." in tail_prompt
+                   and "This is a deliberately" not in tail_prompt,
+                   "the newest typed characters stay visible"))
+    checks.append(("> \u2026" in tail_prompt,
+                   "a leading marker shows that earlier text scrolled off"))
+    checks.append(("This is a deliberately" in start_prompt
+                   and "\u2026" in start_prompt
+                   and "input field." not in start_prompt,
+                   "CtrlA shows the start and marks the hidden tail"))
+    checks.append(("This is a deliberately long prompt" in sent,
+                   "the full long prompt is sent as one user message"))
+    checks.append(("Long input accepted." in sent,
+                   "the model answer follows the long prompt"))
+    cjk = screens.get("cjk", "")
+    cjk_prompt = next(
+        (l for l in reversed(cjk.splitlines()) if l.startswith("> ")), "")
+    checks.append(("状态栏内容" in cjk_prompt and "> \u2026" in cjk_prompt,
+                   "wide CJK input scrolls with the same leading marker"))
+    checks.append((_cell_width(cjk_prompt) <= 53,
+                   "the CJK input row stays within the 53-cell panel"))
+    return checks
+
+
 def check_ux(screens, reqs, work):
     after = screens.get("after_turn", "")
     history = screens.get("history", "")
@@ -1131,6 +1199,7 @@ CHECKS = {
     "sandbox_strict": check_sandbox_strict,
     "sandbox_full": check_sandbox_full,
     "jobs": check_jobs,
+    "long_input": check_long_input,
     "watcher": check_watcher,
     "resume_search": check_resume_search,
     "session_menu": check_session_menu,
@@ -1141,6 +1210,7 @@ CHECKS = {
     "goal_manage": check_goal_manage,
     "commands": check_commands,
     "artifact": check_artifact,
+    "artifact_scroll": check_artifact_scroll,
     "goal_blocked": check_goal_blocked,
     "goal": check_goal,
     "compact": check_compact,

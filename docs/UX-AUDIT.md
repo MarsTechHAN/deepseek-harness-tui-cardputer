@@ -14,7 +14,10 @@ asserted in code.
 | --- | --- | --- |
 | Startup | splash art + hint, idle hints, first-run tips | fixed: the hint no longer wraps/clips the 9-row whale with a long model name; tips open with the tagline and are cleared by the first prompt |
 | Onboarding | endpoint menu, sandbox picker | ok: previews explain tradeoffs, rows full width |
+| Input line | long prompts, editing keys, wide CJK text | fixed: the one-line input window scrolls around the cursor with `…` markers on the hidden sides; Ctrl-A on a 136-char prompt used to print the whole string and wrap over the status row |
 | Chat | live thinking, streaming tail, steer marker, injected context | fixed: reasoning wraps at word boundaries; model-facing context (repeat reminders, goal wrap-up) is a one-line marker instead of a dumped paragraph, so the answer stays on screen |
+| Compaction | automatic + manual compact, notices | fixed: `compacted: 1.3K -> 1.2K tokens` keeps one decimal for four-digit counts (instead of a meaningless `1K -> 1K`); a stale `compacting N messages` live row no longer stays on screen after the compaction finishes |
+| Artifact | full-screen panel, scrolled body, save | fixed: the saved-path notice no longer gets cut mid-word (short, whole-word `~/.dst/tmp/<name>.txt` name and the notice replaces the key hints); `artifact_scroll` scenario covers PgDn/search/save |
 | Tools | pending card, result row, CtrlO list, artifact viewer | fixed: the result preview is one ellipsised row (long errors used to be cut mid-word); full text stays in CtrlO |
 | Permissions | strict approval (bash + edit diff) | fixed: `-`/`+` diff lines are coloured red/green; human summary, keys |
 | Commands | palette, help menu, previews, 1/N position | fixed: `/help` dropped a redundant footer row (8 commands visible, was 7) and its hint now reads `Enter run/complete` |
@@ -55,6 +58,12 @@ asserted in code.
   localized one-line marker; the model still receives the full text
 - goal badge glyphs ASCII-safe (`|| Goal paused`, `ok Goal done`); strict-mode
   edit diff coloured red/green
+- long input: cursor-aware one-line window with `…` markers on either hidden
+  side (and cell-width aware for CJK); previously Ctrl-A printed the whole
+  string and overwrote the status row
+- artifact save: whole-word, shortened file name and a notice that replaces the
+  key hints, so the path is never sliced mid-word; footer ellipsised
+- compaction: precise four-digit token counts and no stale "compacting" row
 - provider errors: localized `request failed` line plus a yellow `→` recovery
   hint, retry notice localized, textual rate limits treated as transient;
   `mock_api.py` can now serve scripted HTTP errors and `api_error`/`api_retry`

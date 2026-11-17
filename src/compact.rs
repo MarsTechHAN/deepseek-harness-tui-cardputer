@@ -107,8 +107,17 @@ impl Settings {
 pub fn human_tokens(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
+    } else if n >= 10_000 {
         format!("{}K", n / 1_000)
+    } else if n >= 1_000 {
+        // Four-digit counts keep one decimal so "compacted: 1.4K -> 1K" is
+        // not rounded into a meaningless "1K -> 1K".
+        let tenths = n / 100;
+        if tenths % 10 == 0 {
+            format!("{}K", n / 1_000)
+        } else {
+            format!("{}.{}K", tenths / 10, tenths % 10)
+        }
     } else {
         n.to_string()
     }
@@ -296,6 +305,12 @@ pub fn maybe_compact(
                     &report.pruned.to_string(),
                 ],
             )));
+            // Clear the live "compacting N messages" status row; without this
+            // the finished state kept advertising a compaction in progress.
+            ui.on(Ev::CompactingDone {
+                ok: true,
+                note: String::new(),
+            });
             Some(report)
         }
         Err(e) => {
@@ -583,6 +598,10 @@ mod tests {
     #[test]
     fn human_tokens_formats() {
         assert_eq!(human_tokens(512_000), "512K");
+        assert_eq!(human_tokens(1_000), "1K");
+        assert_eq!(human_tokens(1_500), "1.5K");
+        assert_eq!(human_tokens(9_999), "9.9K");
+        assert_eq!(human_tokens(10_000), "10K");
         assert_eq!(human_tokens(900), "900");
     }
 }

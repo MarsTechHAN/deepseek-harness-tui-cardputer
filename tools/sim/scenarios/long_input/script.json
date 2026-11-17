@@ -1,0 +1,10 @@
+{
+ "responses": [
+  {
+   "reasoning": "long prompt accepted",
+   "content": "Long input accepted.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

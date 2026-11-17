@@ -1,0 +1,25 @@
+{
+ "responses": [
+  {
+   "reasoning": "compose a long checklist",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_art_scroll",
+     "name": "artifact",
+     "arguments": {
+      "title": "Release checklist for the pocket terminal",
+      "body": "step 1: check the power rail\nstep 2: check the panel ribbon\nstep 3: check the keyboard matrix\nstep 4: check the speaker\nstep 5: check the microphone\nstep 6: check the wifi antenna\nstep 7: check the battery\nstep 8: check the sd card\nstep 9: check the usb port\nstep 10: check the boot log\nstep 11: check the systemd units\nstep 12: check the dst binary\nstep 13: check the fbterm font\nstep 14: check the touchpad\nstep 15: check the reset switch"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "panel shown",
+   "content": "Checklist is on screen.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

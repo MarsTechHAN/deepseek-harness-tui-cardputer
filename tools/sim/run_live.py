@@ -316,8 +316,11 @@ def validate(texts, quick):
     if not quick:
         rec = texts["06_recording"]
         need("REC" in rec, "push-to-talk did not show the REC indicator")
+        # The settled screen only keeps the transcript tail, so look for the
+        # end of the mocked dictation rather than its first words.
         voice = " ".join(texts["08_voice_reply"].split())
-        nice(ASR_TEXT in voice, "voice prompt visible in transcript",
+        voice_tail = " ".join(ASR_TEXT.split()[-5:])
+        nice(voice_tail in voice, "voice prompt visible in transcript",
              "mocked ASR transcript not visible")
         tool = texts["05_tool_done"]
         nice("bash" in tool, "tool card rendered",
