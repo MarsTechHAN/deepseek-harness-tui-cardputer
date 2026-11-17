@@ -1556,6 +1556,14 @@ impl Scr {
                                 self.scroll = self.scroll.saturating_sub(page);
                                 continue;
                             }
+                            if seq == "3~" {
+                                // Forward Delete: remove the char under the
+                                // cursor (external keyboards, not the device).
+                                if self.cursor < self.input.len() {
+                                    self.input.remove(self.cursor);
+                                }
+                                continue;
+                            }
                             if seq.starts_with("13;") && !self.input.is_empty() {
                                 let line: String = self.input.iter().collect();
                                 self.input.clear();
@@ -3707,7 +3715,13 @@ fn tool_output_panel(scr: &mut Scr) {
         let items: Vec<MenuItem> = entries
             .iter()
             .map(|(name, content, is_error, secs)| MenuItem {
-                label: format!("{name}  {secs:.1}s"),
+                // Menu rows cannot carry per-row colour; mark failures with
+                // an ASCII "x" so they stand out from successful calls.
+                label: if *is_error {
+                    format!("x {name}  {secs:.1}s")
+                } else {
+                    format!("{name}  {secs:.1}s")
+                },
                 value: if *is_error {
                     format!("error  {}", first_line_short(content, 18))
                 } else {

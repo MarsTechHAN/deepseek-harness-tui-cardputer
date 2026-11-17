@@ -377,8 +377,9 @@ command palette, artifact panel, `rename`+`/resume` session menu across a
 restart, onboarding menu, sandbox auto/strict/full, background jobs, watchers,
 searchable resume, push-to-talk with mocked speech, `speak`, the nine-step
 WeChat login chain, provider auth/rate-limit failures and their recovery, long
-input scrolling (including CJK) and the scrolling artifact viewer) and asserts
-on captured screens *and* on the request log
+input scrolling/editing (including CJK), the multi-entry tool-output viewer and
+the scrolling artifact panel) and asserts on captured screens *and* on the
+request log
 (e.g. that a `<goal_round>` prompt was sent, or that a checkpoint message
 reached the next request). `check_memory.py` samples RSS across a 20-turn
 session, and `run_all.py` runs them together.

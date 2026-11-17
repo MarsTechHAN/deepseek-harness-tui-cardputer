@@ -1,0 +1,57 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "run alpha"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 20000
+   },
+   "snap": "done1"
+  },
+  {
+   "send": "read the missing file"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 20000
+   },
+   "snap": "done2"
+  },
+  {
+   "key": "CtrlO"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "list"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "expanded"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "closed"
+  }
+ ]
+}

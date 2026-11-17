@@ -31,6 +31,95 @@
    "snap": "start"
   },
   {
+   "key": "End"
+  },
+  {
+   "wait_quiet": {
+    "quiet_ms": 300,
+    "timeout_ms": 3000
+   }
+  },
+  {
+   "snap": "end"
+  },
+  {
+   "key": [
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left",
+    "Left"
+   ]
+  },
+  {
+   "wait_quiet": {
+    "quiet_ms": 300,
+    "timeout_ms": 5000
+   }
+  },
+  {
+   "snap": "middle"
+  },
+  {
+   "key": "Home"
+  },
+  {
+   "key": "Delete"
+  },
+  {
+   "wait_quiet": {
+    "quiet_ms": 300,
+    "timeout_ms": 3000
+   }
+  },
+  {
+   "snap": "deleted"
+  },
+  {
+   "send": "T"
+  },
+  {
+   "wait_quiet": {
+    "quiet_ms": 300,
+    "timeout_ms": 3000
+   }
+  },
+  {
    "key": "CtrlE"
   },
   {

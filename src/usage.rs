@@ -168,7 +168,11 @@ pub fn report() -> Vec<String> {
         .unwrap_or(12)
         .max(11);
     let mut out = Vec::new();
-    out.push(format!("{} · {} requests", crate::i18n::t("usage_title"), g.requests));
+    out.push(format!(
+        "{} · {}",
+        crate::i18n::t("usage_title"),
+        crate::i18n::tf("usage_requests", &[&g.requests.to_string()])
+    ));
     out.push(String::new());
     out.push(row(
         l_cache,

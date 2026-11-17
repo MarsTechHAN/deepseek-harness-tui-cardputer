@@ -746,6 +746,21 @@ def check_long_input(screens, reqs, work):
                    and "\u2026" in start_prompt
                    and "input field." not in start_prompt,
                    "CtrlA shows the start and marks the hidden tail"))
+    end = screens.get("end", "")
+    end_prompt = next(
+        (l for l in reversed(end.splitlines()) if l.startswith("> ")), "")
+    checks.append(("input field." in end_prompt and "> \u2026" in end_prompt,
+                   "End jumps back to the tail view"))
+    middle = screens.get("middle", "")
+    mid_prompt = next(
+        (l for l in reversed(middle.splitlines()) if l.startswith("> ")), "")
+    checks.append((mid_prompt.count("\u2026") >= 2,
+                   "a mid-line cursor shows hidden text on both sides"))
+    deleted = screens.get("deleted", "")
+    del_prompt = next(
+        (l for l in reversed(deleted.splitlines()) if l.startswith("> ")), "")
+    checks.append(("> his is a deliberately" in del_prompt,
+                   "Delete removes the character under the cursor"))
     checks.append(("This is a deliberately long prompt" in sent,
                    "the full long prompt is sent as one user message"))
     checks.append(("Long input accepted." in sent,
@@ -757,6 +772,40 @@ def check_long_input(screens, reqs, work):
                    "wide CJK input scrolls with the same leading marker"))
     checks.append((_cell_width(cjk_prompt) <= 53,
                    "the CJK input row stays within the 53-cell panel"))
+    return checks
+
+
+def check_tool_log_multi(screens, reqs, work):
+    done2 = screens.get("done2", "")
+    log = screens.get("list", "")
+    expanded = screens.get("expanded", "")
+    closed = screens.get("closed", "")
+    checks = []
+    checks.append(("Second turn done." in done2, "turns complete around the tool batch"))
+    checks.append(("bash" in log and "read_file" in log and "error" in log.lower(),
+                   "CtrlO lists several outputs and marks the failed one"))
+    checks.append(("read_file (error)" in expanded
+                   and ("No such file" in expanded or "does-not-exist" in expanded
+                        or "cannot read" in expanded),
+                   "Enter opens the failed output with the error title and message"))
+    checks.append(("Second turn done." in closed,
+                   "Esc returns to the transcript"))
+    return checks
+
+
+def check_usage_zh(screens, reqs, work):
+    usage = screens.get("usage", "")
+    checks = []
+    checks.append(("次请求" in usage, "request count is localized"))
+    checks.append(("缓存命中率" in usage and "未缓存输入" in usage,
+                   "usage labels are localized"))
+    checks.append(("上下文" in usage and "上次请求" in usage,
+                   "context row is localized"))
+    checks.append(("requests" not in usage.lower(), "no English count leaks through"))
+    lines = [l for l in usage.splitlines() if l.strip()]
+    checks.append((bool(lines) and lines[0].startswith("用量 |")
+                   and usage.count("用量") == 1,
+                   "the report heading is not duplicated"))
     return checks
 
 
@@ -1180,6 +1229,7 @@ CHECKS = {
     "login_wechat_switch_typing": check_login_wechat_switch_typing,
     "key_overrides_token": check_key_overrides_token,
     "extensions_toggle": check_extensions_toggle,
+    "usage_zh": check_usage_zh,
     "voice_input": check_voice_input,
     "voice_speak": check_voice_speak,
     "queue_edit": check_queue_edit,
@@ -1215,6 +1265,7 @@ CHECKS = {
     "goal": check_goal,
     "compact": check_compact,
     "thinking": check_thinking,
+    "tool_log_multi": check_tool_log_multi,
     "tool_order": check_tool_order,
     "tool_timeout": check_tool_timeout,
     "esc_cancel": check_esc_cancel,

@@ -14,12 +14,13 @@ asserted in code.
 | --- | --- | --- |
 | Startup | splash art + hint, idle hints, first-run tips | fixed: the hint no longer wraps/clips the 9-row whale with a long model name; tips open with the tagline and are cleared by the first prompt |
 | Onboarding | endpoint menu, sandbox picker | ok: previews explain tradeoffs, rows full width |
-| Input line | long prompts, editing keys, wide CJK text | fixed: the one-line input window scrolls around the cursor with `…` markers on the hidden sides; Ctrl-A on a 136-char prompt used to print the whole string and wrap over the status row |
+| Input line | long prompts, editing keys, wide CJK text | fixed: the one-line input window scrolls around the cursor with `…` markers on the hidden sides (both sides for a mid-line cursor); Ctrl-A on a 136-char prompt used to print the whole string and wrap over the status row. Home/End/Ctrl-A/Ctrl-E and forward Delete are covered by the `long_input` scenario |
 | Chat | live thinking, streaming tail, steer marker, injected context | fixed: reasoning wraps at word boundaries; model-facing context (repeat reminders, goal wrap-up) is a one-line marker instead of a dumped paragraph, so the answer stays on screen |
 | Compaction | automatic + manual compact, notices | fixed: `compacted: 1.3K -> 1.2K tokens` keeps one decimal for four-digit counts (instead of a meaningless `1K -> 1K`); a stale `compacting N messages` live row no longer stays on screen after the compaction finishes |
 | Artifact | full-screen panel, scrolled body, save | fixed: the saved-path notice no longer gets cut mid-word (short, whole-word `~/.dst/tmp/<name>.txt` name and the notice replaces the key hints); `artifact_scroll` scenario covers PgDn/search/save |
-| Tools | pending card, result row, CtrlO list, artifact viewer | fixed: the result preview is one ellipsised row (long errors used to be cut mid-word); full text stays in CtrlO |
+| Tools | pending card, result row, CtrlO list, artifact viewer | fixed: the result preview is one ellipsised row (long errors used to be cut mid-word); full text stays in CtrlO. Failed calls carry an ASCII `x` marker in the CtrlO list because rows cannot be coloured individually (`tool_log_multi` scenario) |
 | Permissions | strict approval (bash + edit diff) | fixed: `-`/`+` diff lines are coloured red/green; human summary, keys |
+| Usage | `/usage` report | fixed: the report heading was duplicated (one extra row, now one `usage · N requests` header with a localized request count); labels localize in all six languages (`usage_zh` scenario) |
 | Commands | palette, help menu, previews, 1/N position | fixed: `/help` dropped a redundant footer row (8 commands visible, was 7) and its hint now reads `Enter run/complete` |
 | Config | all 15 rows, numeric prompts, model/judge/edit, extensions | fixed: the third-party capability footer fits 53 cells in all six languages instead of being cut mid-word; menu values keep a 2-cell gap |
 | Sessions | resume list/search/expanded/resumed, rewind list/preview | fixed: resume hint shortened so it no longer truncates |
@@ -64,6 +65,12 @@ asserted in code.
 - artifact save: whole-word, shortened file name and a notice that replaces the
   key hints, so the path is never sliced mid-word; footer ellipsised
 - compaction: precise four-digit token counts and no stale "compacting" row
+- prompt editor: forward Delete (ESC [ 3 ~), Home/End/Ctrl-A/Ctrl-E and
+  mid-line `…` markers; all exercised by `long_input`
+- CtrlO: failed entries marked with `x`; multi-entry list + error expansion
+  covered by `tool_log_multi`
+- `/usage`: single localized header (duplicate title line removed), localized
+  request count; Chinese report verified visually
 - provider errors: localized `request failed` line plus a yellow `→` recovery
   hint, retry notice localized, textual rate limits treated as transient;
   `mock_api.py` can now serve scripted HTTP errors and `api_error`/`api_retry`
@@ -95,5 +102,9 @@ asserted in code.
 - Simulator only: wide CJK glyphs in reverse-video rows can render as boxes in
   PNG captures (pyte + fallback-font interaction); text captures show the real
   characters. Device fonts still need a real-hardware pass.
+- Inline Markdown emphasis (`**bold**`, backticks) is stripped rather than
+  styled: the transcript stores one colour per row, so bold/inline-code would
+  need embedded SGR handling in the wrapper. Headings, lists and fenced code
+  blocks are styled by row kind and verified against a real vLLM answer.
 - Hardware-only checks (physical keyboard/audio/reset double-press, boot time,
   TTS playback interruption) remain for the device regression run.

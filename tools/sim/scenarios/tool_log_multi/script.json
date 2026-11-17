@@ -1,0 +1,43 @@
+{
+ "responses": [
+  {
+   "reasoning": "run alpha",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_ok",
+     "name": "bash",
+     "arguments": {
+      "command": "printf 'alpha-line\\nbeta-line\\n'"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "done",
+   "content": "First turn done.",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "read missing file",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_err",
+     "name": "read_file",
+     "arguments": {
+      "path": "/tmp/dst-does-not-exist.txt"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "error logged",
+   "content": "Second turn done.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

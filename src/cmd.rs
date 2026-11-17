@@ -355,7 +355,9 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             }
         }
         "usage" => {
-            let mut lines = vec![(crate::i18n::t("usage_title").to_string(), KIND_DIM)];
+            // `report()` already opens with "<usage> · N requests"; a separate
+            // heading row duplicated it and cost one of the 12 panel rows.
+            let mut lines = Vec::new();
             for l in crate::usage::report() {
                 lines.push((l, KIND_NORMAL));
             }

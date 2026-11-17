@@ -1,0 +1,8 @@
+{
+ "steps": [
+  {"wait_for": {"text": "dst", "timeout_ms": 10000}},
+  {"send": "/usage"},
+  {"key": "Enter"},
+  {"wait_ms": 500, "snap": "usage"}
+ ]
+}
