@@ -102,6 +102,8 @@ pub struct Scr {
     /// Installed-app count, refreshed at mode/app lifecycle points so the idle
     /// hint can show it without a directory walk on every draw.
     apps_count: usize,
+    /// Set by the artifact viewer when Enter submits (`1`) rather than closing.
+    artifact_action: u8,
     /// Display override for the next request when a prompt app was launched:
     /// the transcript shows this short label instead of the whole prompt body.
     prompt_label: Option<String>,
@@ -177,6 +179,8 @@ struct Artifact {
     scroll: usize,
     /// Transient footer notice (e.g. "saved to ~/.dst/tmp/...").
     notice: Option<String>,
+    /// Enter submits (used when reviewing a prompt app) instead of only closing.
+    submit: bool,
 }
 
 impl Scr {
@@ -216,6 +220,7 @@ impl Scr {
             creator: false,
             apps_count: 0,
             prompt_label: None,
+            artifact_action: 0,
             turn_tools: Vec::new(),
             auto_queue: Vec::new(),
             auto_label: None,
@@ -839,15 +844,20 @@ impl Scr {
         let hidden = a.body.len().saturating_sub(a.scroll + body_rows);
         // With a save notice, the notice is what the user needs; the key
         // hints come back once the notice is dismissed (Esc closes the panel).
-        let footer = match &a.notice {
-            Some(n) => format!(" {} | {}", i18n::t("artifact_back"), n),
-            None if hidden > 0 => format!(
+        let footer = match (&a.notice, a.submit) {
+            (Some(n), _) => format!(" {} | {}", i18n::t("artifact_back"), n),
+            (None, true) => format!(
+                " {} | {} | s save",
+                i18n::t("artifact_send"),
+                i18n::t("artifact_back")
+            ),
+            (None, false) if hidden > 0 => format!(
                 " {} | {} | s save | {}",
                 i18n::t("artifact_back"),
                 i18n::t("artifact_scroll"),
                 i18n::tf("artifact_more", &[&hidden.to_string()])
             ),
-            None => format!(" {} | s save", i18n::t("artifact_back")),
+            (None, false) => format!(" {} | s save", i18n::t("artifact_back")),
         };
         s.push_str("\x1b[90m");
         s.push_str(&fit_dots(&footer, self.cols));
@@ -940,7 +950,17 @@ impl Scr {
                     }
                     true
                 }
-                0x0d | 0x0a | b'q' | 0x03 => {
+                0x0d | 0x0a => {
+                    if let Some(a) = &self.artifact {
+                        if a.submit {
+                            self.artifact_action = 1;
+                        }
+                    }
+                    self.artifact = None;
+                    self.draw();
+                    true
+                }
+                b'q' | 0x03 => {
                     self.artifact = None;
                     self.draw();
                     true
@@ -1265,6 +1285,7 @@ impl Scr {
                         body: lines,
                         scroll: 0,
                         notice: None,
+                        submit: false,
                     });
                     self.draw();
                     return;
@@ -2372,6 +2393,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                     body: lines,
                     scroll: 0,
                     notice: None,
+                    submit: false,
                 });
                 self.scr.draw();
             }
@@ -3872,6 +3894,42 @@ fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                 Some(b'[') => match scr.read_key_timeout() {
                     Some(b'A') => { sel = sel.saturating_sub(1); preview = None; }
                     Some(b'B') => { sel = (sel + 1).min(items.len() - 1); preview = None; }
+                    Some(b'C') => {
+                        // `→` opens the full SKILL.md body in the panel viewer;
+                        // Enter keeps the fast metadata preview.
+                        if let Some(name) = &kinds[sel] {
+                            if let Some(sk) = skills.iter().find(|x| &x.name == name) {
+                                let mut body: Vec<String> = Vec::new();
+                                for line in sk.body.lines() {
+                                    let mut wrapped = Vec::new();
+                                    Scr::wrap_into(&mut wrapped, line, scr.cols);
+                                    if wrapped.is_empty() {
+                                        body.push(String::new());
+                                    } else {
+                                        body.extend(wrapped);
+                                    }
+                                }
+                                if body.is_empty() {
+                                    body.push(String::new());
+                                }
+                                scr.menu = None;
+                                scr.artifact_action = 0;
+                                scr.artifact = Some(Artifact {
+                                    title: format!("skill {}", sk.name),
+                                    body,
+                                    scroll: 0,
+                                    notice: None,
+                                    submit: false,
+                                });
+                                scr.draw();
+                                while scr.artifact.is_some() {
+                                    scr.artifact_keystroke();
+                                }
+                                scr.draw();
+                                preview = None;
+                            }
+                        }
+                    }
                     _ => {}
                 },
                 _ => break,
@@ -3993,7 +4051,7 @@ fn tool_output_panel(scr: &mut Scr) {
                 body.extend(wrapped);
             }
             scr.menu = None;
-            scr.artifact = Some(Artifact { title, body, scroll: 0, notice: None });
+            scr.artifact = Some(Artifact { title, body, scroll: 0, notice: None, submit: false });
             scr.draw();
             return;
         }
@@ -4439,6 +4497,40 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
 
 
 /// Saved-app manager (creator mode): list, preview the annotation, run, delete.
+/// Preview a prompt app's request in the panel viewer. Returns true when the
+/// user pressed Enter to send it; Esc (or q) cancels back to the menu.
+fn review_prompt_app(scr: &mut Scr, app: &crate::apps::App) -> bool {
+    let text = crate::apps::prompt_body(app);
+    let mut body: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let mut wrapped = Vec::new();
+        Scr::wrap_into(&mut wrapped, line, scr.cols);
+        if wrapped.is_empty() {
+            body.push(String::new());
+        } else {
+            body.extend(wrapped);
+        }
+    }
+    if body.is_empty() {
+        body.push(String::new());
+    }
+    scr.menu = None;
+    scr.artifact_action = 0;
+    scr.artifact = Some(Artifact {
+        title: app.title.clone(),
+        body,
+        scroll: 0,
+        notice: None,
+        submit: true,
+    });
+    scr.draw();
+    while scr.artifact.is_some() {
+        scr.artifact_keystroke();
+    }
+    scr.draw();
+    scr.artifact_action == 1
+}
+
 /// Returns a `(label, prompt)` pair when the selected app is a prompt app: the
 /// caller submits it as the next conversation request.
 fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
@@ -4518,6 +4610,7 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
             body,
             scroll: 0,
             notice: None,
+            submit: false,
         });
         scr.draw();
         while scr.artifact.is_some() {
@@ -4706,12 +4799,16 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
                 continue;
             }
             if app.kind == "prompt" {
-                scr.menu = None;
-                for (text, kind) in pending {
-                    scr.push(&text, kind);
+                // Show the request first: Enter sends it, Esc returns to the
+                // menu so the user never submits a prompt app by accident.
+                if review_prompt_app(scr, &app) {
+                    for (text, kind) in pending {
+                        scr.push(&text, kind);
+                    }
+                    scr.draw();
+                    return Some((app.label(), crate::apps::prompt_body(&app)));
                 }
-                scr.draw();
-                return Some((app.label(), crate::apps::prompt_body(&app)));
+                continue;
             }
             scr.menu = None;
             scr.draw();

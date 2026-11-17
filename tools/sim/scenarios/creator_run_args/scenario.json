@@ -29,5 +29,8 @@
    },
    "snap": "after"
   }
- ]
+ ],
+ "env": {
+  "DEEPSEEK_API_KEY": "LEAK-TEST-SECRET"
+ }
 }

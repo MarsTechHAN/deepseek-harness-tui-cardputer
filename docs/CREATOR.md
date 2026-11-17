@@ -139,7 +139,8 @@ Rules:
   turn on, and are loaded with the `skill` tool exactly like hand-installed
   skills.
 - `/extensions` marks model-written skills with a localized `[model]` badge and
-  lets the user manage them: `x` disables/enables (existing), `d` deletes the
+  lets the user manage them: Enter shows the metadata preview, `→` opens the
+  full SKILL.md body in the panel viewer, `x` disables/enables, `d` deletes the
   selected user-owned package after `delete skill <name>? y/n`. Packages under
   `/etc/dst/skills` are read-only (no delete).
 - The injected catalog names the entry (`[sh:run.sh]`), so the model knows which
@@ -280,9 +281,11 @@ model → app_run{name, timeout_s?, args?}
 - The result also tells the model not to repeat the app's content in the chat.
 - Every launch (screen or headless) goes through a bounded wrapper
   (`/bin/sh -c 'ulimit -c 0; ulimit -t 120; ulimit -f 2048; exec "$0" "$@"'`):
-  no core dumps, ≤120 s CPU time, ≤1 MB per file written. Combined with the
-  working directory, per-app `$DST_APP_STATE` and the Esc/timeout backstop this
-  is the enforceable part of the APP CONTRACT.
+  no core dumps, ≤120 s CPU time, ≤1 MB per file written. The environment is **scrubbed**: nothing is inherited from dst except PATH,
+  locale and terminal basics; HOME/TMPDIR point inside `$DST_APP_STATE`
+  (`state/home`, `state/tmp`), so dst's API keys/DSH tokens and config are
+  invisible to the app. Combined with the working directory, per-app state and
+  the Esc/timeout backstop this is the enforceable part of the APP CONTRACT.
 - `kind=prompt` does not take the screen: `app_run` returns PROMPT.md as
   instructions for the model to follow in the current turn, and choosing it in
   `/apps` submits it as the next request (the transcript shows `> prompt app
@@ -312,8 +315,9 @@ model → app_run{name, timeout_s?, args?}
 - A saved app is announced in the transcript on one line: `saved app
   system/battery_viewer`; a model-written skill is announced as `saved skill
   battery-report` and appears in the SKILLS catalog and `/extensions` next turn.
-- Launching a prompt app from `/apps` submits its request as the next turn and
-  marks it `> prompt app <name>` in the transcript.
+- Launching a prompt app from `/apps` first opens its request in the panel
+  viewer (Enter sends, Esc goes back), then submits it as the next turn marked
+  `> prompt app <name>` — an accidental Enter no longer fires a stored prompt.
 - The nudge appears only when the turn actually wrote files through a tool
   (`write_file` / `edit_file` / `app_file` / `skill_file`) and did not call
   `app_save`/`skill_save`; a
@@ -351,7 +355,8 @@ model → app_run{name, timeout_s?, args?}
     a 0 exit and a 3 exit, stderr capture, the full log file on disk, and
     `last test: exit 3` recorded in the broken app's panel.
   - `creator_kinds` — a binary-kind app runs on the panel, a prompt app launched
-    from `/apps` is submitted as the next request and the model follows it.
+    from `/apps` is first previewed (Enter sends, Esc cancels), then submitted as
+    the next request and the model follows it.
   - `creator_build` — model saves `system/battery_viewer` + writes `run.sh`,
     files appear on disk with the annotation, a later turn's system prompt
     contains the app in `INSTALLED APPS` (with its entry file), `/apps` lists it
@@ -359,8 +364,10 @@ model → app_run{name, timeout_s?, args?}
   - `creator_apps_run` — normal mode, user-driven menu: Enter runs a seeded app
     full-screen, the menu comes back, `/` search filters, a doc app opens its
     annotation panel, and leaving the menu shows the run notice (no model).
-  - `creator_run_args` — model `app_run` with `args`: argv arrives in the app and
-    `$DST_APP_STATE` points at the package's state directory.
+  - `creator_run_args` — model `app_run` with `args`: argv arrives in the app,
+    `$DST_APP_STATE` points at the package's state directory, and a probe
+    variable (`DEEPSEEK_API_KEY`) set in dst's environment does not leak into
+    the app; its HOME is `state/home`.
   - `creator_run` — seeded app, model calls `app_run`; the panel shows the app's
     output mid-run, then returns to the TUI with a timeout result; the tool
     card shows the run, and the `/apps` annotation panel records

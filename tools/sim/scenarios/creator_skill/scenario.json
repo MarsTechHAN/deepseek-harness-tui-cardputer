@@ -43,6 +43,19 @@
    "snap": "ext_list"
   },
   {
+   "key": "Right"
+  },
+  {
+   "wait_ms": 450,
+   "snap": "ext_body"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
    "send": "d"
   },
   {

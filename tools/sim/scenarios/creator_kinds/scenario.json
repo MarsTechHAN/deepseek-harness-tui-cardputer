@@ -43,7 +43,14 @@
    "key": "Down"
   },
   {
-   "key": "Enter"
+   "key": "Enter",
+   "wait_ms": 500,
+   "snap": "review"
+  },
+  {
+   "key": "Enter",
+   "wait_ms": 600,
+   "snap": "prompt_sent"
   },
   {
    "wait_ms": 600,

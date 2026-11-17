@@ -942,16 +942,13 @@ fn run_headless(app: &App, args: &str, stdin_text: &str, timeout_s: u64) -> Resu
     let state_dir = app.dir.join("state");
     let _ = std::fs::create_dir_all(&state_dir);
     let started = std::time::Instant::now();
-    let mut child = app_command(&prog, &argv)
-        .current_dir(&app.dir)
-        .env("DST_APP", app.label())
-        .env("DST_APP_DIR", &app.dir)
-        .env("DST_APP_STATE", &state_dir)
-        .env("DST_COLS", "53")
-        .env("DST_ROWS", "12")
-        .stdin(Stdio::piped())
+    let mut cmd = app_command(&prog, &argv);
+    cmd.current_dir(&app.dir);
+    app_env(&mut cmd, app, &state_dir);
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("could not start app '{}' ({prog}): {e}", app.label()))?;
     if let Some(mut stdin) = child.stdin.take() {
@@ -1354,6 +1351,37 @@ fn app_command(prog: &str, argv: &[String]) -> Command {
     cmd
 }
 
+/// Environment for an app process: a minimal, scrubbed environment with its
+/// own HOME/TMPDIR inside the package state. dst's own environment can hold
+/// credentials (API keys, DSH tokens), so nothing is inherited except PATH,
+/// locale and terminal basics.
+fn app_env(cmd: &mut Command, app: &App, state_dir: &Path) {
+    let home = state_dir.join("home");
+    let tmp = state_dir.join("tmp");
+    let _ = std::fs::create_dir_all(&home);
+    let _ = std::fs::create_dir_all(&tmp);
+    let path = std::env::var("PATH").unwrap_or_else(|_| {
+        "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string()
+    });
+    cmd.env_clear()
+        .env("PATH", path)
+        .env("HOME", &home)
+        .env("TMPDIR", &tmp)
+        .env("SHELL", "/bin/sh")
+        .env("TERM", "xterm-256color")
+        .env("COLORTERM", "truecolor")
+        .env("DST_APP", app.label())
+        .env("DST_APP_DIR", &app.dir)
+        .env("DST_APP_STATE", state_dir)
+        .env("DST_COLS", "53")
+        .env("DST_ROWS", "12");
+    for key in ["LANG", "LC_ALL", "TZ"] {
+        if let Ok(v) = std::env::var(key) {
+            cmd.env(key, v);
+        }
+    }
+}
+
 /// Run a saved app on the panel. Restores the screen state the TUI needs.
 pub fn run_on_screen(app: &App, timeout_s: u64) -> Result<String, String> {
     run_on_screen_args(app, timeout_s, "")
@@ -1376,13 +1404,9 @@ pub fn run_on_screen_args(app: &App, timeout_s: u64, args: &str) -> Result<Strin
     // need it, and the raw mode is restored after the app returns).
     stty(&["raw", "-echo", "min", "0", "time", "0", "opost", "onlcr"]);
     let mut cmd = app_command(&prog, &argv);
-    cmd.current_dir(&app.dir)
-        .env("DST_APP", &label)
-        .env("DST_APP_DIR", &app.dir)
-        .env("DST_APP_STATE", &state_dir)
-        .env("DST_COLS", "53")
-        .env("DST_ROWS", "12")
-        .stdin(Stdio::piped())
+    cmd.current_dir(&app.dir);
+    app_env(&mut cmd, app, &state_dir);
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
     let mut child = cmd

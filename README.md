@@ -140,7 +140,8 @@ repository.
   `~/.dst/tmp`), and runs them with `app_run` (`args` + `timeout_s`), which
   takes over the panel full-screen and hands it back when the app exits.
   Launches are bounded by the platform: long-Esc/timeout backstop, cwd + state
-  dir inside the package, and ulimits (no core dumps, CPU time, file size).
+  dir inside the package, ulimits (no core dumps, CPU time, file size) and a
+  scrubbed environment (no credentials inherited; HOME/TMPDIR inside state/).
   Runs and headless tests are recorded back into `app.json` (`last_run` /
   `last_test` with outcome, duration and time), shown in the `/apps` annotation
   panel, and a failed last run/test is flagged in the model's app catalog so it
@@ -152,7 +153,8 @@ repository.
   `APP.md` is read on demand with `read_file`.
 - `/apps` is the user's side: a menu with the app count, `/` search mode that
   filters by name/title/category, `→` opens the full annotation panel (metadata +
-  APP.md), Enter runs (doc apps open their panel), `x` deletes after `y/n`.
+  APP.md), Enter runs (doc apps open their panel; prompt apps are previewed
+  first and Enter sends), `x` deletes after `y/n`.
   Running from the menu comes back to the menu; leaving it prints the run notice.
 - Consensus the platform enforces, not the apps: **long-press Esc always leaves
   an app** and gives the screen back to the chat (the runner watches keyboard
@@ -164,9 +166,9 @@ repository.
   systematic, self-contained package under `~/.dst/skills/<name>/` (SKILL.md
   frontmatter + body + support files, marked `origin: model`). It joins the
   SKILLS catalog on the next turn and is loaded with the `skill` tool, exactly
-  like hand-installed skills. `/extensions` badges model-written skills and lets
-  the user disable (`x`) or delete (`d`, with y/n) them; `/etc/dst/skills` stays
-  read-only.
+  like hand-installed skills. `/extensions` badges model-written skills, opens
+  the full SKILL.md body with `→`, and lets the user disable (`x`) or delete
+  (`d`, with y/n) them; `/etc/dst/skills` stays read-only.
   The prompt spells out the split: app = runnable device thing, skill = complete
   reusable procedure, memory = short fragments/preferences.
 - Only available on the interactive TUI: `app_run` fails cleanly in `--once`,

@@ -1455,6 +1455,10 @@ def check_creator_run_args(screens, reqs, work):
     checks.append(("ARGS: alpha|beta" in screen, "app_run forwards its args as argv"))
     checks.append(("STATE: " in screen and "/state" in screen,
                    "the app gets a writable DST_APP_STATE directory"))
+    checks.append(("SECRET: unset" in screen,
+                   "dst's credentials are not inherited by the app"))
+    checks.append(("HOME: " in screen and "/state/home" in screen,
+                   "the app's HOME is isolated inside the package state"))
     checks.append(("* app_run" in after and "exited (code 0)" in results,
                    "the tool card and result report a clean exit"))
     checks.append(("printed the arguments" in after, "the turn continues after the app"))
@@ -1491,6 +1495,9 @@ def check_creator_skill(screens, reqs, work):
     checks.append(("battery-report" in ext and "battery-probe" in ext
                    and "[model]" in ext,
                    "/extensions marks the model-written skills"))
+    body = screens.get("ext_body", "")
+    checks.append(("skill battery-probe" in body and "Print /sys/class/power_supply" in body,
+                   "Right shows the full SKILL.md body in the viewer"))
     checks.append(("delete skill battery-probe? y/n" in ask,
                    "d asks before deleting a skill package"))
     checks.append((not os.path.isdir(os.path.join(home, ".dst", "skills", "battery-probe"))
@@ -1550,6 +1557,10 @@ def check_creator_kinds(screens, reqs, work):
                    "the tool card records the binary run"))
     checks.append(("Hello binary" in lst and "Report" in lst,
                    "the menu lists binary and prompt apps"))
+    review = screens.get("review", "")
+    checks.append(("three-line status of the device" in review
+                   and "Enter send" in review,
+                   "a prompt app is previewed before sending (Enter sends)"))
     checks.append(("> prompt app tools/report" in sent,
                    "launching a prompt app is marked in the transcript"))
     checks.append(("Run the prompt app 'tools/report'" in texts
