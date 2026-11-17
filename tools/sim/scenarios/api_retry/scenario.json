@@ -1,0 +1,9 @@
+{
+ "steps": [
+  {"wait_for": {"text": "dst", "timeout_ms": 10000}},
+  {"send": "hello"},
+  {"key": "Enter"},
+  {"wait_for": {"text": "retry", "timeout_ms": 20000}, "snap": "retry"},
+  {"wait_stable": {"stable_ms": 900, "timeout_ms": 30000}, "snap": "done"}
+ ]
+}

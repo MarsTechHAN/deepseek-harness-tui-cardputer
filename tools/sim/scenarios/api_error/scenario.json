@@ -1,0 +1,12 @@
+{
+ "steps": [
+  {"wait_for": {"text": "dst", "timeout_ms": 10000}},
+  {"send": "hello"},
+  {"key": "Enter"},
+  {"wait_for": {"text": "request failed", "timeout_ms": 20000}},
+  {"wait_ms": 400, "snap": "error"},
+  {"send": "hello again"},
+  {"key": "Enter"},
+  {"wait_stable": {"stable_ms": 900, "timeout_ms": 20000}, "snap": "recovered"}
+ ]
+}

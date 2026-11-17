@@ -145,6 +145,8 @@ pub enum Ev {
     Note(String),
     /// Informational notice (compaction done, pruned, step budget reached).
     Info(String),
+    /// Actionable recovery hint shown highlighted below an error.
+    Hint(String),
     StepEnd(u32),
     TurnEnd { steps: u32 },
 }
@@ -228,16 +230,17 @@ fn assistant_with_tools(text: &str, calls: &[ToolCall]) -> J {
 }
 
 /// Actionable next step for a failed request, shown as a dim info line.
+/// i18n key of the recovery hint for a provider error, if one is known.
 fn actionable_hint(message: &str) -> Option<&'static str> {
     let m = message.to_ascii_lowercase();
     if m.contains("401") || m.contains("403") || m.contains("unauthorized")
         || m.contains("invalid api key") || m.contains("authentication")
     {
-        Some("auth failed: use /key or /login to replace the API key")
+        Some("err_hint_auth")
     } else if m.contains("429") || m.contains("rate limit") || m.contains("quota") {
-        Some("rate limited: wait a moment, or /model to pick a different model")
+        Some("err_hint_rate")
     } else if is_transient(message) || m.contains("network") {
-        Some("network trouble: check wifi; Esc works, or /model to switch model")
+        Some("err_hint_network")
     } else {
         None
     }
@@ -256,6 +259,8 @@ fn is_transient(message: &str) -> bool {
         || m.contains("503")
         || m.contains("504")
         || m.contains("429")
+        || m.contains("rate limit")
+        || m.contains("too many requests")
         || m.contains("network")
         || m.contains("stream closed")
         || m.contains("no data from api")
@@ -402,7 +407,7 @@ fn stream_once(
 
         if !cancelled && ui.pump() == Action::Cancel {
             api::kill(chat.pid);
-            ui.on(Ev::Note("cancelled".into()));
+            ui.on(Ev::Info(crate::i18n::t("ui_cancelled").to_string()));
             // Keep draining until the killed curl settles, otherwise the
             // reader thread outlives the turn.
             let deadline = Instant::now();
@@ -449,9 +454,9 @@ pub fn run_turn(
         // user's own config).
         if opts.max_steps > 0 && steps >= opts.max_steps {
             report.limit_hit = true;
-            ui.on(Ev::Info(format!(
-                "step limit reached ({}); stopping this turn",
-                opts.max_steps
+            ui.on(Ev::Info(crate::i18n::tf(
+                "ui_step_limit",
+                &[&opts.max_steps.to_string()],
             )));
             break;
         }
@@ -504,9 +509,13 @@ pub fn run_turn(
                     if let Some(m) = opts.fallbacks.get(attempt as usize - 1) {
                         active.model = m.clone();
                     }
-                    ui.on(Ev::Info(format!(
-                        "transient failure, retry {}/{} (model {})",
-                        attempt, opts.retries, active.model
+                    ui.on(Ev::Info(crate::i18n::tf(
+                        "ui_retry",
+                        &[
+                            &attempt.to_string(),
+                            &opts.retries.to_string(),
+                            &active.model,
+                        ],
                     )));
                     std::thread::sleep(std::time::Duration::from_millis(250 * attempt as u64));
                 }
@@ -521,7 +530,7 @@ pub fn run_turn(
                 // compaction, then retries the same request once.
                 if !was_cancelled && is_context_overflow(&partial.finish) && opts.compact.enabled {
                     ui.on(Ev::Info(
-                        "context overflow reported by the provider; forcing compaction".into(),
+                        crate::i18n::t("ui_context_overflow").to_string(),
                     ));
                     let mut forced = opts.compact.clone();
                     forced.threshold_tokens = 0;
@@ -538,9 +547,12 @@ pub fn run_turn(
                 report.cancelled = was_cancelled;
                 report.failed = !was_cancelled;
                 if !was_cancelled {
-                    ui.on(Ev::Note(format!("request failed: {}", partial.finish)));
-                    if let Some(hint) = actionable_hint(&partial.finish) {
-                        ui.on(Ev::Info(hint.to_string()));
+                    ui.on(Ev::Note(crate::i18n::tf(
+                        "ui_request_failed",
+                        &[&partial.finish],
+                    )));
+                    if let Some(key) = actionable_hint(&partial.finish) {
+                        ui.on(Ev::Hint(crate::i18n::t(key).to_string()));
                     }
                 }
                 ui.on(Ev::StepEnd(steps));
@@ -648,10 +660,10 @@ mod tests {
     use super::*;
     #[test]
     fn actionable_hints_cover_common_failures() {
-        assert!(actionable_hint("API error: 401 unauthorized").unwrap().contains("/key"));
-        assert!(actionable_hint("429 rate limit").unwrap().contains("/model"));
-        assert!(actionable_hint("curl: connection timed out").unwrap().contains("network"));
-        assert!(actionable_hint("stream closed unexpectedly").is_some());
+        assert_eq!(actionable_hint("API error: 401 unauthorized"), Some("err_hint_auth"));
+        assert_eq!(actionable_hint("429 rate limit"), Some("err_hint_rate"));
+        assert_eq!(actionable_hint("curl: connection timed out"), Some("err_hint_network"));
+        assert_eq!(actionable_hint("stream closed unexpectedly"), Some("err_hint_network"));
         assert!(actionable_hint("bad request: invalid tool").is_none());
     }
 }

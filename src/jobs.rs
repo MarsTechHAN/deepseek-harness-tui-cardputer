@@ -215,7 +215,7 @@ fn run_prompt(cfg: &Cfg, tdefs: &J, msgs: &Msgs, scr: &mut crate::Scr, prompt: &
                 }
             }
             Err(e) => {
-                scr.push(&format!("job error: {e}"), crate::K_ERR);
+                scr.push(&crate::i18n::tf("ui_job_error", &[&e.to_string()]), crate::K_ERR);
                 break;
             }
         }

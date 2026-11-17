@@ -1,0 +1,15 @@
+{
+ "steps": [
+  {"wait_for": {"text": "dst", "timeout_ms": 10000}},
+  {"send": "/goal 验证 goal 状态显示"},
+  {"key": "Enter"},
+  {"wait_ms": 150},
+  {"send": "/goal pause"},
+  {"key": "Enter"},
+  {"wait_for": {"text": "已暂停", "timeout_ms": 20000}},
+  {"wait_ms": 300, "snap": "paused"},
+  {"send": "/goal clear"},
+  {"key": "Enter"},
+  {"wait_for": {"text": "已清除", "timeout_ms": 15000}, "snap": "cleared"}
+ ]
+}

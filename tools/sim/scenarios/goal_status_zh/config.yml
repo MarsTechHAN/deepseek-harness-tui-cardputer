@@ -1,0 +1,11 @@
+model: deepseek-flash
+effort: auto
+max_tokens: 1024
+api:
+  key: test
+goal:
+  max_rounds: 2
+context:
+  time: false
+tui:
+  language: zh

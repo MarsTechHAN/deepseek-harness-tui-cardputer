@@ -47,6 +47,11 @@ An entry is a convenience shorthand:
                 "prompt_cache_miss_tokens": 24, "total_tokens": 162}
     }
 
+An entry may fail the HTTP request instead of streaming (dst's provider-error
+path, e.g. bad key or rate limit):
+    {"http_error": {"code": 401, "message": "Authentication Fails",
+                    "type": "authentication_error"}}
+
 For exact control, an entry may instead carry explicit deltas:
     {"events": [
         {"type": "delay", "ms": 100},
@@ -470,6 +475,24 @@ class MockHandler(BaseHTTPRequestHandler):
             "script_entry": None if idx is None else idx + 1,
             "body": body,
         })
+
+        # A script entry can fail the request instead of streaming, e.g.
+        # {"http_error": {"code": 401, "message": "invalid api key"}} to
+        # exercise dst's provider-error path. The request is already logged.
+        http_error = entry.get("http_error") if isinstance(entry, dict) else None
+        if isinstance(http_error, dict):
+            code = int(http_error.get("code", 500))
+            message = str(http_error.get("message", "mock error"))
+            err_type = str(http_error.get("type", "invalid_request_error"))
+            log(f"[mock_api] req {req_no}: http_error {code} {message!r}")
+            state.append_log({
+                "type": "response",
+                "request": req_no,
+                "http_error": code,
+                "message": message,
+            })
+            self.send_error_json(code, message, err_type)
+            return
 
         try:
             if stream:

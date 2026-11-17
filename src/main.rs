@@ -843,7 +843,9 @@ impl Scr {
                                 }
                                 a.notice = Some(i18n::tf("ui_saved", &[&shown]));
                             }
-                            Err(e) => a.notice = Some(format!("save failed: {e}")),
+                            Err(e) => {
+                                a.notice = Some(i18n::tf("ui_save_failed", &[&e.to_string()]))
+                            }
                         }
                         self.draw();
                     }
@@ -962,7 +964,7 @@ impl Scr {
         let rec = match crate::voice::start_recording() {
             Ok(r) => r,
             Err(e) => {
-                self.push(&format!("mic: {e}"), K_ERR);
+                self.push(&i18n::tf("ui_mic_failed", &[&e.to_string()]), K_ERR);
                 return;
             }
         };
@@ -1014,7 +1016,7 @@ impl Scr {
                 self.vlog(&format!("take {secs:.1}s level={level:.4} error={e}"));
                 self.note = None;
                 self.draw();
-                self.push(&format!("asr: {e}"), K_ERR);
+                self.push(&i18n::tf("ui_speech_failed", &[&e.to_string()]), K_ERR);
                 return;
             }
         };
@@ -1143,7 +1145,7 @@ impl Scr {
                             self.push(&i18n::tf("ui_saved_job", &[&id, &shown]), K_DIM);
                             return;
                         }
-                        Err(e) => self.push(&format!("save failed: {e}"), K_ERR),
+                        Err(e) => self.push(&i18n::tf("ui_save_failed", &[&e.to_string()]), K_ERR),
                     }
                 }
                 b'x' | b'X' => {
@@ -1951,6 +1953,7 @@ impl harness::Ui for OnceUi {
             }
             Ev::CompactingDone { ok, note } => eprintln!("[compact {}] {note}", if ok { "ok" } else { "failed" }),
             Ev::Info(n) => eprintln!("[info] {n}"),
+            Ev::Hint(n) => eprintln!("[hint] {n}"),
             Ev::Note(n) => eprintln!("[note] {n}"),
             _ => {}
         }
@@ -2185,6 +2188,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                 }
             }
             Ev::Info(n) => self.scr.push(&n, K_DIM),
+            Ev::Hint(n) => self.scr.push(&format!("\u{2192} {n}"), K_TOOL),
             Ev::Note(n) => self.scr.push(&n, K_ERR),
             _ => {}
         }
@@ -2925,7 +2929,7 @@ fn apply_login_result(scr: &mut Scr, config_rc: &ConfigRc, result: LoginResult) 
                 true
             }
             Err(e) => {
-                scr.push(&format!("保存失败: {e}"), K_ERR);
+                scr.push(&i18n::tf("ui_save_failed", &[&e.to_string()]), K_ERR);
                 false
             }
         }
@@ -3112,7 +3116,7 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc) {
             c.configured = !c.api_key.is_empty();
             match c.save() {
                 Ok(()) => scr.push(i18n::t("onboard_saved"), K_NORM),
-                Err(e) => scr.push(&format!("保存失败: {e}"), K_ERR),
+                Err(e) => scr.push(&i18n::tf("ui_save_failed", &[&e.to_string()]), K_ERR),
             }
         }
         onboarding_sandbox(scr, config_rc);
@@ -3700,7 +3704,7 @@ fn tool_output_panel(scr: &mut Scr) {
                     }
                     scr.push(&i18n::tf("ui_saved_tool", &[&shown]), K_DIM);
                 }
-                Err(e) => scr.push(&format!("save failed: {e}"), K_ERR),
+                Err(e) => scr.push(&i18n::tf("ui_save_failed", &[&e.to_string()]), K_ERR),
             }
             scr.menu = None;
             scr.draw();
@@ -4563,15 +4567,18 @@ speak tool and do not claim you can listen or talk.\n",
                     };
                     match result {
                         Ok(r) => scr.push(
-                            &format!(
-                                "compacted: {} -> {} tokens ({} messages)",
-                                crate::compact::human_tokens(r.before_tokens),
-                                crate::compact::human_tokens(r.after_tokens),
-                                r.dropped_messages
+                            &i18n::tf(
+                                "ui_compact_done",
+                                &[
+                                    &crate::compact::human_tokens(r.before_tokens),
+                                    &crate::compact::human_tokens(r.after_tokens),
+                                    &r.dropped_messages.to_string(),
+                                    &r.pruned.to_string(),
+                                ],
                             ),
                             K_DIM,
                         ),
-                        Err(e) => scr.push(&format!("compaction failed: {e}"), K_ERR),
+                        Err(e) => scr.push(&i18n::tf("ui_compaction_failed", &[&e.to_string()]), K_ERR),
                     }
                 }
                 if out.login {
@@ -4776,10 +4783,7 @@ speak tool and do not claim you can listen or talk.\n",
         if stopped_early {
             if goal::current().map(|g| g.is_active()).unwrap_or(false) {
                 goal::set_armed(false);
-                scr.push(
-                    "goal disarmed after interrupt; /goal resume to continue",
-                    K_DIM,
-                );
+                scr.push(i18n::t("ui_goal_disarmed"), K_DIM);
             }
         }
         if scr.queue.is_empty() && pending_line.is_none() {
@@ -4796,9 +4800,9 @@ speak tool and do not claim you can listen or talk.\n",
                         // user knows why the autonomous run stopped.
                         if now.max_rounds > 0 && now.rounds_started >= now.max_rounds {
                             scr.push(
-                                &format!(
-                                    "goal reached its round limit ({}); /goal resume to continue",
-                                    now.max_rounds
+                                &i18n::tf(
+                                    "ui_goal_round_limit",
+                                    &[&now.max_rounds.to_string()],
                                 ),
                                 K_DIM,
                             );

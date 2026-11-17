@@ -1,0 +1,17 @@
+{
+ "responses": [
+  {
+   "http_error": {
+    "code": 429,
+    "message": "Rate limit exceeded, please try again later",
+    "type": "rate_limit_error"
+   }
+  },
+  {
+   "reasoning": "The retry succeeded.",
+   "content": "Worked after one retry.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

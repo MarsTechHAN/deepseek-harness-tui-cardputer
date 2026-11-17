@@ -279,20 +279,22 @@ pub fn maybe_compact(
         0
     };
     if pruned > 0 && !should_compact(set, msgs, window, cfg.max_tokens as u64) {
-        ui.on(Ev::Info(format!(
-            "pruned {pruned} old tool results; context is under {}-token budget",
-            human_tokens(threshold)
+        ui.on(Ev::Info(crate::i18n::tf(
+            "ui_compact_pruned",
+            &[&pruned.to_string(), &human_tokens(threshold)],
         )));
         return None;
     }
     match compact(cfg, set, msgs, window, defs, ui) {
         Ok(report) => {
-            ui.on(Ev::Info(format!(
-                "compacted: {} -> {} tokens ({} messages, {} pruned)",
-                human_tokens(report.before_tokens),
-                human_tokens(report.after_tokens),
-                report.dropped_messages,
-                report.pruned
+            ui.on(Ev::Info(crate::i18n::tf(
+                "ui_compact_done",
+                &[
+                    &human_tokens(report.before_tokens),
+                    &human_tokens(report.after_tokens),
+                    &report.dropped_messages.to_string(),
+                    &report.pruned.to_string(),
+                ],
             )));
             Some(report)
         }

@@ -422,36 +422,48 @@ waits for the user's next instruction.\n</goal_blocked>",
 /// Human-facing status lines for `/goal` (DSH `renderGoal`).
 pub fn status_lines() -> Vec<String> {
     match load() {
-        None => vec!["No goal is currently set.".into()],
+        None => vec![crate::i18n::t("goal_none_active").into()],
         Some(g) => {
+            let phase = crate::i18n::t(match g.phase {
+                Phase::Active => "goal_phase_active",
+                Phase::Paused => "goal_phase_paused",
+                Phase::Blocked => "goal_phase_blocked",
+                Phase::Complete => "goal_phase_complete",
+            });
             let mut out = vec![
-                "Goal".to_string(),
-                format!("Status: {}", g.phase.as_str()),
+                crate::i18n::t("goal_status_title").to_string(),
+                crate::i18n::tf("goal_status_line", &[phase]),
             ];
             if let Some(r) = &g.blocked_reason {
-                out.push(format!("Blocker: {r}"));
+                out.push(crate::i18n::tf("goal_blocker", &[r]));
             }
-            out.push(format!("Objective: {}", g.objective));
+            out.push(crate::i18n::tf("goal_objective", &[&g.objective]));
             let max = if g.max_rounds == 0 {
-                "unlimited".to_string()
+                crate::i18n::t("unlimited").to_string()
             } else {
                 g.max_rounds.to_string()
             };
-            out.push(format!("Rounds: {}/{}", g.rounds_started, max));
-            out.push(format!(
-                "Activation: {}",
-                if g.armed { "armed" } else { "disarmed" }
+            out.push(crate::i18n::tf(
+                "goal_rounds",
+                &[&g.rounds_started.to_string(), &max],
             ));
+            let armed = crate::i18n::t(if g.armed {
+                "goal_armed"
+            } else {
+                "goal_disarmed_state"
+            });
+            out.push(crate::i18n::tf("goal_activation", &[armed]));
             out.push(String::new());
-            out.push(format!(
-                "Commands: {}",
-                match (g.phase, g.armed) {
-                    (Phase::Active, true) => "/goal edit <objective>, /goal pause, /goal clear",
-                    (Phase::Active, false) => "/goal edit <objective>, /goal resume, /goal clear",
-                    (Phase::Complete, _) => "/goal <objective>, /goal clear",
-                    _ => "/goal edit <objective>, /goal resume, /goal clear",
-                }
-            ));
+            let commands = match (g.phase, g.armed) {
+                (Phase::Active, true) => "/goal edit <objective>, /goal pause, /goal clear",
+                (Phase::Active, false) => "/goal edit <objective>, /goal resume, /goal clear",
+                (Phase::Complete, _) => "/goal <objective>, /goal clear",
+                _ => "/goal edit <objective>, /goal resume, /goal clear",
+            };
+            // Label and syntax on separate rows: the list is 51 cells at most
+            // and stays on one line instead of wrapping its last command.
+            out.push(crate::i18n::t("goal_commands_line").to_string());
+            out.push(format!("  {commands}"));
             out
         }
     }
@@ -469,10 +481,14 @@ pub fn badge() -> Option<String> {
     Some(match g.phase {
         // ASCII-safe state glyphs: U+23F8, U+2298 and U+2713 are missing from
         // the 6x13 panel font and rendered as boxes in the simulator.
-        Phase::Active if g.armed => format!("\u{25ce} Pursuing Goal {budget}"),
-        Phase::Active | Phase::Paused => format!("|| Goal paused {budget}"),
-        Phase::Blocked => "x Goal blocked".to_string(),
-        Phase::Complete => "ok Goal done".to_string(),
+        Phase::Active if g.armed => {
+            format!("\u{25ce} {}", crate::i18n::tf("badge_pursuing", &[&budget]))
+        }
+        Phase::Active | Phase::Paused => {
+            format!("|| {}", crate::i18n::tf("badge_paused", &[&budget]))
+        }
+        Phase::Blocked => format!("x {}", crate::i18n::t("badge_blocked")),
+        Phase::Complete => format!("ok {}", crate::i18n::t("badge_done")),
     })
 }
 

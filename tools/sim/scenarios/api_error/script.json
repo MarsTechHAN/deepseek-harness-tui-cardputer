@@ -1,0 +1,17 @@
+{
+ "responses": [
+  {
+   "http_error": {
+    "code": 401,
+    "message": "Authentication Fails, Your api key: ****test is invalid",
+    "type": "authentication_error"
+   }
+  },
+  {
+   "reasoning": "The retry works.",
+   "content": "Recovered after the auth error.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

@@ -136,21 +136,24 @@ pub fn preview(path: &std::path::Path) -> Vec<String> {
     let mut out = Vec::new();
     let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("");
     out.push(if title.is_empty() {
-        "(untitled session: /rename or ask the model to rename)".to_string()
+        crate::i18n::t("preview_untitled").to_string()
     } else {
-        format!("title: {title}")
+        crate::i18n::tf("preview_title", &[title])
     });
     if let Some(model) = v.get("model").and_then(|x| x.as_str()) {
-        out.push(format!("model: {model}"));
+        out.push(crate::i18n::tf("preview_model", &[model]));
     }
     let msgs = v.get("messages").and_then(|m| m.as_arr()).cloned().unwrap_or_default();
     let user_count = msgs
         .iter()
         .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
         .count();
-    out.push(format!("turns: {user_count} user, {} messages", msgs.len()));
+    out.push(crate::i18n::tf(
+        "preview_turns",
+        &[&user_count.to_string(), &msgs.len().to_string()],
+    ));
     // Recent exchange (newest last), compact enough for the 12-row panel.
-    out.push("recent:".to_string());
+    out.push(crate::i18n::t("preview_recent").to_string());
     let mut recent: Vec<(bool, String)> = Vec::new();
     for m in msgs.iter().rev() {
         let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("");

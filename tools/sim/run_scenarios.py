@@ -649,6 +649,49 @@ def check_steering(screens, reqs, work):
     return checks
 
 
+def check_api_error(screens, reqs, work):
+    error = screens.get("error", "")
+    recovered = screens.get("recovered", "")
+    checks = []
+    checks.append(("request failed" in error, "provider failure shown in the transcript"))
+    checks.append(("401" in error or "Authentication" in error,
+                   "the provider's message is visible"))
+    checks.append(("/key" in error or "/login" in error,
+                   "an actionable auth hint is shown"))
+    checks.append(("Recovered after the auth error." in recovered,
+                   "the next turn works after the error"))
+    checks.append(("> hello again" in recovered, "prompt is usable after the failure"))
+    checks.append((len(reqs) == 2, "the failed request was not retried as transient"))
+    return checks
+
+
+def check_api_retry(screens, reqs, work):
+    retry = screens.get("retry", "")
+    done = screens.get("done", "")
+    checks = []
+    checks.append(("retry 1/2" in retry, "transient failure shows a retry notice"))
+    checks.append(("retry 1/2 (model deepseek-flash)" in retry,
+                   "the retry notice names the attempt budget and model"))
+    checks.append(("Worked after one retry." in done,
+                   "the automatic retry renders the answer"))
+    checks.append((len(reqs) == 2, "exactly one retry request was made"))
+    return checks
+
+
+def check_goal_status_zh(screens, reqs, work):
+    paused = screens.get("paused", "")
+    cleared = screens.get("cleared", "")
+    checks = []
+    checks.append(("状态:已暂停" in paused, "goal status line is localized"))
+    checks.append(("目标:验证 goal 状态显示" in paused, "goal objective row is localized"))
+    checks.append(("激活:已停用" in paused, "goal activation row is localized"))
+    checks.append(("命令:" in paused, "goal command label is localized"))
+    checks.append(("Goal 已暂停" in paused, "paused badge is localized"))
+    checks.append(("Status:" not in paused, "no English status text leaks through"))
+    checks.append(("Goal 已清除" in cleared, "clear feedback is localized"))
+    return checks
+
+
 def check_ux(screens, reqs, work):
     after = screens.get("after_turn", "")
     history = screens.get("history", "")
@@ -1092,6 +1135,9 @@ CHECKS = {
     "resume_search": check_resume_search,
     "session_menu": check_session_menu,
     "onboarding": check_onboarding,
+    "api_error": check_api_error,
+    "api_retry": check_api_retry,
+    "goal_status_zh": check_goal_status_zh,
     "goal_manage": check_goal_manage,
     "commands": check_commands,
     "artifact": check_artifact,

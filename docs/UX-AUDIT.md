@@ -25,8 +25,11 @@ asserted in code.
 | Goal | pursuing / objective / paused / done badges, wrap-up | fixed: state glyphs are ASCII-safe (paused/done rendered as boxes before); the model-facing wrap-up paragraph is now a one-line `+ goal wrap-up …` marker instead of filling the transcript |
 | Login | `/login` menu, direct typing prompts, WeChat QR screen | fixed: choice menus say `select · Enter choose · Esc back` instead of the config-editor wording; three paths, numbered guide left + QR right, live scanned/finishing status, QR validity countdown, `r retry` after repeated failures |
 | Login QA | phone page states, i18n, QR scanability | ok: six-language page, countdown/expired/retry/cancel, QR decodes with jsQR (`https://open.weixin.qq.com/connect/confirm?...`), cancel aborts the flow |
+| Errors | provider 401 (bad key), 429 (rate limit) + automatic retry | fixed: one red `request failed: …` line, a highlighted yellow `→` recovery hint (`/key`, `/login`, `/model`), localized in all six languages; textual rate limits are retried like HTTP 429; the next prompt works normally |
+| Goal status | `/goal` report, badge, commands | fixed: report rows and the bottom-right badge are localized; the command list sits on its own row instead of wrapping its last command |
+| Sessions | resume preview metadata | fixed: title/model/turns/recent labels are localized |
 | Voice | push-to-talk REC, transcript insertion, `speak` tool card, mocked offline | ok: `DST_MOCK_SPEECH=1` fakes ASR/TTS so the whole voice path is reviewable on the simulator; `auto_send_voice` now actually applies |
-| i18n | en, zh, es, ja, de, it menus/help/approval/login pages/command feedback/dynamic labels | ok; every user-visible string is catalog-backed. Beyond the six-language parity test, a unit test now scans `src/*.rs` for literal `i18n::t("…")` keys and fails if the English catalog lacks one (this caught the config-menu hint disappearing when its key was dropped). Note: the simulator's PNG renderer garbles wide glyphs inside reverse-video rows (selected row) — text snapshots and a real terminal are correct |
+| i18n | en, zh, es, ja, de, it menus/help/approval/login pages/command feedback/dynamic labels | ok; every user-visible string is catalog-backed. Beyond the six-language parity test, a unit test now scans `src/*.rs` for literal `i18n::t("…")` keys and fails if the English catalog lacks one (this caught the config-menu hint disappearing when its key was dropped). Runtime notices (request failed, retries, compaction, goal notices, save/mic/speech failures), the `/goal` report/badge and the resume-preview labels are localized too. Note: the simulator's PNG renderer garbles wide glyphs inside reverse-video rows (selected row) — text snapshots and a real terminal are correct |
 
 ## Fixes made during the audit
 
@@ -52,6 +55,12 @@ asserted in code.
   localized one-line marker; the model still receives the full text
 - goal badge glyphs ASCII-safe (`|| Goal paused`, `ok Goal done`); strict-mode
   edit diff coloured red/green
+- provider errors: localized `request failed` line plus a yellow `→` recovery
+  hint, retry notice localized, textual rate limits treated as transient;
+  `mock_api.py` can now serve scripted HTTP errors and `api_error`/`api_retry`
+  scenarios pin the flow down
+- `/goal` status report, goal badge and resume-preview labels localized in six
+  languages; the goal command list is one row (`Commands:` label above it)
 - voice: `auto_send_voice` wired, localized "official API only" error,
   `DST_MOCK_SPEECH` test hooks (ASR/TTS) for the simulator
 - (from earlier rounds) full-width menus, right-aligned values, ellipsised

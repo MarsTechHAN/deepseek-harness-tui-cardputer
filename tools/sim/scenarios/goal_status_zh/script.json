@@ -1,0 +1,9 @@
+{
+ "responses": [
+  {
+   "reasoning": "round 1",
+   "content": "Goal round one done.",
+   "finish_reason": "stop"
+  }
+ ]
+}
