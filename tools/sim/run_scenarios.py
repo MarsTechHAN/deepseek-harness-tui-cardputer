@@ -1326,6 +1326,10 @@ def check_creator_build(screens, reqs, work):
                    "installed catalog reaches the next turn (with its entry file)"))
     checks.append(("App package 'system/battery_viewer' is installed" in texts,
                    "app_save explains the next step to the model"))
+    exported = os.path.join(home, ".dst", "tmp", "app-system-battery_viewer.tar.gz")
+    checks.append(("exported app system/battery_viewer" in texts
+                   and os.path.getsize(exported) > 100,
+                   "app_export packs the package into a tarball"))
     checks.append((len(reqs) == 3, "exactly the scripted requests were made"))
     return checks
 
@@ -1477,6 +1481,9 @@ def check_creator_skill(screens, reqs, work):
     checks = []
     checks.append(("* skill_save" in built and "saved skill battery-report" in built,
                    "skill_save is shown and announced"))
+    results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
+    checks.append(("# Battery report" in results and "package:" in results,
+                   "the skill tool loads a skill written in the same turn"))
     checks.append((md.startswith("---\nname: battery-report\n")
                    and "description: Use when the user asks for a battery status report" in md
                    and "# Battery report" in md,
@@ -1536,6 +1543,9 @@ def check_creator_app_test(screens, reqs, work):
     panel = screens.get("panel", "")
     checks.append(("last test: exit 3" in panel and "last run:" not in panel,
                    "the panel records the headless test (and no screen run)"))
+    lst = screens.get("list", "")
+    checks.append(("tools \u00b7 sh !" in lst,
+                   "the app list flags the failing app with !"))
     checks.append((len(reqs) == 2, "exactly the scripted requests were made"))
     return checks
 

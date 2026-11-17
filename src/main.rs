@@ -4649,9 +4649,27 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
         }
         let items: Vec<MenuItem> = filtered
             .iter()
-            .map(|a| MenuItem {
-                label: if a.title.is_empty() { a.name.clone() } else { a.title.clone() },
-                value: format!("{} · {}", a.category, a.kind),
+            .map(|a| {
+                // A failed last run/test is a user-facing health flag too: one
+                // "!" in the value column without opening the panel.
+                let bad = [&a.last_run, &a.last_test].iter().any(|st| {
+                    st.as_ref()
+                        .map(|r| {
+                            !(r.outcome.is_empty()
+                                || r.outcome == "exit 0"
+                                || r.outcome == "esc")
+                        })
+                        .unwrap_or(false)
+                });
+                MenuItem {
+                    label: if a.title.is_empty() { a.name.clone() } else { a.title.clone() },
+                    value: format!(
+                        "{} · {}{}",
+                        a.category,
+                        a.kind,
+                        if bad { " !" } else { "" }
+                    ),
+                }
             })
             .collect();
         let hint = if let Some(name) = &confirm {

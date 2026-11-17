@@ -25,6 +25,13 @@
       "path": "run.sh",
       "content": "#!/bin/sh\nwhile :; do\n  cap=$(cat /sys/class/power_supply/BAT0/capacity 2>/dev/null || echo 0)\n  echo \"Battery: ${cap}%\"\n  sleep 1\ndone\n"
      }
+    },
+    {
+     "id": "c3",
+     "name": "app_export",
+     "arguments": {
+      "name": "battery_viewer"
+     }
     }
    ]
   },

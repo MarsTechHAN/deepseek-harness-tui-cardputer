@@ -132,6 +132,9 @@ Rules:
   files not rewritten are kept, so a one-file fix does not need a full rebuild.
 - Runtime state goes to a `state/` directory inside the app (`$DST_APP_STATE`),
   so a counter or cache never pollutes APP.md/app.json.
+- `app_export` packs the whole package (manifest, annotation, program, state)
+  into `~/.dst/tmp/app-<category>-<name>.tar.gz` for backups or for copying an
+  app off the device; it is the model-side export path.
 - Model-written skills use the existing skills layout:
   `~/.dst/skills/<name>/{SKILL.md, …supporting files}`; `skill_save` writes the
   frontmatter + body (including `origin: model`), `skill_file` adds support
@@ -143,6 +146,9 @@ Rules:
   full SKILL.md body in the panel viewer, `x` disables/enables, `d` deletes the
   selected user-owned package after `delete skill <name>? y/n`. Packages under
   `/etc/dst/skills` are read-only (no delete).
+- The `skill` tool reloads from disk when the startup catalog misses a name, so
+  a skill the model just wrote can be loaded and followed in the same turn (the
+  SKILLS catalog itself updates on the next turn).
 - The injected catalog names the entry (`[sh:run.sh]`), so the model knows which
   file to rewrite without reading the manifest first. A failed last run/test is
   appended to the catalog line (` (!last test: exit 3)`) so the model knows to
@@ -160,7 +166,7 @@ Rules:
 |---|---|---|
 | system prompt | base | base + `CREATOR MODE` block + installed-app catalog |
 | tools | base set | + `app_save`, `app_file`, `app_test`, `app_run`,
-  `skill_save`, `skill_file` |
+  `app_export`, `skill_save`, `skill_file` |
 | idle hint | `idle_hint` | `creator_hint` (mentions `/apps` and long-Esc) |
 | after a turn | nothing | saved-app notice, or a nudge when files changed but no app was saved |
 | conversation | unchanged | unchanged (apps are additive) |
@@ -299,7 +305,8 @@ model → app_run{name, timeout_s?, args?}
   `creator mode on · apps: ~/.dst/apps (2)` / `creator mode off · 2 apps stay
   installed`, and the idle hint switches immediately.
 - `/apps` is a full-width menu with the app count in the title
-  (`Apps · 3`), rows `Battery viewer   system · sh`, footer
+  (`Apps · 3`), rows `Battery viewer   system · sh` (a `!` after the kind means
+  its last run/test failed), footer
   `↑↓ · Enter run · → read · / search · x delete · Esc`. Enter runs (doc apps
   open their APP.md panel instead); `→` opens the full annotation panel
   (metadata: path/kind/entry/updated/files, then APP.md) for any app; `/`
@@ -349,16 +356,19 @@ model → app_run{name, timeout_s?, args?}
   - `creator_skill` — the model writes skills (`SKILL.md` with frontmatter and
     `origin: model`), the transcript announces them, the next turn's system
     prompt contains them in the SKILLS catalog (no nudge), `/extensions` marks
-    them `[model]`, and `d` + `y` deletes the selected package (only the
-    selected one; the catalog drops it next turn).
+    them `[model]`, `→` shows the full body, the `skill` tool loads a skill in
+    the same turn it was written, and `d` + `y` deletes the selected package
+    (only the selected one; the catalog drops it next turn).
   - `creator_app_test` — two apps tested headlessly: stdout/argv/stdin capture,
     a 0 exit and a 3 exit, stderr capture, the full log file on disk, and
-    `last test: exit 3` recorded in the broken app's panel.
+    `last test: exit 3` recorded in the broken app's panel and a `!` flag on
+    its `/apps` row.
   - `creator_kinds` — a binary-kind app runs on the panel, a prompt app launched
     from `/apps` is first previewed (Enter sends, Esc cancels), then submitted as
     the next request and the model follows it.
   - `creator_build` — model saves `system/battery_viewer` + writes `run.sh`,
-    files appear on disk with the annotation, a later turn's system prompt
+    exports the package with `app_export` and checks the tarball, writes files
+    with the annotation, a later turn's system prompt
     contains the app in `INSTALLED APPS` (with its entry file), `/apps` lists it
     and `→` shows the annotation panel.
   - `creator_apps_run` — normal mode, user-driven menu: Enter runs a seeded app

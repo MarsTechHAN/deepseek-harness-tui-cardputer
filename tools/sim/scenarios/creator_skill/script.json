@@ -21,6 +21,13 @@
       "description": "Use when the user asks to probe the battery node for debugging",
       "instructions": "# Battery probe\n\nPrint /sys/class/power_supply/*/capacity raw values.\n"
      }
+    },
+    {
+     "id": "s3",
+     "name": "skill",
+     "arguments": {
+      "name": "battery-report"
+     }
     }
    ]
   },

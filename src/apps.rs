@@ -1084,6 +1084,57 @@ fn test_render(_a: &J, v: &J) -> String {
     s
 }
 
+fn export_exec(args: &J) -> Result<J, Fail> {
+    let name = str_arg(args, "name").unwrap_or_default();
+    let app = find(&name).ok_or_else(|| {
+        Fail::new(format!(
+            "no app '{name}'; saved apps are listed in INSTALLED APPS"
+        ))
+    })?;
+    let root = apps_dir();
+    let safe: String = app
+        .label()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let dir = crate::config::tmp_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let dest = dir.join(format!("app-{safe}.tar.gz"));
+    let out = Command::new("tar")
+        .arg("-czf")
+        .arg(&dest)
+        .arg("-C")
+        .arg(&root)
+        .arg(app.label())
+        .output()
+        .map_err(|e| Fail::new(format!("tar is not available: {e}")))?;
+    if !out.status.success() {
+        return Err(Fail::new(format!(
+            "tar failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    let bytes = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+    Ok(obj(vec![
+        ("name", J::s(&app.label())),
+        ("path", J::s(&dest.display().to_string())),
+        ("bytes", J::Num(bytes as f64)),
+    ]))
+}
+
+fn export_render(_a: &J, v: &J) -> String {
+    format!(
+        "exported app {} to {} ({} bytes); keep it as a backup or copy it off the device",
+        v.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+        v.get("path").and_then(|x| x.as_str()).unwrap_or(""),
+        v.get("bytes").and_then(|x| x.as_num()).unwrap_or(0.0) as usize
+    )
+}
+
+fn export_present(a: &J) -> String {
+    format!("export {}", str_arg(a, "name").unwrap_or_else(|| "app".into()))
+}
+
 fn test_present(a: &J) -> String {
     format!("test {}", str_arg(a, "name").unwrap_or_else(|| "app".into()))
 }
@@ -1168,6 +1219,23 @@ read_file. This is the model's version of the simulator the developers use.",
             execute: test_exec,
             render: test_render,
             present: test_present,
+            post: None,
+            schema_override: None,
+            dynamic: None,
+        },
+        ToolDef {
+            name: "app_export",
+            description: "Pack a saved app (manifest, annotation, program and state dir) into a \
+.tar.gz under ~/.dst/tmp and return the path. Use it for backups or to hand an app to the user \
+without touching the panel.",
+            params: vec![
+                Param::req("name", "string", "App name or category/name from INSTALLED APPS."),
+            ],
+            concurrency_safe: false,
+            timeout_ms: 20_000,
+            execute: export_exec,
+            render: export_render,
+            present: export_present,
             post: None,
             schema_override: None,
             dynamic: None,
@@ -1790,7 +1858,10 @@ echo hi
     fn tool_defs_cover_the_creator_surface() {
         let defs = tool_defs();
         let names: Vec<&str> = defs.iter().map(|d| d.name).collect();
-        assert_eq!(names, vec!["app_save", "app_file", "app_test", "app_run"]);
+        assert_eq!(
+            names,
+            vec!["app_save", "app_file", "app_test", "app_export", "app_run"]
+        );
         let schema = crate::tool::definitions(&defs).dump();
         assert!(schema.contains("\"kind\""));
         assert!(schema.contains("\"entry\""));

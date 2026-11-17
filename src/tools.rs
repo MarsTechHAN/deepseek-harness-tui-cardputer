@@ -402,14 +402,23 @@ pub fn set_skills(v: Vec<crate::skills::Skill>) {
 
 fn skill_exec(args: &J) -> Result<J, Fail> {
     let name = str_arg(args, "name").ok_or_else(|| Fail::new("missing 'name'"))?;
-    let guard = SKILLS
-        .read()
-        .map_err(|_| Fail::new("skills unavailable"))?;
-    let all = guard.as_ref().ok_or_else(|| Fail::new("no skills loaded"))?;
-    match crate::skills::body_for(all, &name) {
+    let cached = SKILLS.read().ok().and_then(|g| g.clone());
+    // Creator mode lets the model write a skill and use it in the same turn:
+    // fall back to a fresh disk scan when the startup catalog has no match.
+    if let Some(all) = &cached {
+        if let Some(body) = crate::skills::body_for(all, &name) {
+            return Ok(obj(vec![
+                ("name", J::s(&name)),
+                ("body", J::s(&body)),
+            ]));
+        }
+    }
+    let fresh = crate::skills::load_all();
+    match crate::skills::body_for(&fresh, &name) {
         Some(body) => Ok(obj(vec![
             ("name", J::s(&name)),
             ("body", J::s(&body)),
+            ("fresh", J::Bool(true)),
         ])),
         None => Err(Fail::new(format!(
             "unknown skill '{name}' (see the SKILLS section of the prompt)"
