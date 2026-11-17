@@ -65,6 +65,9 @@ pub struct App {
     /// can see whether an app still works without running it.
     pub last_run: Option<RunStamp>,
     pub last_test: Option<RunStamp>,
+    /// Record the app's stdout/stderr to state/last-run.log while it runs.
+    /// Implies a piped stdout (not a tty), so it is for text apps.
+    pub capture: bool,
 }
 
 impl App {
@@ -173,6 +176,9 @@ fn manifest_json(a: &App) -> J {
     if let Some(r) = &a.last_test {
         pairs.push(("last_test", stamp_json(r)));
     }
+    if a.capture {
+        pairs.push(("capture", J::Bool(true)));
+    }
     obj(pairs)
 }
 
@@ -221,6 +227,10 @@ fn parse_manifest(dir: &Path) -> Option<App> {
         dir: dir.to_path_buf(),
         last_run: v.get("last_run").and_then(parse_stamp),
         last_test: v.get("last_test").and_then(parse_stamp),
+        capture: v
+            .get("capture")
+            .map(|b| matches!(b, J::Bool(true)))
+            .unwrap_or(false),
     })
 }
 
@@ -462,14 +472,24 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
 
     let dir = root.join(&category).join(&name);
     let existed = dir.join("app.json").is_file();
-    let (created, version, last_run, last_test) = if existed {
+    let (created, version, last_run, last_test, old_capture) = if existed {
         let old = parse_manifest(&dir).ok_or_else(|| {
             format!("{} already exists but its app.json is unreadable; fix it by hand", dir.display())
         })?;
-        (old.created, old.version.saturating_add(1), old.last_run, old.last_test)
+        (
+            old.created,
+            old.version.saturating_add(1),
+            old.last_run,
+            old.last_test,
+            old.capture,
+        )
     } else {
-        (now_stamp(), 1, None, None)
+        (now_stamp(), 1, None, None, false)
     };
+    let capture = args
+        .get("capture")
+        .map(|b| matches!(b, J::Bool(true)))
+        .unwrap_or(old_capture);
     let app = App {
         name,
         title,
@@ -483,6 +503,7 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
         dir: dir.clone(),
         last_run,
         last_test,
+        capture,
     };
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     chmod(&dir, 0o755);
@@ -784,6 +805,9 @@ the user to see the real full-screen behaviour.\n\
 - app_export / app_import move a package as a .tar.gz under ~/.dst/tmp (backup, copy off the \
 device, restore later); an imported archive must contain exactly one <category>/<name>/ tree \
 and is validated before it is installed (replace=true to overwrite).\n\
+- Set capture=true on an app that prints text and you want the run remembered: dst records its \
+stdout/stderr to state/last-run.log (shown in /apps with `l`) and mentions the path in app_run's \
+result. Capture makes stdout a pipe, not a tty, so do not use it for full-screen TUI apps.\n\
 \n\
 WHAT TO PERSIST — app vs skill vs memory\n\
 - app: something runnable on the device (app_save/app_file, verified with app_test).\n\
@@ -1395,6 +1419,7 @@ you do not rewrite.",
                     &["sh", "python", "binary", "prompt", "doc"],
                 ),
                 Param::opt("entry", "string", "Relative entry file (e.g. run.sh); required unless kind=doc."),
+                Param::opt("capture", "boolean", "Record stdout/stderr of app_run into state/last-run.log and replay it from /apps. Sets stdout to a pipe (not a tty): use for text apps, not full-screen TUIs."),
             ],
             concurrency_safe: false,
             timeout_ms: 10_000,
@@ -1689,6 +1714,89 @@ fn app_env(cmd: &mut Command, app: &App, state_dir: &Path) {
     }
 }
 
+/// Turn captured terminal bytes into a readable log: strip SGR/CSI/OSC
+/// sequences, treat CR as newline and drop backspaces/control codes.
+pub fn strip_for_log(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = String::with_capacity(text.len());
+    let mut it = text.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\x1b' {
+            match it.peek() {
+                Some('[') => {
+                    it.next();
+                    // CSI: parameters/intermediates, then one final byte @..~
+                    while let Some(n) = it.next() {
+                        if ('@'..='~').contains(&n) && n != '[' {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    it.next();
+                    // OSC: terminated by BEL or ESC \\
+                    while let Some(n) = it.next() {
+                        if n == '\x07' || n == '\x1b' {
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    it.next();
+                }
+            }
+            continue;
+        }
+        match c {
+            '\r' => {
+                if it.peek() == Some(&'\n') {
+                    it.next();
+                }
+                out.push('\n');
+            }
+            '\x08' => {
+                out.pop();
+            }
+            c if (c as u32) < 0x20 && c != '\n' && c != '\t' => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn spawn_reader<R: Read + Send + 'static>(
+    mut pipe: R,
+    tx: std::sync::mpsc::Sender<Vec<u8>>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match pipe.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn append_capped(buf: &mut Vec<u8>, chunk: &[u8], cap: usize) {
+    if chunk.len() >= cap {
+        buf.clear();
+        buf.extend_from_slice(&chunk[chunk.len() - cap..]);
+        return;
+    }
+    let overflow = buf.len() + chunk.len();
+    if overflow > cap {
+        let drop = overflow - cap;
+        buf.drain(0..drop.min(buf.len()));
+    }
+    buf.extend_from_slice(chunk);
+}
+
 /// Run a saved app on the panel. Restores the screen state the TUI needs.
 pub fn run_on_screen(app: &App, timeout_s: u64) -> Result<String, String> {
     run_on_screen_args(app, timeout_s, "")
@@ -1713,13 +1821,30 @@ pub fn run_on_screen_args(app: &App, timeout_s: u64, args: &str) -> Result<Strin
     let mut cmd = app_command(&prog, &argv);
     cmd.current_dir(&app.dir);
     app_env(&mut cmd, app, &state_dir);
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+    cmd.stdin(Stdio::piped());
+    if app.capture {
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    } else {
+        cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    }
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("could not start app '{label}' ({prog}): {e}"))?;
     let child_id = child.id();
+    // capture=true: stdout/stderr are pipes; forward bytes to the panel while
+    // keeping the last 64 KB for state/last-run.log.
+    let mut captured: Vec<u8> = Vec::new();
+    let (cap_tx, cap_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let mut readers: Vec<std::thread::JoinHandle<()>> = Vec::new();
+    if app.capture {
+        if let Some(out) = child.stdout.take() {
+            readers.push(spawn_reader(out, cap_tx.clone()));
+        }
+        if let Some(err) = child.stderr.take() {
+            readers.push(spawn_reader(err, cap_tx.clone()));
+        }
+    }
+    drop(cap_tx);
     let mut to_child = match child.stdin.take() {
         Some(s) => s,
         None => {
@@ -1737,6 +1862,11 @@ pub fn run_on_screen_args(app: &App, timeout_s: u64, args: &str) -> Result<Strin
     let mut buf = [0u8; 32];
     let mut stdin = std::io::stdin();
     loop {
+        while let Ok(chunk) = cap_rx.try_recv() {
+            let _ = std::io::stdout().write_all(&chunk);
+            let _ = std::io::stdout().flush();
+            append_capped(&mut captured, &chunk, CAPTURE_CAP);
+        }
         let n = stdin.read(&mut buf).unwrap_or(0);
         if n > 0 {
             for b in &buf[..n] {
@@ -1783,6 +1913,24 @@ pub fn run_on_screen_args(app: &App, timeout_s: u64, args: &str) -> Result<Strin
     }
     let status = status.or_else(|| child.wait().ok());
     drop(to_child);
+    // Capture mode: wait for the readers to reach EOF, flush what is left to
+    // the panel, then persist the readable log next to the app state.
+    let mut log_path: Option<PathBuf> = None;
+    if app.capture {
+        for h in readers {
+            let _ = h.join();
+        }
+        for chunk in cap_rx.try_iter() {
+            let _ = std::io::stdout().write_all(&chunk);
+            let _ = std::io::stdout().flush();
+            append_capped(&mut captured, &chunk, CAPTURE_CAP);
+        }
+        let path = state_dir.join("last-run.log");
+        let text = strip_for_log(&captured);
+        if std::fs::write(&path, &text).is_ok() {
+            log_path = Some(path);
+        }
+    }
     // Long-press Esc: the key keeps auto-repeating until the user releases it.
     // Those trailing ESC bytes would reach the TUI and be read as "cancel the
     // turn", so swallow input until the keyboard has been quiet for 300 ms
@@ -1836,6 +1984,13 @@ pub fn run_on_screen_args(app: &App, timeout_s: u64, args: &str) -> Result<Strin
             ),
         },
     };
+    let mut result = result;
+    if let Some(path) = &log_path {
+        result.push_str(&format!(
+            " Output was recorded to {} (read it with read_file; it is also replayed from /apps with `l`).",
+            path.display()
+        ));
+    }
     Ok(result)
 }
 
@@ -1857,6 +2012,7 @@ mod tests {
             dir: PathBuf::from("/nonexistent"),
             last_run: None,
             last_test: None,
+            capture: false,
         }
     }
 
@@ -2045,6 +2201,21 @@ mod tests {
         let missing = app("x", "sh", "run.sh");
         let err = run_plan_args(&missing, "").unwrap_err();
         assert!(err.contains("missing"), "{err}");
+    }
+
+    #[test]
+    fn captured_output_becomes_a_readable_log() {
+        let out = strip_for_log(b"\x1b[31mred\x1b[0m\r\nplain \x1b[1;32mgreen\x1b[0m\n");
+        assert_eq!(out, "red\nplain green\n");
+        assert!(!out.contains('\x1b'));
+        // A bare CR (progress line) becomes a newline; backspace eats a char.
+        assert_eq!(strip_for_log(b"a\rb"), "a\nb");
+        assert_eq!(strip_for_log(b"ab\x08c"), "ac");
+        let mut buf: Vec<u8> = Vec::new();
+        append_capped(&mut buf, b"12345", 4);
+        assert_eq!(buf, b"2345");
+        append_capped(&mut buf, b"678", 4);
+        assert_eq!(buf, b"5678");
     }
 
     #[test]

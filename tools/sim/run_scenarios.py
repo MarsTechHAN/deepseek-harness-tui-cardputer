@@ -1643,7 +1643,34 @@ def check_creator_skill_rollback(screens, reqs, work):
     return checks
 
 
+
+def check_creator_capture(screens, reqs, work):
+    home = os.path.join(work, "home")
+    log_path = os.path.join(home, ".dst", "apps", "tools", "chatty", "state", "last-run.log")
+    log = read_file(log_path)
+    results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
+    checks = []
+    checks.append(("CHATTY LINE 1" in screens.get("screen", "")
+                   and "CHATTY LINE 2" in screens.get("screen", ""),
+                   "captured stdout is still echoed to the panel"))
+    checks.append(("CHATTY LINE 1" in log and "CHATTY LINE 2" in log and "done" in log,
+                   "stdout is recorded in state/last-run.log"))
+    checks.append(("\x1b" not in log and "progress\ndone" in log,
+                   "the log strips ANSI codes and turns CR progress into lines"))
+    checks.append(("Output was recorded to" in results and "/state/last-run.log" in results,
+                   "the tool result points at the recorded log"))
+    panel = screens.get("log", "")
+    checks.append(("Chatty app \u00b7 log" in panel and "CHATTY LINE 1" in panel,
+                   "/apps 'l' replays the recorded output"))
+    lst = screens.get("list", "")
+    checks.append(("tools \u00b7 sh \u00b7" in lst,
+                   "the launcher shows when the app was last used"))
+    checks.append((len(reqs) == 2, "exactly the scripted requests were made"))
+    return checks
+
+
 CHECKS = {
+    "creator_capture": check_creator_capture,
     "creator_skill_rollback": check_creator_skill_rollback,
     "creator_import": check_creator_import,
     "creator_skill": check_creator_skill,

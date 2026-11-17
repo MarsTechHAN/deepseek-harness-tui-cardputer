@@ -1,0 +1,69 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "run the chatty app"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "CHATTY LINE 2",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "wait_ms": 150,
+   "snap": "screen"
+  },
+  {
+   "wait_for": {
+    "text": "exited (code 0)",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 20000
+   },
+   "snap": "after"
+  },
+  {
+   "send": "/apps"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 450,
+   "snap": "list"
+  },
+  {
+   "send": "l"
+  },
+  {
+   "wait_ms": 500,
+   "snap": "log"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "back"
+  }
+ ]
+}

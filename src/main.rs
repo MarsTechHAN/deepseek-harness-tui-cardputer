@@ -4840,6 +4840,48 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
             confirm = Some(filtered[sel].label());
             continue;
         }
+        if k == b'l' || k == b'L' {
+            // Replay the app's captured stdout/stderr (capture=true runs).
+            let app = filtered[sel].clone();
+            let log_path = app.dir.join("state").join("last-run.log");
+            let text = std::fs::read_to_string(&log_path).unwrap_or_default();
+            let mut body: Vec<String> = Vec::new();
+            if text.trim().is_empty() {
+                Scr::wrap_into(&mut body, i18n::t("apps_no_log"), scr.cols);
+            } else {
+                if let Some(r) = &app.last_run {
+                    body.push(i18n::tf(
+                        "apps_last_run",
+                        &[&r.outcome, &crate::apps::stamp_hhmm(&r.at)],
+                    ));
+                }
+                body.push(String::new());
+                for line in text.lines() {
+                    let mut wrapped = Vec::new();
+                    Scr::wrap_into(&mut wrapped, line, scr.cols);
+                    if wrapped.is_empty() {
+                        body.push(String::new());
+                    } else {
+                        body.extend(wrapped);
+                    }
+                }
+            }
+            scr.menu = None;
+            scr.artifact_action = 0;
+            scr.artifact = Some(Artifact {
+                title: format!("{} · {}", app.title, i18n::t("apps_log")),
+                body,
+                scroll: 0,
+                notice: None,
+                submit: false,
+            });
+            scr.draw();
+            while scr.artifact.is_some() {
+                scr.artifact_keystroke();
+            }
+            scr.draw();
+            continue;
+        }
         if k == b'\r' || k == b'\n' {
             let app = filtered[sel].clone();
             if app.kind == "doc" {

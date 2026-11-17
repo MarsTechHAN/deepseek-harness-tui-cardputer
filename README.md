@@ -146,6 +146,8 @@ repository.
   `last_test` with outcome, duration and time), shown in the `/apps` annotation
   panel (a `!` on the list row marks a failing app), and a failed last run/test
   is flagged in the model's app catalog so it fixes the app before reusing it.
+  A `capture: true` app gets a piped stdout so dst can forward the bytes to the
+  panel *and* record a cleaned `state/last-run.log`; `/apps` `l` replays it.
   `app_export` packs the package into `~/.dst/tmp/app-*.tar.gz` for backups and
   `app_import` restores/validates such an archive (`replace=true` overwrites).
 - A skills-style catalog (`- system/battery_viewer — Battery viewer [sh:run.sh]:
@@ -156,7 +158,8 @@ repository.
 - `/apps` is the user's side: a menu with the app count, `/` search mode that
   filters by name/title/category, `→` opens the full annotation panel (metadata +
   APP.md), Enter runs (doc apps open their panel; prompt apps are previewed
-  first and Enter sends), `x` deletes after `y/n`. Rows are ordered by most
+  first and Enter sends), `x` deletes after `y/n`, `l` replays recorded output.
+  Rows are ordered by most
   recent use and show that time (`system · sh · 18:20`); failing apps carry a
   `!` and the creator idle hint counts them (`creator · 2 apps · 1! · …`).
   Running from the menu comes back to the menu; leaving it prints the run notice.

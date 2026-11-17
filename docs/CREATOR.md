@@ -110,6 +110,7 @@ watchers already cover that); grabbing the framebuffer; a GUI toolkit.
   "description": "Shows the charge level and charging state, refreshed live.",
   "kind": "sh",
   "entry": "run.sh",
+  "capture": false,
   "version": 1,
   "created": "2026-11-17T15:00:00+08:00",
   "updated": "2026-11-17T15:00:00+08:00"
@@ -135,6 +136,10 @@ Rules:
 - `app_export` packs the whole package (manifest, annotation, program, state)
   into `~/.dst/tmp/app-<category>-<name>.tar.gz` for backups or for copying an
   app off the device; it is the model-side export path.
+- `capture: true` makes `app_run` give the app a **piped** stdout/stderr
+  (not a tty) while dst forwards the bytes to the panel and records a cleaned
+  copy (`state/last-run.log`, ANSI/CR stripped) for replay. It is for text
+  apps; full-screen TUI apps should leave it off.
 - `app_import` restores an archive from `~/.dst/tmp`: it extracts into a temp
   dir, requires exactly one `<category>/<name>/` tree with a valid manifest,
   caps the package (200 files / 256 KB) and refuses paths outside the tmp dir;
@@ -294,8 +299,9 @@ model → app_run{name, timeout_s?, args?}
 - The runner owns the keyboard, so an app cannot trap the user even if it
   ignores input. Apps read keys from stdin; their stdout is the panel.
 - The tool result is one line: ran/exit code/Esc/timeout and duration. App
-  output is not captured during `app_run` — the screen is the app's; use
-  `app_test` when the output matters.
+  output is not captured during a normal `app_run` — the screen is the app's;
+  with `capture: true` the bytes are forwarded to the panel *and* written to
+  `state/last-run.log`, and the result names the path.
 - The result also tells the model not to repeat the app's content in the chat.
 - Every launch (screen or headless) goes through a bounded wrapper
   (`/bin/sh -c 'ulimit -c 0; ulimit -t 120; ulimit -f 2048; exec "$0" "$@"'`):
@@ -320,7 +326,7 @@ model → app_run{name, timeout_s?, args?}
   (`Apps · 3`), rows `Battery viewer   system · sh · 18:20` — most recently
   used apps first, with the last-run/test time in the value column (a `!`
   after the kind means its last run/test failed) — footer
-  `↑↓ · Enter run · → read · / search · x delete · Esc`. Enter runs (doc apps
+  `↑↓·Enter run·→ read·l log·/ find·x del·Esc`. Enter runs (doc apps
   open their APP.md panel instead); `→` opens the full annotation panel
   (metadata: path/kind/entry/updated/files, then APP.md) for any app; `/`
   starts search mode (typing filters live by name/title/category, Enter keeps
@@ -337,6 +343,8 @@ model → app_run{name, timeout_s?, args?}
 - A saved app is announced in the transcript on one line: `saved app
   system/battery_viewer`; a model-written skill is announced as `saved skill
   battery-report` and appears in the SKILLS catalog and `/extensions` next turn.
+- `l` in `/apps` replays the selected app's last recorded output
+  (`state/last-run.log`, capture apps only) in the panel viewer.
 - Launching a prompt app from `/apps` first opens its request in the panel
   viewer (Enter sends, Esc goes back), then submits it as the next turn marked
   `> prompt app <name>` — an accidental Enter no longer fires a stored prompt.
@@ -370,6 +378,9 @@ model → app_run{name, timeout_s?, args?}
     transcript notice; no model request.
   - `creator_skill_rollback` — two saves build v1/v2, `skill_rollback` restores
     the v1 body as v3 with the pre-rollback body archived under `.history/v2.md`.
+  - `creator_capture` — a capture app prints ANSI lines and a CR progress line;
+    the panel echoes them, `state/last-run.log` holds cleaned text, the tool
+    result names it, and `/apps` `l` replays it.
   - `creator_import` — restores a seeded `~/.dst/tmp/app-tools-greeter.tar.gz`,
     refuses an archive outside the tmp dir, replaces the installed app with
     `replace=true`, keeps the executable bit, and the app is listed by `/apps`

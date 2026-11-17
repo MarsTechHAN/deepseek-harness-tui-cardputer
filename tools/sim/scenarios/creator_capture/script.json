@@ -1,0 +1,22 @@
+{
+ "responses": [
+  {
+   "reasoning": "Run the chatty app; capture is on.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "c1",
+     "name": "app_run",
+     "arguments": {
+      "name": "chatty",
+      "timeout_s": 10
+     }
+    }
+   ]
+  },
+  {
+   "reasoning": "Done.",
+   "content": "The chatty app ran and its output was recorded."
+  }
+ ]
+}
