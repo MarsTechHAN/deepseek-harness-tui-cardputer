@@ -1275,12 +1275,12 @@ def check_creator_mode(screens, reqs, work):
     checks.append(("Mode" in cfg_normal and "normal" in cfg_normal,
                    "/config shows the Mode row in normal mode"))
     checks.append(("creator mode on" in on, "switching the mode in /config is announced"))
-    checks.append(("creator \u00b7 /apps \u00b7 hold Esc" in on,
+    checks.append(("creator \u00b7" in on and "/apps" in on and "hold Esc" in on,
                    "idle hint switches to the creator hint"))
     checks.append(("Mode" in cfg_creator and "creator" in cfg_creator,
                    "/config shows the Mode row as creator"))
     checks.append(("creator mode off" in off, "creator mode can be switched off"))
-    checks.append(("creator mode on" in again and "creator \u00b7 /apps" in again,
+    checks.append(("creator mode on" in again and "creator \u00b7" in again,
                    "mode switching is repeatable"))
     checks.append(("/creator" not in on and "/creator" not in off,
                    "the mode is not exposed as a command"))
@@ -1322,8 +1322,8 @@ def check_creator_build(screens, reqs, work):
     checks.append(("CREATOR MODE" in sys1 and "INSTALLED APPS (0)" in sys1,
                    "creator prompt injected before any app exists"))
     checks.append(("INSTALLED APPS (1)" in sys3
-                   and "battery_viewer \u2014 Battery viewer [sh]" in sys3,
-                   "installed catalog reaches the next turn"))
+                   and "battery_viewer \u2014 Battery viewer [sh:run.sh]" in sys3,
+                   "installed catalog reaches the next turn (with its entry file)"))
     checks.append(("App package 'system/battery_viewer' is installed" in texts,
                    "app_save explains the next step to the model"))
     checks.append((len(reqs) == 3, "exactly the scripted requests were made"))
@@ -1366,6 +1366,7 @@ def check_creator_apps_zh(screens, reqs, work):
     off = screens.get("off", "")
     on = screens.get("on", "")
     cfg = screens.get("config", "")
+    filtered = screens.get("filter", "")
     checks = []
     checks.append(("\u5e94\u7528" in lst and "\u7535\u6c60\u67e5\u770b\u5668" in lst,
                    "localized app menu lists the CJK app title"))
@@ -1379,10 +1380,12 @@ def check_creator_apps_zh(screens, reqs, work):
                    "creator-off notice localized"))
     checks.append(("\u521b\u4f5c\u8005\u6a21\u5f0f\u5df2\u5f00\u542f" in on,
                    "creator-on notice localized"))
-    checks.append(("\u957f\u6309 Esc \u9000\u51fa\u5e94\u7528" in on,
+    checks.append(("\u957f\u6309 Esc" in on and "/apps" in on,
                    "creator idle hint localized"))
     checks.append(("\u6a21\u5f0f" in cfg and "creator" in cfg,
                    "config mode row localized"))
+    checks.append(("\u7b5b\u9009" in filtered and "\u7535\u6c60\u67e5\u770b\u5668" in filtered,
+                   "search mode filters CJK app titles"))
     ask = screens.get("delete_ask", "")
     deleted = screens.get("deleted", "")
     empty = screens.get("empty", "")
@@ -1412,7 +1415,136 @@ def check_creator_nudge(screens, reqs, work):
     return checks
 
 
+
+def check_creator_apps_run(screens, reqs, work):
+    lst = screens.get("list", "")
+    running = screens.get("running", "")
+    menu_back = screens.get("menu_back", "")
+    after = screens.get("after", "")
+    filtered = screens.get("filtered", "")
+    doc = screens.get("doc", "")
+    back = screens.get("doc_back", "")
+    checks = []
+    checks.append(("Apps \u00b7 2" in lst and "Quick app" in lst and "Notes" in lst,
+                   "the manager lists both apps with a count in the title"))
+    checks.append(("QUICK APP" in running and "creator \u00b7" not in running,
+                   "Enter runs the selected app full-screen"))
+    checks.append(("Apps \u00b7 2" in menu_back,
+                   "the menu comes back after the app returns"))
+    checks.append(("app system/quick returned to dst" in after,
+                   "leaving the menu shows the run notice in the transcript"))
+    checks.append(("Apps \u00b7 1/2" in filtered and "Notes" in filtered
+                   and "Quick app" not in filtered,
+                   "typing filters the app list"))
+    checks.append(("Notes" in doc and "Checklist item one" in doc,
+                   "a doc app opens its annotation in the panel"))
+    checks.append(("Apps \u00b7 1/2" in back,
+                   "Esc leaves the panel back on the filtered menu"))
+    checks.append((len(reqs) == 0, "the whole pass is local (no model request)"))
+    return checks
+
+
+def check_creator_run_args(screens, reqs, work):
+    screen = screens.get("screen", "")
+    after = screens.get("after", "")
+    results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
+    checks = []
+    checks.append(("ARGS: alpha|beta" in screen, "app_run forwards its args as argv"))
+    checks.append(("STATE: " in screen and "/state" in screen,
+                   "the app gets a writable DST_APP_STATE directory"))
+    checks.append(("* app_run" in after and "exited (code 0)" in results,
+                   "the tool card and result report a clean exit"))
+    checks.append(("printed the arguments" in after, "the turn continues after the app"))
+    checks.append((len(reqs) == 2, "exactly the scripted requests were made"))
+    return checks
+
+
+
+def check_creator_skill(screens, reqs, work):
+    built = screens.get("built", "")
+    second = screens.get("second", "")
+    home = os.path.join(work, "home")
+    md = read_file(os.path.join(home, ".dst", "skills", "battery-report", "SKILL.md"))
+    sys3 = system_text(reqs[2]) if len(reqs) > 2 else ""
+    sys1 = system_text(reqs[0]) if reqs else ""
+    checks = []
+    checks.append(("* skill_save" in built and "saved skill battery-report" in built,
+                   "skill_save is shown and announced"))
+    checks.append((md.startswith("---\nname: battery-report\n")
+                   and "description: Use when the user asks for a battery status report" in md
+                   and "# Battery report" in md,
+                   "SKILL.md written with frontmatter and body"))
+    checks.append(("- battery-report:" not in sys1,
+                   "the skill is not in the catalog before it exists"))
+    checks.append(("- battery-report: Use when the user asks for a battery status report" in sys3,
+                   "the new skill joins the SKILLS catalog on the next turn"))
+    checks.append(("creator: files changed but no app saved" not in built,
+                   "saving a skill counts as persisted work (no nudge)"))
+    checks.append(("one skill: battery-report" in second, "the model sees its own skill"))
+    checks.append((len(reqs) == 3, "exactly the scripted requests were made"))
+    return checks
+
+
+def check_creator_app_test(screens, reqs, work):
+    tested = screens.get("tested", "")
+    home = os.path.join(work, "home")
+    results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
+    good_log = read_file(os.path.join(home, ".dst", "tmp", "app-test-tools-good.log"))
+    broken_log = read_file(os.path.join(home, ".dst", "tmp", "app-test-tools-broken.log"))
+    checks = []
+    checks.append(("* app_test" in tested and tested.count("* app_test") >= 2,
+                   "both headless tests are shown as tool cards"))
+    checks.append(("GOOD APP" in results and "arg=--fast" in results
+                   and "stdin=hello from test" in results,
+                   "stdout, argv and piped stdin are captured"))
+    checks.append(("exit=0" in results and "exit=3" in results,
+                   "both exit codes are reported"))
+    checks.append(("BROKEN APP" in results and "cannot continue" in results,
+                   "stderr of the failing app is captured"))
+    checks.append(("creator \u00b7" in tested and "GOOD APP" not in tested,
+                   "app_test stays headless: the chat screen is intact"))
+    checks.append(("GOOD APP" in good_log and "stdout" in good_log,
+                   "the full log file exists for the model to read"))
+    checks.append(("exit=Some(3)" in broken_log or "cannot continue" in broken_log,
+                   "the failing run is logged too"))
+    checks.append((len(reqs) == 2, "exactly the scripted requests were made"))
+    return checks
+
+
+def check_creator_kinds(screens, reqs, work):
+    screen = screens.get("screen", "")
+    after = screens.get("after", "")
+    lst = screens.get("list", "")
+    sent = screens.get("prompt_sent", "")
+    reply = screens.get("prompt_reply", "")
+    results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
+    texts = "\n".join(message_texts(reqs))
+    checks = []
+    checks.append(("BINARY APP OK" in screen and "creator \u00b7" not in screen,
+                   "a binary-kind app takes over the panel"))
+    checks.append(("BINARY APP OK" in results and "exited (code 0)" in results,
+                   "app_test and app_run both report the binary app"))
+    checks.append(("* app_run" in after and "exited (code 0)" in results,
+                   "the tool card records the binary run"))
+    checks.append(("Hello binary" in lst and "Report" in lst,
+                   "the menu lists binary and prompt apps"))
+    checks.append(("> prompt app tools/report" in sent,
+                   "launching a prompt app is marked in the transcript"))
+    checks.append(("Run the prompt app 'tools/report'" in texts
+                   and "three-line status of the device" in texts,
+                   "the prompt app's request reaches the model"))
+    checks.append(("Device status: battery 87%" in reply,
+                   "the model follows the prompt app"))
+    checks.append((len(reqs) == 3, "exactly the scripted requests were made"))
+    return checks
+
+
 CHECKS = {
+    "creator_skill": check_creator_skill,
+    "creator_app_test": check_creator_app_test,
+    "creator_kinds": check_creator_kinds,
+    "creator_apps_run": check_creator_apps_run,
+    "creator_run_args": check_creator_run_args,
     "creator_mode": check_creator_mode,
     "creator_build": check_creator_build,
     "creator_run": check_creator_run,

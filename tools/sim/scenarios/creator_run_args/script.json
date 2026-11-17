@@ -1,0 +1,23 @@
+{
+ "responses": [
+  {
+   "reasoning": "Run the echo app with arguments.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "r1",
+     "name": "app_run",
+     "arguments": {
+      "name": "echoargs",
+      "args": "alpha beta",
+      "timeout_s": 5
+     }
+    }
+   ]
+  },
+  {
+   "reasoning": "Back.",
+   "content": "The echo app printed the arguments I passed."
+  }
+ ]
+}

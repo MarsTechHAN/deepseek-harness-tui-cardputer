@@ -1,0 +1,33 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "run the echo app with alpha and beta"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "ARGS: alpha|beta",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "wait_ms": 150,
+   "snap": "screen"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 20000
+   },
+   "snap": "after"
+  }
+ ]
+}

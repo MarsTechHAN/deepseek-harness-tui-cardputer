@@ -99,6 +99,12 @@ pub struct Scr {
     approval: Option<ApprovalView>,
     /// Creator mode is on: idle hint, app manager and system prompt follow it.
     creator: bool,
+    /// Installed-app count, refreshed at mode/app lifecycle points so the idle
+    /// hint can show it without a directory walk on every draw.
+    apps_count: usize,
+    /// Display override for the next request when a prompt app was launched:
+    /// the transcript shows this short label instead of the whole prompt body.
+    prompt_label: Option<String>,
     /// Tool names called during the current turn (creator-mode nudge).
     turn_tools: Vec<String>,
     /// Messages produced by background watchers: (model text, transcript label).
@@ -208,6 +214,8 @@ impl Scr {
             live: None,
             approval: None,
             creator: false,
+            apps_count: 0,
+            prompt_label: None,
             turn_tools: Vec::new(),
             auto_queue: Vec::new(),
             auto_label: None,
@@ -323,6 +331,11 @@ impl Scr {
                 self.push(&strip_inline(t), K_NORM);
             }
         }
+    }
+
+    /// Re-read the installed-app count for the creator idle hint.
+    pub fn refresh_apps_count(&mut self) {
+        self.apps_count = crate::apps::load().len();
     }
 
     /// Draw the first frame of the animated splash plus the hint line. Used at
@@ -551,7 +564,7 @@ impl Scr {
         // Idle status line doubles as a key-hint area.
         if live_line.is_empty() && !self.busy && self.input.is_empty() && self.scroll == 0 {
             live_line = if self.creator {
-                i18n::t("creator_hint").to_string()
+                i18n::tf("creator_hint", &[&self.apps_count.to_string()])
             } else {
                 i18n::t("idle_hint").to_string()
             };
@@ -2227,8 +2240,9 @@ impl<'a> harness::Ui for TermUi<'a> {
         &mut self,
         app: &crate::apps::App,
         timeout_s: u64,
+        args: &str,
     ) -> Result<String, String> {
-        let result = crate::apps::run_on_screen(app, timeout_s);
+        let result = crate::apps::run_on_screen_args(app, timeout_s, args);
         self.scr.draw();
         result
     }
@@ -4369,7 +4383,9 @@ fn config_menu(scr: &mut Scr, config_rc: &ConfigRc) {
 
 
 /// Saved-app manager (creator mode): list, preview the annotation, run, delete.
-fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) {
+/// Returns a `(label, prompt)` pair when the selected app is a prompt app: the
+/// caller submits it as the next conversation request.
+fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
     let home = std::env::var("HOME").unwrap_or_default();
     let shorten = |p: String| {
         if !home.is_empty() && p.starts_with(&home) {
@@ -4378,10 +4394,79 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) {
             p
         }
     };
+    // Full annotation panel openable from the list (`→` or doc-app Enter).
+    // Metadata first, then the APP.md body without the generated header lines.
+    fn panel_body(app: &crate::apps::App, short_path: String) -> Vec<String> {
+        let mut d = vec![
+            i18n::tf("apps_path", &[&short_path]),
+            i18n::tf("apps_kind", &[&app.kind]),
+        ];
+        if !app.entry.is_empty() {
+            d.push(i18n::tf("apps_entry", &[&app.entry]));
+        }
+        d.push(i18n::tf("apps_updated", &[&app.updated]));
+        let files = crate::apps::files(app);
+        if !files.is_empty() {
+            let joined = files
+                .iter()
+                .take(6)
+                .map(|(n, b)| format!("{n} ({b}B)"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            d.push(i18n::tf("apps_files", &[&joined]));
+        }
+        d.push(String::new());
+        let body = crate::apps::annotation(app);
+        let mut lines: Vec<String> = body
+            .lines()
+            .map(|l| l.trim_end())
+            .filter(|l| {
+                let t = l.trim_start();
+                !t.is_empty()
+                    && !t.starts_with("# ")
+                    && !t.starts_with("**Kind:**")
+                    && !t.starts_with("**Entry:**")
+                    && !t.starts_with("**Path:**")
+            })
+            .map(|l| l.to_string())
+            .collect();
+        if lines.is_empty() {
+            lines.push(app.description.clone());
+        }
+        d.extend(lines);
+        d
+    }
+    fn open_panel(scr: &mut Scr, app: &crate::apps::App, short_path: String) {
+        scr.menu = None;
+        scr.draw();
+        // Wrap here, exactly like the artifact tool does: a raw long APP.md
+        // line would soft-wrap in the terminal and push the title row (and the
+        // top of the metadata) off the 12-row panel.
+        let mut body: Vec<String> = Vec::new();
+        for line in panel_body(app, short_path) {
+            Scr::wrap_into(&mut body, &line, scr.cols);
+        }
+        scr.artifact = Some(Artifact {
+            title: app.title.clone(),
+            body,
+            scroll: 0,
+            notice: None,
+        });
+        scr.draw();
+        while scr.artifact.is_some() {
+            scr.artifact_keystroke();
+        }
+        scr.draw();
+    }
     let mut sel = 0usize;
-    let mut preview: Option<Vec<String>> = None;
     let mut confirm: Option<String> = None;
     let mut pending: Vec<(String, u8)> = Vec::new();
+    // `/` starts search mode so every letter stays available as filter text
+    // (`x` delete / `q` quit never steal the first character of a name).
+    let mut searching = false;
+    let mut filter = String::new();
+    let mut filter_before_search = String::new();
+    let mut utf8: Vec<u8> = Vec::new();
     loop {
         let apps = crate::apps::load();
         if apps.is_empty() {
@@ -4389,66 +4474,51 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) {
             pending.push((i18n::t("cmd_apps_empty").to_string(), K_DIM));
             break;
         }
-        if sel >= apps.len() {
-            sel = apps.len() - 1;
+        let needle = filter.trim().to_lowercase();
+        let filtered: Vec<&crate::apps::App> = apps
+            .iter()
+            .filter(|a| {
+                needle.is_empty()
+                    || a.name.to_lowercase().contains(&needle)
+                    || a.title.to_lowercase().contains(&needle)
+                    || a.category.to_lowercase().contains(&needle)
+            })
+            .collect();
+        if sel >= filtered.len() {
+            sel = filtered.len().saturating_sub(1);
         }
-        let items: Vec<MenuItem> = apps
+        let items: Vec<MenuItem> = filtered
             .iter()
             .map(|a| MenuItem {
                 label: if a.title.is_empty() { a.name.clone() } else { a.title.clone() },
                 value: format!("{} · {}", a.category, a.kind),
             })
             .collect();
-        // The preview shares the 12-row panel with the list: keep it to six
-        // rows (path, kind/entry, updated, blank, two annotation lines) so the
-        // title, the selected row and the footer all stay on screen.
-        let details: Vec<Vec<String>> = apps
-            .iter()
-            .map(|a| {
-                let mut d = vec![
-                    i18n::tf("apps_path", &[&shorten(a.path())]),
-                    i18n::tf("apps_kind", &[&a.kind]),
-                ];
-                if !a.entry.is_empty() {
-                    d.push(i18n::tf("apps_entry", &[&a.entry]));
-                }
-                d.push(i18n::tf("apps_updated", &[&a.updated]));
-                d.push(String::new());
-                let body = crate::apps::annotation(a);
-                let mut lines: Vec<String> = body
-                    .lines()
-                    .map(|l| l.trim())
-                    .filter(|l| !l.is_empty() && !l.starts_with('#'))
-                    .map(|l| l.trim_start_matches("**").trim_end_matches("**").to_string())
-                    .filter(|l| !l.starts_with("Kind:") && !l.starts_with("Entry:") && !l.starts_with("Path:"))
-                    .collect();
-                if lines.is_empty() {
-                    lines.push(a.description.clone());
-                }
-                d.extend(lines.into_iter().take(2));
-                let files = crate::apps::files(a);
-                if !files.is_empty() {
-                    let joined = files
-                        .iter()
-                        .take(4)
-                        .map(|(n, b)| format!("{n} ({b}B)"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    d.push(i18n::tf("apps_files", &[&joined]));
-                }
-                d
-            })
-            .collect();
-        let hint = match &confirm {
-            Some(name) => i18n::tf("apps_delete_ask", &[name]),
-            None => i18n::t("apps_hint").to_string(),
+        let hint = if let Some(name) = &confirm {
+            i18n::tf("apps_delete_ask", &[name])
+        } else if searching {
+            i18n::t("apps_search_hint").to_string()
+        } else if !filter.is_empty() {
+            i18n::tf("apps_filter", &[&filter])
+        } else {
+            i18n::t("apps_hint").to_string()
+        };
+        let title = if filter.is_empty() {
+            format!("{} · {}", i18n::t("apps_title"), apps.len())
+        } else {
+            format!("{} · {}/{}", i18n::t("apps_title"), filtered.len(), apps.len())
+        };
+        let preview = if filtered.is_empty() && !confirm.is_some() {
+            Some(vec![i18n::t("apps_no_match").to_string()])
+        } else {
+            None
         };
         scr.menu = Some(Menu {
-            title: i18n::t("apps_title").into(),
+            title,
             items: items.clone(),
             sel,
             hint,
-            preview: preview.clone(),
+            preview,
         });
         scr.draw();
         let k = match scr.read_key_timeout() {
@@ -4468,26 +4538,74 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) {
                     },
                     None => {}
                 }
-                sel = sel.saturating_sub(0);
-                preview = None;
+            }
+            continue;
+        }
+        if searching {
+            match k {
+                0x1b => {
+                    // Cancel the edit: back to the filter the menu had before.
+                    searching = false;
+                    filter = filter_before_search.clone();
+                    utf8.clear();
+                    sel = 0;
+                }
+                0x0d | 0x0a => {
+                    // Accept the filter: the list stays filtered, keys go back
+                    // to normal (Enter now runs the app).
+                    searching = false;
+                }
+                0x7f | 0x08 => {
+                    filter.pop();
+                    sel = 0;
+                }
+                0x03 => {
+                    searching = false;
+                    filter = filter_before_search.clone();
+                    utf8.clear();
+                    sel = 0;
+                }
+                0x20..=0x7e => {
+                    filter.push(k as char);
+                    sel = 0;
+                }
+                0x80..=0xff => {
+                    utf8.push(k);
+                    if let Ok(text) = std::str::from_utf8(&utf8) {
+                        filter.push_str(text);
+                        utf8.clear();
+                        sel = 0;
+                    }
+                    if utf8.len() > 4 {
+                        utf8.clear();
+                    }
+                }
+                _ => {}
             }
             continue;
         }
         if k == 0x1b {
             match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
-                    Some(b'A') => {
-                        sel = sel.saturating_sub(1);
-                        preview = None;
-                    }
+                    Some(b'A') => sel = sel.saturating_sub(1),
                     Some(b'B') => {
-                        sel = (sel + 1).min(items.len() - 1);
-                        preview = None;
+                        if !items.is_empty() {
+                            sel = (sel + 1).min(items.len() - 1);
+                        }
                     }
-                    Some(b'C') => preview = Some(details[sel].clone()),
+                    Some(b'C') => {
+                        if let Some(app) = filtered.get(sel) {
+                            open_panel(scr, app, shorten(app.path()));
+                        }
+                    }
                     _ => {}
                 },
                 _ => {
+                    if !filter.is_empty() {
+                        filter.clear();
+                        sel = 0;
+                        continue;
+                    }
                     scr.menu = None;
                     break;
                 }
@@ -4498,34 +4616,38 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) {
             scr.menu = None;
             break;
         }
+        if k == b'/' {
+            // Search mode: every letter is filter text, so x/q keep their
+            // normal meaning outside it. `/` edits the current filter.
+            searching = true;
+            filter_before_search = filter.clone();
+            utf8.clear();
+            sel = 0;
+            continue;
+        }
+        if filtered.is_empty() {
+            continue;
+        }
         if k == b'x' || k == b'X' {
-            confirm = Some(apps[sel].label());
+            confirm = Some(filtered[sel].label());
             continue;
         }
         if k == b'\r' || k == b'\n' {
-            let app = apps[sel].clone();
-            scr.menu = None;
-            scr.draw();
+            let app = filtered[sel].clone();
             if app.kind == "doc" {
-                let body = crate::apps::annotation(&app);
-                let lines: Vec<String> = if body.trim().is_empty() {
-                    vec![app.description.clone()]
-                } else {
-                    body.lines().map(|l| l.to_string()).collect()
-                };
-                scr.artifact = Some(Artifact {
-                    title: app.title.clone(),
-                    body: lines,
-                    scroll: 0,
-                    notice: None,
-                });
-                scr.draw();
-                while scr.artifact.is_some() {
-                    scr.artifact_keystroke();
-                }
-                scr.draw();
+                open_panel(scr, &app, shorten(app.path()));
                 continue;
             }
+            if app.kind == "prompt" {
+                scr.menu = None;
+                for (text, kind) in pending {
+                    scr.push(&text, kind);
+                }
+                scr.draw();
+                return Some((app.label(), crate::apps::prompt_body(&app)));
+            }
+            scr.menu = None;
+            scr.draw();
             match crate::apps::run_on_screen(&app, crate::apps::DIRECT_TIMEOUT_S) {
                 Ok(_) => pending.push((i18n::tf("apps_exited", &[&app.label()]), K_DIM)),
                 Err(e) => pending.push((e, K_ERR)),
@@ -4538,6 +4660,7 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) {
         scr.push(&text, kind);
     }
     scr.draw();
+    None
 }
 
 /// One-time, actionable key tips after the first successful configuration.
@@ -4576,6 +4699,7 @@ fn build_registry(caps: config::Capabilities, creator: bool) -> Vec<tool::ToolDe
     reg.extend(mcp::tool_defs());
     if creator {
         reg.extend(apps::tool_defs());
+        reg.extend(skills::tool_defs());
     }
     reg
 }
@@ -4771,7 +4895,7 @@ fn main() {
     // Skills first (their catalog goes into the prompt), then MCP servers
     // (their tools are discovered over JSON-RPC at startup).
     usage::load();
-    let skill_list = skills::load_all();
+    let mut skill_list = skills::load_all();
     tools::set_skills(skill_list.clone());
     mcp::install(mcp::start_all());
     let mut caps_at_start = config_rc.borrow().capabilities();
@@ -4844,6 +4968,9 @@ fn main() {
     scr.speech_ok = config_rc.borrow().capabilities().speech;
     scr.auto_send = config_rc.borrow().auto_send_voice;
     scr.creator = config_rc.borrow().creator;
+    if scr.creator {
+        scr.refresh_apps_count();
+    }
     let mut session_path: Option<std::path::PathBuf> = None;
     raw_mode(true);
     crate::apps::set_screen_available(true);
@@ -5018,6 +5145,7 @@ fn main() {
                         } else {
                             scr.push(&i18n::tf("cmd_creator_off", &[&n]), K_DIM);
                         }
+                        scr.refresh_apps_count();
                     }
                 }
                 if out.model_menu {
@@ -5087,7 +5215,18 @@ fn main() {
                     }
                 }
                 if out.apps_menu {
-                    apps_menu(&mut scr, &config_rc);
+                    if let Some((label, prompt)) = apps_menu(&mut scr, &config_rc) {
+                        if prompt.trim().is_empty() {
+                            scr.push(&i18n::tf("apps_prompt_empty", &[&label]), K_ERR);
+                        } else {
+                            scr.prompt_label = Some(i18n::tf("apps_prompt_run", &[&label]));
+                            pending_line = Some(format!(
+                                "Run the prompt app '{label}' for me and follow its instructions.\n\n{}",
+                                prompt.trim()
+                            ));
+                        }
+                    }
+                    scr.refresh_apps_count();
                 }
                 scr.draw();
                 // `/goal <objective>`, `/goal resume`, `/goal edit` re-arm the
@@ -5128,7 +5267,10 @@ fn main() {
                 Some(l) => scr.push(&l, K_TOOL),
                 None => match &label {
                     Some(l) => scr.push(l, K_TOOL),
-                    None => scr.push(&format!("> {submit}"), K_USER),
+                    None => match scr.prompt_label.take() {
+                        Some(pl) => scr.push(&format!("> {pl}"), K_USER),
+                        None => scr.push(&format!("> {submit}"), K_USER),
+                    },
                 },
             }
             turn_no += 1;
@@ -5143,8 +5285,12 @@ fn main() {
             }
             cfg = api_cfg(&config_rc.borrow());
             refresh_ctx_window(&mut scr, &cfg);
-            // Rebuild the system prompt each turn: creator mode and the
-            // installed-app catalog must be current (mode switch, new app).
+            // Skills can be written by the model in creator mode: re-read the
+            // catalog every turn so a new skill shows up immediately.
+            skill_list = skills::load_all();
+            tools::set_skills(skill_list.clone());
+            // Rebuild the system prompt each turn: creator mode, the installed
+            // app catalog and the skill catalog must all be current.
             {
                 let c = config_rc.borrow();
                 let caps = c.capabilities();
@@ -5188,20 +5334,21 @@ fn main() {
             scr.draw();
             // Creator mode: name what was saved, or say that nothing was.
             if config_rc.borrow().creator {
-                let saved = crate::apps::take_saved();
-                if saved.is_empty() {
+                scr.refresh_apps_count();
+                let saved_apps = crate::apps::take_saved();
+                let saved_skills = crate::skills::take_saved();
+                for (label, _path) in &saved_apps {
+                    scr.push(&i18n::tf("app_saved_notice", &[label]), K_DIM);
+                }
+                for (name, _path) in &saved_skills {
+                    scr.push(&i18n::tf("ui_skill_saved", &[name]), K_DIM);
+                }
+                if saved_apps.is_empty() && saved_skills.is_empty() {
                     let mutated = scr.turn_tools.iter().any(|t| {
-                        matches!(t.as_str(), "write_file" | "edit_file" | "app_file")
+                        matches!(t.as_str(), "write_file" | "edit_file" | "app_file" | "skill_file")
                     });
                     if mutated {
                         scr.push(i18n::t("creator_nudge"), K_DIM);
-                    }
-                } else {
-                    for (label, _path) in saved {
-                        scr.push(
-                            &i18n::tf("app_saved_notice", &[&label]),
-                            K_DIM,
-                        );
                     }
                 }
             }

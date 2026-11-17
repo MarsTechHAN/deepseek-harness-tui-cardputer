@@ -1,0 +1,32 @@
+{
+ "responses": [
+  {
+   "reasoning": "Check the binary app headlessly, then run it for the user.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "k1",
+     "name": "app_test",
+     "arguments": {
+      "name": "hello-bin"
+     }
+    },
+    {
+     "id": "k2",
+     "name": "app_run",
+     "arguments": {
+      "name": "hello-bin"
+     }
+    }
+   ]
+  },
+  {
+   "reasoning": "Ran.",
+   "content": "The binary app ran on the panel."
+  },
+  {
+   "reasoning": "Following the prompt app.",
+   "content": "Device status: battery 87%, storage 21% used, uptime 14 minutes."
+  }
+ ]
+}

@@ -42,6 +42,18 @@
    "key": "Esc"
   },
   {
+   "wait_ms": 300
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 250
+  },
+  {
+   "key": "Esc"
+  },
+  {
    "wait_ms": 250
   },
   {

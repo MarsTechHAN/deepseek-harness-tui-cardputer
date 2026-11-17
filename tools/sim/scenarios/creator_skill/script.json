@@ -1,0 +1,27 @@
+{
+ "responses": [
+  {
+   "reasoning": "This is a reusable procedure worth keeping as a skill.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "s1",
+     "name": "skill_save",
+     "arguments": {
+      "name": "battery-report",
+      "description": "Use when the user asks for a battery status report",
+      "instructions": "# Battery report\n\n1. Read /sys/class/power_supply/*/capacity and status.\n2. Render a three-line summary: level, state, time remaining if known.\n3. End with one actionable line.\n\n## Output format\nBAT 87% discharging\n"
+     }
+    }
+   ]
+  },
+  {
+   "reasoning": "Saved.",
+   "content": "Saved the `battery-report` skill; it joins the SKILLS catalog next turn."
+  },
+  {
+   "reasoning": "Reading the catalog.",
+   "content": "You have one skill: battery-report (battery status report)."
+  }
+ ]
+}

@@ -1,0 +1,3 @@
+#!/bin/sh
+printf 'BINARY APP OK\n'
+sleep 1

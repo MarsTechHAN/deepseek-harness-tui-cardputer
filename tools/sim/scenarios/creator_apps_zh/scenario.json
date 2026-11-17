@@ -27,6 +27,43 @@
    "key": "Esc"
   },
   {
+   "wait_ms": 300
+  },
+  {
+   "send": "/"
+  },
+  {
+   "wait_ms": 250
+  },
+  {
+   "send": "电池"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "filter"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 200
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 250
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 250
+  },
+  {
+   "key": "Esc"
+  },
+  {
    "wait_ms": 250
   },
   {

@@ -118,7 +118,7 @@ fn safe_rel_path(p: &str) -> Option<String> {
 
 fn reserved_name(path: &str) -> bool {
     let p = path.to_ascii_lowercase();
-    p == "app.json" || p == "app.md"
+    p == "app.json" || p == "app.md" || p == "prompt.md"
 }
 
 fn manifest_json(a: &App) -> J {
@@ -149,7 +149,7 @@ fn parse_manifest(dir: &Path) -> Option<App> {
         return None;
     }
     let kind = v.get("kind").and_then(|x| x.as_str()).unwrap_or("doc").to_string();
-    if !matches!(kind.as_str(), "sh" | "python" | "doc") {
+    if !matches!(kind.as_str(), "sh" | "python" | "binary" | "doc" | "prompt") {
         return None;
     }
     Some(App {
@@ -236,6 +236,13 @@ pub fn find(name: &str) -> Option<App> {
     apps.into_iter().find(|a| a.name.eq_ignore_ascii_case(want))
 }
 
+/// The request body of a prompt app (never the generated APP.md header).
+pub fn prompt_body(app: &App) -> String {
+    let body = std::fs::read_to_string(app.dir.join("PROMPT.md"))
+        .unwrap_or_else(|_| annotation(app));
+    body.trim().to_string()
+}
+
 pub fn annotation(app: &App) -> String {
     std::fs::read_to_string(app.dir.join("APP.md")).unwrap_or_default()
 }
@@ -268,13 +275,15 @@ pub fn files(app: &App) -> Vec<(String, u64)> {
 
 fn dir_bytes(dir: &Path) -> u64 {
     let mut total = 0u64;
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for e in rd.flatten() {
-            if let Ok(m) = e.metadata() {
-                if m.is_file() {
-                    total += m.len();
-                }
-            }
+    let rd = match std::fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(_) => return 0,
+    };
+    for e in rd.flatten() {
+        match e.metadata() {
+            Ok(m) if m.is_dir() => total += dir_bytes(&e.path()),
+            Ok(m) if m.is_file() => total += m.len(),
+            _ => {}
         }
     }
     total
@@ -347,11 +356,13 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
         .map(|s| s.trim().to_ascii_lowercase())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "doc".to_string());
-    if !matches!(kind.as_str(), "sh" | "python" | "doc") {
-        return Err(format!("invalid kind '{kind}': use sh, python or doc"));
+    if !matches!(kind.as_str(), "sh" | "python" | "binary" | "doc" | "prompt") {
+        return Err(format!(
+            "invalid kind '{kind}': use sh, python, binary, prompt or doc"
+        ));
     }
     let entry = str_arg(args, "entry").unwrap_or_default();
-    let entry = if kind == "doc" {
+    let entry = if kind == "doc" || kind == "prompt" {
         String::new()
     } else {
         match safe_rel_path(&entry) {
@@ -363,8 +374,11 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
             }
         }
     };
-    if kind != "doc" && entry.is_empty() {
+    if kind != "doc" && kind != "prompt" && entry.is_empty() {
         return Err("missing 'entry': the file app_run will execute".into());
+    }
+    if kind == "binary" && entry.is_empty() {
+        return Err("binary apps need 'entry': the executable file".into());
     }
 
     let dir = root.join(&category).join(&name);
@@ -404,6 +418,13 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
     md.push('\n');
     write_atomic(&dir.join("app.json"), &(manifest_json(&app).dump() + "\n"))?;
     write_atomic(&dir.join("APP.md"), &md)?;
+    // A prompt app's executable content is its prompt; keep it separate from
+    // the human-facing annotation so metadata headers never pollute a request.
+    if app.kind == "prompt" {
+        write_atomic(&dir.join("PROMPT.md"), &format!("{}\n", annotation.trim()))?;
+    } else {
+        let _ = std::fs::remove_file(dir.join("PROMPT.md"));
+    }
     Ok((app, !existed))
 }
 
@@ -491,8 +512,27 @@ fn command_exists(prog: &str) -> bool {
     false
 }
 
-/// Interpreter + argv for running an app on the device.
-pub fn run_plan(app: &App) -> Result<(String, Vec<String>), String> {
+/// Split user/model supplied app arguments into argv tokens.
+fn app_argv(args: &str) -> Vec<String> {
+    args.split_whitespace()
+        .filter(|a| !a.is_empty())
+        .map(|a| a.to_string())
+        .take(32)
+        .collect()
+}
+
+/// Like `run_plan`, with extra arguments appended after the entry file.
+pub fn run_plan_args(app: &App, args: &str) -> Result<(String, Vec<String>), String> {
+    if args.chars().count() > 200 || args.contains('\0') {
+        return Err("app arguments are too long (max 200 characters)".into());
+    }
+    let extra = app_argv(args);
+    let (prog, mut argv) = run_plan_plain(app)?;
+    argv.extend(extra);
+    Ok((prog, argv))
+}
+
+fn run_plan_plain(app: &App) -> Result<(String, Vec<String>), String> {
     let entry = app.dir.join(&app.entry);
     match app.kind.as_str() {
         "sh" => {
@@ -514,7 +554,28 @@ pub fn run_plan(app: &App) -> Result<(String, Vec<String>), String> {
             }
             Ok((prog.to_string(), vec![entry.display().to_string()]))
         }
+        "binary" => {
+            if !entry.is_file() {
+                return Err(format!("entry '{}' is missing; write it with app_file", app.entry));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&entry).map(|m| m.permissions().mode()).unwrap_or(0);
+                if mode & 0o111 == 0 {
+                    return Err(format!(
+                        "entry '{}' is not executable; chmod +x it (e.g. via bash) before app_run",
+                        app.entry
+                    ));
+                }
+            }
+            Ok((entry.display().to_string(), Vec::new()))
+        }
         "doc" => Err("doc apps have no program; open APP.md in /apps instead".into()),
+        "prompt" => Err(
+            "prompt apps are instructions, not programs; app_run returns their prompt for you to follow"
+                .into(),
+        ),
         other => Err(format!("unknown app kind '{other}'")),
     }
 }
@@ -540,11 +601,16 @@ pub fn catalog(apps: &[App]) -> String {
         } else {
             format!(": {}", short(&app.description, 90))
         };
+        let kind = if app.entry.is_empty() {
+            app.kind.clone()
+        } else {
+            format!("{}:{}", app.kind, app.entry)
+        };
         s.push_str(&format!(
             "- {} — {} [{}]{}\n",
             app.label(),
             if app.title.is_empty() { &app.name } else { &app.title },
-            app.kind,
+            kind,
             desc
         ));
     }
@@ -585,7 +651,28 @@ app (kind=doc, APP.md is the content).\n\
 + coreutils (/proc, /sys); python only if the device has it. No installs, no services, no \
 compilation, no full-screen programs that need a GUI toolkit.\n\
 - app_run needs an interactive screen: it fails from background jobs and --once, which is \
-expected.\n\
+expected. It takes optional `args` (space-separated, passed to the entry as argv) and a timeout.\n\
+- App state: write runtime state under $DST_APP_STATE (a `state/` dir inside the app); keep \
+APP.md and app.json free of generated data. Apps draw on stdout (newlines are CRLF-safe) and \
+read keys from stdin; the platform guarantees a long-press of Esc and a timeout.\n\
+- Kinds: sh and python scripts, binary (an executable file), prompt (a reusable request you \
+follow when run; APP.md is the prompt), doc.\n\
+- APP CONTRACT (bounded, the platform enforces what it can): an app owns the whole screen \
+while it runs and dst is paused; it may not change system configuration, install software, \
+start services, or write outside its package/state/tmp; it must exit (0 = success) and leave \
+the screen recoverable (the platform repaints). Never build an app that blocks the keyboard \
+or ignores the Esc/timeout backstop.\n\
+- Verify before you show it: call app_test (headless pipes, captured stdout/stderr/exit, log \
+file under ~/.dst/tmp) and fix failures; test the happy path plus bad input. app_run is for \
+the user to see the real full-screen behaviour.\n\
+\n\
+WHAT TO PERSIST — app vs skill vs memory\n\
+- app: something runnable on the device (app_save/app_file, verified with app_test).\n\
+- skill: a systematic, self-contained engineering package you worked out (procedure, format, \
+checklist, support files) that will be useful again — save it with skill_save/skill_file. It \
+joins the SKILLS catalog next turn and is read with the skill tool.\n\
+- memory: short durable facts or preferences (memory_write); memory is fragments, a skill is \
+a complete procedure. Prefer a skill over dumping a long procedure into memory.\n\
 \n\
 CONSENSUS — the platform guarantees this, you cannot override it\n\
 - Long-press Esc always leaves an app and returns to the chat: the runner watches the \
@@ -701,11 +788,211 @@ fn run_exec(args: &J) -> Result<J, Fail> {
     let timeout = num_arg(args, "timeout_s")
         .unwrap_or(DEFAULT_TIMEOUT_S as f64)
         .clamp(1.0, MAX_TIMEOUT_S as f64) as u64;
-    let result = request_launch(&app, timeout).map_err(Fail::new)?;
+    let extra = str_arg(args, "args").unwrap_or_default();
+    if app.kind == "prompt" {
+        let body = prompt_body(&app);
+        if body.trim().is_empty() {
+            return Err(Fail::new(format!(
+                "prompt app '{}' has an empty APP.md; nothing to follow",
+                app.label()
+            )));
+        }
+        let result = format!(
+            "app '{}' is a prompt app. Follow these instructions now for the current request:\n\n{}",
+            app.label(),
+            body.trim()
+        );
+        return Ok(obj(vec![
+            ("name", J::s(&app.label())),
+            ("result", J::s(&result)),
+        ]));
+    }
+    let result = request_launch(&app, timeout, &extra).map_err(Fail::new)?;
     Ok(obj(vec![
         ("name", J::s(&app.label())),
         ("result", J::s(&result)),
     ]))
+}
+
+/// Outcome of one headless app test (the model's own way of checking an app
+/// without giving it the panel).
+struct HeadlessRun {
+    code: Option<i32>,
+    timed_out: bool,
+    secs: f32,
+    stdout: String,
+    stderr: String,
+    log_path: String,
+    stdout_bytes: usize,
+    stderr_bytes: usize,
+}
+
+const CAPTURE_CAP: usize = 64 * 1024;
+
+fn read_capped(mut r: impl std::io::Read + Send + 'static) -> std::thread::JoinHandle<(Vec<u8>, usize)> {
+    std::thread::spawn(move || {
+        let mut out: Vec<u8> = Vec::new();
+        let mut buf = [0u8; 8192];
+        let mut total = 0usize;
+        loop {
+            match r.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    total += n;
+                    if out.len() < CAPTURE_CAP {
+                        let room = CAPTURE_CAP - out.len();
+                        out.extend_from_slice(&buf[..n.min(room)]);
+                    }
+                }
+            }
+        }
+        (out, total)
+    })
+}
+
+fn run_headless(app: &App, args: &str, stdin_text: &str, timeout_s: u64) -> Result<HeadlessRun, String> {
+    let (prog, argv) = run_plan_args(app, args)?;
+    let state_dir = app.dir.join("state");
+    let _ = std::fs::create_dir_all(&state_dir);
+    let started = std::time::Instant::now();
+    let mut child = app_command(&prog, &argv)
+        .current_dir(&app.dir)
+        .env("DST_APP", app.label())
+        .env("DST_APP_DIR", &app.dir)
+        .env("DST_APP_STATE", &state_dir)
+        .env("DST_COLS", "53")
+        .env("DST_ROWS", "12")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start app '{}' ({prog}): {e}", app.label()))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(stdin_text.as_bytes());
+        let _ = stdin.flush();
+        // Dropping closes the pipe: apps that read until EOF terminate.
+    }
+    let out_thread = child.stdout.take().map(read_capped);
+    let err_thread = child.stderr.take().map(read_capped);
+    let timeout = std::time::Duration::from_secs(timeout_s.max(1));
+    let mut timed_out = false;
+    let mut status = None;
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => {
+                status = Some(st);
+                break;
+            }
+            Ok(None) => {}
+            Err(_) => break,
+        }
+        if started.elapsed() >= timeout {
+            timed_out = true;
+            let _ = child.kill();
+            let _ = child.wait();
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let (stdout, stdout_bytes) = out_thread
+        .and_then(|h| h.join().ok())
+        .unwrap_or((Vec::new(), 0));
+    let (stderr, stderr_bytes) = err_thread
+        .and_then(|h| h.join().ok())
+        .unwrap_or((Vec::new(), 0));
+    let secs = started.elapsed().as_secs_f32();
+    let code = status.and_then(|s| s.code());
+    let mut log = String::new();
+    log.push_str(&format!("# app_test {} {}\n", app.label(), args));
+    log.push_str(&format!(
+        "# exit={:?} timed_out={} secs={secs:.2} stdout={stdout_bytes}B stderr={stderr_bytes}B\n",
+        code, timed_out
+    ));
+    log.push_str("\n=== stdout ===\n");
+    log.push_str(&String::from_utf8_lossy(&stdout));
+    log.push_str("\n=== stderr ===\n");
+    log.push_str(&String::from_utf8_lossy(&stderr));
+    let safe: String = app
+        .label()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let dir = crate::config::tmp_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let log_path = dir.join(format!("app-test-{safe}.log"));
+    let _ = std::fs::write(&log_path, &log);
+    Ok(HeadlessRun {
+        code,
+        timed_out,
+        secs,
+        stdout: String::from_utf8_lossy(&stdout).to_string(),
+        stderr: String::from_utf8_lossy(&stderr).to_string(),
+        log_path: log_path.display().to_string(),
+        stdout_bytes,
+        stderr_bytes,
+    })
+}
+
+fn test_exec(args: &J) -> Result<J, Fail> {
+    let name = str_arg(args, "name").unwrap_or_default();
+    let app = find(&name).ok_or_else(|| {
+        Fail::new(format!(
+            "no app '{name}'; saved apps are listed in INSTALLED APPS"
+        ))
+    })?;
+    if app.kind == "prompt" || app.kind == "doc" {
+        return Err(Fail::new(format!(
+            "app '{}' is a {} app and has no program to test",
+            app.label(),
+            app.kind
+        )));
+    }
+    let timeout = num_arg(args, "timeout_s")
+        .unwrap_or(10.0)
+        .clamp(1.0, 120.0) as u64;
+    let extra = str_arg(args, "args").unwrap_or_default();
+    let stdin_text = str_arg(args, "stdin").unwrap_or_default();
+    let run = run_headless(&app, &extra, &stdin_text, timeout).map_err(Fail::new)?;
+    Ok(obj(vec![
+        ("name", J::s(&app.label())),
+        ("exit", J::Num(run.code.map(|c| c as f64).unwrap_or(-1.0))),
+        ("timed_out", J::Bool(run.timed_out)),
+        ("secs", J::Num(run.secs as f64)),
+        ("stdout", J::s(&run.stdout)),
+        ("stderr", J::s(&run.stderr)),
+        ("stdout_bytes", J::Num(run.stdout_bytes as f64)),
+        ("stderr_bytes", J::Num(run.stderr_bytes as f64)),
+        ("log", J::s(&run.log_path)),
+    ]))
+}
+
+fn test_render(_a: &J, v: &J) -> String {
+    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("");
+    let exit = v.get("exit").and_then(|x| x.as_num()).unwrap_or(-1.0) as i32;
+    let timed = v
+        .get("timed_out")
+        .map(|b| matches!(b, J::Bool(true)))
+        .unwrap_or(false);
+    let secs = v.get("secs").and_then(|x| x.as_num()).unwrap_or(0.0);
+    let log = v.get("log").and_then(|x| x.as_str()).unwrap_or("");
+    let out = v.get("stdout").and_then(|x| x.as_str()).unwrap_or("");
+    let err = v.get("stderr").and_then(|x| x.as_str()).unwrap_or("");
+    let mut s = format!(
+        "app_test {name}: exit={exit}{} in {secs:.2}s (headless, no screen)",
+        if timed { " TIMEOUT" } else { "" }
+    );
+    if !out.trim().is_empty() {
+        s.push_str(&format!("\n--- stdout ---\n{}", short(out.trim_end(), 1200)));
+    }
+    if !err.trim().is_empty() {
+        s.push_str(&format!("\n--- stderr ---\n{}", short(err.trim_end(), 1200)));
+    }
+    s.push_str(&format!("\nfull log: {log}"));
+    s
+}
+
+fn test_present(a: &J) -> String {
+    format!("test {}", str_arg(a, "name").unwrap_or_else(|| "app".into()))
 }
 
 fn run_render(_a: &J, v: &J) -> String {
@@ -737,7 +1024,11 @@ you do not rewrite.",
                 Param::req("description", "string", "One line: what this app is for (max 160 chars)."),
                 Param::req("annotation", "string", "APP.md body for the user: what it does, how to use it, how it works, files. Markdown."),
                 Param::opt("category", "string", "Grouping dir: system, tools, games, apps (default apps)."),
-                Param::one_of_opt("kind", "How app_run executes it.", &["sh", "python", "doc"]),
+                Param::one_of_opt(
+                    "kind",
+                    "How app_run executes it: sh/python script, binary executable, prompt (instructions), doc.",
+                    &["sh", "python", "binary", "prompt", "doc"],
+                ),
                 Param::opt("entry", "string", "Relative entry file (e.g. run.sh); required unless kind=doc."),
             ],
             concurrency_safe: false,
@@ -768,6 +1059,27 @@ Use it for the entry program and supporting files; the app directory is the only
             dynamic: None,
         },
         ToolDef {
+            name: "app_test",
+            description: "Run a saved app HEADLESS (pipes, no screen) and capture its output, exit code \
+and duration. Use this to verify an app's behaviour yourself before app_run: it can drive stdin with \
+the `stdin` argument, pass argv with `args`, and writes the full log to a file you can read with \
+read_file. This is the model's version of the simulator the developers use.",
+            params: vec![
+                Param::req("name", "string", "App name or category/name from INSTALLED APPS."),
+                Param::opt("args", "string", "Space-separated argv for the app."),
+                Param::opt("stdin", "string", "Text piped to the app's stdin (closed afterwards)."),
+                Param::opt("timeout_s", "integer", "Seconds before the app is killed (default 10, max 120)."),
+            ],
+            concurrency_safe: false,
+            timeout_ms: 130_000,
+            execute: test_exec,
+            render: test_render,
+            present: test_present,
+            post: None,
+            schema_override: None,
+            dynamic: None,
+        },
+        ToolDef {
             name: "app_run",
             description: "Run a saved app full-screen on the device panel and return when it exits, \
 is stopped by a long-press of Esc, or reaches timeout_s. The user sees the app, not the chat, while \
@@ -775,6 +1087,7 @@ it runs; do not repeat the app's content afterwards. Only available in the inter
             params: vec![
                 Param::req("name", "string", "App name or category/name from INSTALLED APPS."),
                 Param::opt("timeout_s", "integer", "Seconds before the platform stops the app (default 60, max 600)."),
+                Param::opt("args", "string", "Space-separated arguments passed to the app after its entry file (max 200 chars)."),
             ],
             concurrency_safe: false,
             timeout_ms: (MAX_TIMEOUT_S + 60) * 1_000,
@@ -800,6 +1113,7 @@ enum LaunchMsg {
 struct LaunchRequest {
     app: App,
     timeout_s: u64,
+    args: String,
     tx: std::sync::mpsc::Sender<LaunchMsg>,
 }
 
@@ -834,7 +1148,7 @@ fn screen_available() -> bool {
 }
 
 /// Blocking request from a tool thread: "give the panel to this app".
-pub fn request_launch(app: &App, timeout_s: u64) -> Result<String, String> {
+pub fn request_launch(app: &App, timeout_s: u64, args: &str) -> Result<String, String> {
     if !screen_available() {
         return Err(
             "app_run needs the interactive screen; it is not available in --once, background jobs or --call"
@@ -850,6 +1164,7 @@ pub fn request_launch(app: &App, timeout_s: u64) -> Result<String, String> {
         *g = Some(LaunchRequest {
             app: app.clone(),
             timeout_s,
+            args: args.chars().take(200).collect(),
             tx,
         });
     }
@@ -882,7 +1197,7 @@ pub fn service_launch(ui: &mut dyn crate::harness::Ui) {
         None => return,
     };
     let _ = req.tx.send(LaunchMsg::Picked);
-    let result = ui.run_app(&req.app, req.timeout_s);
+    let result = ui.run_app(&req.app, req.timeout_s, &req.args);
     let _ = req.tx.send(LaunchMsg::Done(result));
 }
 
@@ -928,9 +1243,32 @@ fn clear_screen() {
     let _ = out.flush();
 }
 
+/// Start an app under the platform's bounded-run contract: no core dumps, a
+/// CPU-time cap and a per-file size cap (the prompt's APP CONTRACT explains the
+/// same rules to the model; this is the part the platform can enforce).
+fn app_command(prog: &str, argv: &[String]) -> Command {
+    let mut cmd = Command::new("/bin/sh");
+    cmd.arg("-c")
+        .arg(
+            "ulimit -c 0 2>/dev/null; ulimit -t 120 2>/dev/null; \
+             ulimit -f 2048 2>/dev/null; exec \"$0\" \"$@\"",
+        )
+        .arg(prog)
+        .args(argv);
+    cmd
+}
+
 /// Run a saved app on the panel. Restores the screen state the TUI needs.
 pub fn run_on_screen(app: &App, timeout_s: u64) -> Result<String, String> {
-    let (prog, args) = run_plan(app)?;
+    run_on_screen_args(app, timeout_s, "")
+}
+
+/// Run a saved app with arguments (`app_run args` / future user args).
+pub fn run_on_screen_args(app: &App, timeout_s: u64, args: &str) -> Result<String, String> {
+    let (prog, argv) = run_plan_args(app, args)?;
+    // A stable place for app state: survives runs, keeps APP.md/listing clean.
+    let state_dir = app.dir.join("state");
+    let _ = std::fs::create_dir_all(&state_dir);
     let started = std::time::Instant::now();
     let label = app.label();
     let _ = std::io::stdout().flush();
@@ -941,11 +1279,11 @@ pub fn run_on_screen(app: &App, timeout_s: u64) -> Result<String, String> {
     // duration of the app (the TUI redraws with explicit CRs, so it does not
     // need it, and the raw mode is restored after the app returns).
     stty(&["raw", "-echo", "min", "0", "time", "0", "opost", "onlcr"]);
-    let mut cmd = Command::new(&prog);
-    cmd.args(&args)
-        .current_dir(&app.dir)
+    let mut cmd = app_command(&prog, &argv);
+    cmd.current_dir(&app.dir)
         .env("DST_APP", &label)
         .env("DST_APP_DIR", &app.dir)
+        .env("DST_APP_STATE", &state_dir)
         .env("DST_COLS", "53")
         .env("DST_ROWS", "12")
         .stdin(Stdio::piped())
@@ -1208,7 +1546,8 @@ mod tests {
         a.title = "Battery viewer".into();
         let apps = vec![a];
         let cat = catalog(&apps);
-        assert!(cat.contains("system/battery_viewer — Battery viewer [sh]: charge level"));
+        assert!(cat.contains("system/battery_viewer — Battery viewer [sh:run.sh]: charge level"),
+            "{cat}");
         let prompt = prompt_section(true, &apps);
         assert!(prompt.contains("CREATOR MODE"));
         assert!(prompt.contains("CONSENSUS"));
@@ -1221,10 +1560,37 @@ mod tests {
 
     #[test]
     fn run_plan_selects_interpreter() {
-        assert!(run_plan(&app("x", "doc", "")).is_err());
+        assert!(run_plan_args(&app("x", "doc", ""), "").is_err());
         let missing = app("x", "sh", "run.sh");
-        let err = run_plan(&missing).unwrap_err();
+        let err = run_plan_args(&missing, "").unwrap_err();
         assert!(err.contains("missing"), "{err}");
+    }
+
+    #[test]
+    fn run_arguments_become_argv() {
+        let root = tmpdir("argv");
+        let (app, _) = save_at(
+            &root,
+            &args(&[
+                ("name", "greeter"),
+                ("title", "Greeter"),
+                ("description", "d"),
+                ("annotation", "a"),
+                ("kind", "sh"),
+                ("entry", "run.sh"),
+            ]),
+        )
+        .unwrap();
+        std::fs::write(app.dir.join("run.sh"), "#!/bin/sh
+echo hi
+").unwrap();
+        let (prog, argv) = run_plan_args(&app, "  one   two  ").unwrap();
+        assert_eq!(prog, "/bin/sh");
+        assert_eq!(argv.len(), 3);
+        assert!(argv[0].ends_with("run.sh"));
+        assert_eq!(&argv[1..], &["one", "two"]);
+        assert!(run_plan_args(&app, &"a".repeat(201)).is_err());
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -1250,10 +1616,11 @@ mod tests {
     fn tool_defs_cover_the_creator_surface() {
         let defs = tool_defs();
         let names: Vec<&str> = defs.iter().map(|d| d.name).collect();
-        assert_eq!(names, vec!["app_save", "app_file", "app_run"]);
+        assert_eq!(names, vec!["app_save", "app_file", "app_test", "app_run"]);
         let schema = crate::tool::definitions(&defs).dump();
         assert!(schema.contains("\"kind\""));
         assert!(schema.contains("\"entry\""));
         assert!(schema.contains("\"timeout_s\""));
+        assert!(schema.contains("\"stdin\""));
     }
 }

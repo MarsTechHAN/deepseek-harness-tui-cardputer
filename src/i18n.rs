@@ -363,11 +363,17 @@ const EN: &[(&str, &str)] = &[
     ("cmd_apps_empty", "no apps yet — switch to creator mode in /config"),
     ("apps_not_found", "no app '{}'"),
     ("apps_launching", "app {} on the screen"),
-    ("creator_hint", "creator · /apps · hold Esc to leave an app"),
+    ("creator_hint", "creator · {} apps · /apps · hold Esc"),
     ("app_saved_notice", "saved app {}"),
+    ("ui_skill_saved", "saved skill {}"),
+    ("apps_prompt_run", "prompt app {}"),
+    ("apps_prompt_empty", "prompt app {} has no instructions"),
     ("creator_nudge", "creator: files changed but no app saved — app_save keeps this work"),
     ("apps_title", "Apps"),
-    ("apps_hint", "↑↓ · Enter run · → open · x delete · Esc"),
+    ("apps_hint", "↑↓ · Enter run · → read · / search · x delete · Esc"),
+    ("apps_filter", "filter: {} · / edit · Esc clear"),
+    ("apps_search_hint", "type to filter · Enter apply · Esc cancel"),
+    ("apps_no_match", "no app matches the filter"),
     ("apps_path", "path: {}"),
     ("apps_files", "files: {}"),
     ("apps_kind", "kind: {}"),
@@ -680,11 +686,17 @@ const ZH: &[(&str, &str)] = &[
     ("cmd_apps_empty", "还没有应用 — 在 /config 打开创作者模式"),
     ("apps_not_found", "没有应用 '{}'"),
     ("apps_launching", "在屏幕上运行 {}"),
-    ("creator_hint", "创作者 · /apps · 长按 Esc 退出应用"),
+    ("creator_hint", "创作者 · {} 个应用 · /apps · 长按 Esc"),
     ("app_saved_notice", "已保存应用 {}"),
+    ("ui_skill_saved", "已保存技能 {}"),
+    ("apps_prompt_run", "提示词应用 {}"),
+    ("apps_prompt_empty", "提示词应用 {} 没有说明内容"),
     ("creator_nudge", "创作者: 本轮改了文件但没有保存应用 — 用 app_save 长期保留"),
     ("apps_title", "应用"),
-    ("apps_hint", "↑↓ · Enter 运行 · → 详情 · x 删除 · Esc"),
+    ("apps_hint", "↑↓ · Enter 运行 · → 阅读 · / 搜索 · x 删除 · Esc"),
+    ("apps_filter", "筛选: {} · / 编辑 · Esc 清除"),
+    ("apps_search_hint", "输入筛选 · Enter 应用 · Esc 取消"),
+    ("apps_no_match", "没有匹配的应用"),
     ("apps_path", "路径: {}"),
     ("apps_files", "文件: {}"),
     ("apps_kind", "类型: {}"),
@@ -996,11 +1008,17 @@ const ES: &[(&str, &str)] = &[
     ("cmd_apps_empty", "aún no hay apps — activa creator en /config"),
     ("apps_not_found", "no existe la app '{}'"),
     ("apps_launching", "app {} en pantalla"),
-    ("creator_hint", "creator · /apps · mantén Esc para salir"),
+    ("creator_hint", "creator · {} apps · /apps · mantén Esc"),
     ("app_saved_notice", "app {} guardada"),
+    ("ui_skill_saved", "skill {} guardada"),
+    ("apps_prompt_run", "app de prompt {}"),
+    ("apps_prompt_empty", "la app de prompt {} no tiene instrucciones"),
     ("creator_nudge", "creator: se cambiaron archivos sin guardar app — usa app_save"),
     ("apps_title", "Apps"),
-    ("apps_hint", "↑↓ · Enter ejecutar · → detalle · x borrar · Esc"),
+    ("apps_hint", "↑↓ · Enter · → leer · / buscar · x borrar · Esc"),
+    ("apps_filter", "filtro: {} · / editar · Esc limpia"),
+    ("apps_search_hint", "escribe para filtrar · Enter aplica · Esc"),
+    ("apps_no_match", "ninguna app coincide"),
     ("apps_path", "ruta: {}"),
     ("apps_files", "archivos: {}"),
     ("apps_kind", "tipo: {}"),
@@ -1313,11 +1331,17 @@ const JA: &[(&str, &str)] = &[
     ("cmd_apps_empty", "アプリなし — /config でクリエイターに切り替え"),
     ("apps_not_found", "アプリ '{}' がありません"),
     ("apps_launching", "画面で {} を実行"),
-    ("creator_hint", "クリエイター · /apps · Esc 長押しで終了"),
+    ("creator_hint", "クリエイター · {} 個 · /apps · Esc 長押し"),
     ("app_saved_notice", "アプリ {} を保存"),
+    ("ui_skill_saved", "スキル {} を保存"),
+    ("apps_prompt_run", "プロンプトアプリ {}"),
+    ("apps_prompt_empty", "プロンプトアプリ {} に指示がありません"),
     ("creator_nudge", "クリエイター: ファイル変更をアプリ未保存 — app_save で残す"),
     ("apps_title", "アプリ"),
-    ("apps_hint", "↑↓ · Enter 実行 · → 詳細 · x 削除 · Esc"),
+    ("apps_hint", "↑↓ · Enter 実行 · → 読む · / 検索 · x 削除 · Esc"),
+    ("apps_filter", "絞込: {} · / 編集 · Esc 解除"),
+    ("apps_search_hint", "入力で絞込 · Enter 決定 · Esc 取消"),
+    ("apps_no_match", "一致するアプリがありません"),
     ("apps_path", "パス: {}"),
     ("apps_files", "ファイル: {}"),
     ("apps_kind", "種類: {}"),
@@ -1630,11 +1654,17 @@ const DE: &[(&str, &str)] = &[
     ("cmd_apps_empty", "noch keine Apps — Creator in /config einschalten"),
     ("apps_not_found", "App '{}' nicht gefunden"),
     ("apps_launching", "App {} auf dem Display"),
-    ("creator_hint", "creator · /apps · Esc halten beendet"),
+    ("creator_hint", "creator · {} Apps · /apps · Esc halten"),
     ("app_saved_notice", "App {} gespeichert"),
+    ("ui_skill_saved", "Skill {} gespeichert"),
+    ("apps_prompt_run", "Prompt-App {}"),
+    ("apps_prompt_empty", "Prompt-App {} hat keine Anweisungen"),
     ("creator_nudge", "Creator: Dateien geändert, keine App gespeichert — app_save"),
     ("apps_title", "Apps"),
-    ("apps_hint", "↑↓ · Enter starten · → Details · x löschen · Esc"),
+    ("apps_hint", "↑↓ · Enter · → lesen · / suchen · x löschen · Esc"),
+    ("apps_filter", "Filter: {} · / ändern · Esc leert"),
+    ("apps_search_hint", "tippen filtert · Enter ok · Esc"),
+    ("apps_no_match", "keine App passt zum Filter"),
     ("apps_path", "Pfad: {}"),
     ("apps_files", "Dateien: {}"),
     ("apps_kind", "Art: {}"),
@@ -1947,11 +1977,17 @@ const IT: &[(&str, &str)] = &[
     ("cmd_apps_empty", "nessuna app — attiva creator in /config"),
     ("apps_not_found", "app '{}' non trovata"),
     ("apps_launching", "app {} sullo schermo"),
-    ("creator_hint", "creator · /apps · tieni Esc per uscire"),
+    ("creator_hint", "creator · {} app · /apps · tieni Esc"),
     ("app_saved_notice", "app {} salvata"),
+    ("ui_skill_saved", "skill {} salvata"),
+    ("apps_prompt_run", "app prompt {}"),
+    ("apps_prompt_empty", "l'app prompt {} non ha istruzioni"),
     ("creator_nudge", "creator: file modificati senza app — usa app_save"),
     ("apps_title", "App"),
-    ("apps_hint", "↑↓ · Enter avvia · → dettagli · x elimina · Esc"),
+    ("apps_hint", "↑↓ · Enter · → leggi · / cerca · x elimina · Esc"),
+    ("apps_filter", "filtro: {} · / modifica · Esc pulisce"),
+    ("apps_search_hint", "digita per filtrare · Enter ok · Esc"),
+    ("apps_no_match", "nessuna app corrisponde"),
     ("apps_path", "percorso: {}"),
     ("apps_files", "file: {}"),
     ("apps_kind", "tipo: {}"),
@@ -2006,9 +2042,13 @@ mod tests {
     use std::sync::Mutex;
     static LOCK: Mutex<()> = Mutex::new(());
 
+    fn lock() -> std::sync::MutexGuard<'static, ()> {
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn english_is_default() {
-        let _g = LOCK.lock().unwrap();
+        let _g = lock();
         set("en");
         assert_eq!(t("on"), "on");
         assert!(tf("force_sent", &["hi"]).contains("hi"));
@@ -2016,7 +2056,7 @@ mod tests {
 
     #[test]
     fn chinese_switch() {
-        let _g = LOCK.lock().unwrap();
+        let _g = lock();
         set("zh");
         assert_eq!(t("on"), "开");
         assert!(tf("queued", &["2"]).contains('2'));
@@ -2025,7 +2065,7 @@ mod tests {
 
     #[test]
     fn every_language_covers_the_english_catalog() {
-        let _g = LOCK.lock().unwrap();
+        let _g = lock();
         let en: Vec<&str> = table(Lang::En).iter().map(|(k, _)| *k).collect();
         for l in [Lang::Zh, Lang::Es, Lang::Ja, Lang::De, Lang::It] {
             let have: std::collections::HashSet<&str> =
@@ -2041,7 +2081,7 @@ mod tests {
     /// panel width in every language.
     #[test]
     fn footer_hints_fit_the_panel() {
-        let _g = LOCK.lock().unwrap();
+        let _g = lock();
         fn width(s: &str) -> usize {
             s.chars()
                 .map(|c| {
@@ -2089,7 +2129,7 @@ mod tests {
     /// (exactly how the config-menu hint once disappeared).
     #[test]
     fn every_literal_key_used_in_source_exists() {
-        let _g = LOCK.lock().unwrap();
+        let _g = lock();
         let mut used = std::collections::BTreeSet::new();
         let dir = std::path::Path::new("src");
         if dir.is_dir() {
@@ -2128,7 +2168,7 @@ mod tests {
 
     #[test]
     fn new_ui_keys_are_translated() {
-        let _g = LOCK.lock().unwrap();
+        let _g = lock();
         for code in ["es", "ja", "de", "it"] {
             set(code);
             assert!(!t("approval_title").is_empty());
@@ -2154,7 +2194,7 @@ mod tests {
 
     #[test]
     fn new_languages_switch_and_fallback() {
-        let _g = LOCK.lock().unwrap();
+        let _g = lock();
         for (code, hint) in [
             ("es", "mantén Tab"),
             ("ja", "Tab 長押し"),

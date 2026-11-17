@@ -1,0 +1,30 @@
+{
+ "responses": [
+  {
+   "reasoning": "Test both apps headlessly before showing anything.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "t1",
+     "name": "app_test",
+     "arguments": {
+      "name": "good",
+      "args": "--fast",
+      "stdin": "hello from test"
+     }
+    },
+    {
+     "id": "t2",
+     "name": "app_test",
+     "arguments": {
+      "name": "broken"
+     }
+    }
+   ]
+  },
+  {
+   "reasoning": "Both tests returned.",
+   "content": "The good app works (exit 0, argv and stdin arrived); the broken app exits 3 with an error on stderr."
+  }
+ ]
+}

@@ -1,0 +1,36 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "把读取电量并出报告的方法记成一个 skill"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 1200,
+    "timeout_ms": 30000
+   },
+   "snap": "built"
+  },
+  {
+   "send": "which skills do you have?"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 1200,
+    "timeout_ms": 30000
+   },
+   "snap": "second"
+  }
+ ]
+}

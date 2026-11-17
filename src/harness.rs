@@ -171,6 +171,7 @@ pub trait Ui {
         &mut self,
         _app: &crate::apps::App,
         _timeout_s: u64,
+        _args: &str,
     ) -> Result<String, String> {
         Err("app_run needs the interactive screen (the TUI); this front end cannot take over the panel"
             .to_string())

@@ -1,0 +1,1 @@
+{"name": "echoargs", "title": "Echo args", "category": "system", "description": "Prints the argv it was given.", "kind": "sh", "entry": "run.sh", "version": 1, "created": "2026-01-01T10:00:00+08:00", "updated": "2026-01-01T10:00:00+08:00"}

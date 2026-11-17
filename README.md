@@ -128,27 +128,43 @@ repository.
 - Opt-in mode where dst is the device's only program: everything the user uses
   is something dst built and saved. Off by default; the `Mode` row in
   `/config` switches it (`tui.mode: normal|creator`), and the switch is
-  announced in the transcript with a creator idle hint afterwards.
+  announced in the transcript with a creator idle hint afterwards
+  (`creator · 2 apps · /apps · hold Esc`).
 - Every build becomes a persistent app package under
   `~/.dst/apps/<category>/<name>/`: `app.json` (manifest), `APP.md` (a short
-  annotation written for the user) and the entry program. The model creates them
-  with the creator tools `app_save` / `app_file` and runs them with `app_run`,
-  which takes over the panel full-screen and hands it back when the app exits.
-- A skills-style catalog (`- system/battery_viewer — Battery viewer [sh]: …`,
-  one line per app, capped) is injected into the system prompt each turn, so the
-  model knows what already exists and updates it instead of duplicating it;
+  annotation written for the user), the entry program, and a `state/` dir for
+  runtime data (`$DST_APP_STATE`). Kinds: `sh`, `python`, `binary` (executable
+  entry), `prompt` (a reusable request the model follows; PROMPT.md) and `doc`.
+  The model creates them with `app_save` / `app_file`, verifies them headlessly
+  with `app_test` (piped stdio, captured exit/stdout/stderr, full log under
+  `~/.dst/tmp`), and runs them with `app_run` (`args` + `timeout_s`), which
+  takes over the panel full-screen and hands it back when the app exits.
+  Launches are bounded by the platform: long-Esc/timeout backstop, cwd + state
+  dir inside the package, and ulimits (no core dumps, CPU time, file size).
+- A skills-style catalog (`- system/battery_viewer — Battery viewer [sh:run.sh]:
+  …`, one line per app, capped) is injected into the system prompt each turn, so
+  the model knows what already exists and which file to rewrite instead of
+  duplicating it;
   `APP.md` is read on demand with `read_file`.
-- `/apps` is the user's side: a menu with the app list, `→` shows the annotation,
-  Enter runs (doc apps open their APP.md in the panel), `x` deletes after `y/n`.
+- `/apps` is the user's side: a menu with the app count, `/` search mode that
+  filters by name/title/category, `→` opens the full annotation panel (metadata +
+  APP.md), Enter runs (doc apps open their panel), `x` deletes after `y/n`.
+  Running from the menu comes back to the menu; leaving it prints the run notice.
 - Consensus the platform enforces, not the apps: **long-press Esc always leaves
   an app** and gives the screen back to the chat (the runner watches keyboard
   auto-repeat and kills the app; trailing Esc repeats are swallowed). Model-side
   runs have a 60 s default time limit (`timeout_s`), user-started runs have none.
 - Creator mode announces saved apps in the transcript and nudges when a turn
   changed files without saving an app, so work is not lost between sessions.
+- Creator mode also writes **skills**: `skill_save` / `skill_file` create a
+  systematic, self-contained package under `~/.dst/skills/<name>/` (SKILL.md
+  frontmatter + body + support files). It joins the SKILLS catalog on the next
+  turn and is loaded with the `skill` tool, exactly like hand-installed skills.
+  The prompt spells out the split: app = runnable device thing, skill = complete
+  reusable procedure, memory = short fragments/preferences.
 - Only available on the interactive TUI: `app_run` fails cleanly in `--once`,
-  background jobs and `--call`. Writes are confined to the app root by the tool
-  (slug/path validation, per-file and per-app size caps).
+  background jobs and `--call`. Writes are confined to the app/skill roots by
+  the tools (slug/path validation, per-file and per-package size caps).
 
 **Configuration screen**
 - `/config` is a menuconfig-style screen: arrows move, Enter edits, Esc leaves. It
@@ -420,7 +436,9 @@ searchable resume, push-to-talk with mocked speech, `speak`, the nine-step
 WeChat login chain, provider auth/rate-limit failures and their recovery, long
 input scrolling/editing (including CJK), the multi-entry tool-output viewer,
 the scrolling artifact panel, and creator mode `creator_mode`, `creator_build`,
-`creator_run`, `creator_run_esc`, `creator_apps_zh`, `creator_nudge`) and
+`creator_run`, `creator_run_esc`, `creator_run_args`, `creator_apps_run`,
+`creator_apps_zh`, `creator_skill`, `creator_app_test`, `creator_kinds`,
+`creator_nudge`) and
 asserts on captured screens *and* on the request log
 (e.g. that a `<goal_round>` prompt was sent, or that a checkpoint message
 reached the next request). `check_memory.py` samples RSS across a 20-turn

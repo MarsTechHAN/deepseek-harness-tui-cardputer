@@ -37,15 +37,29 @@ Functional:
   `/config` menu (Mode row). Persisted. Deliberately not a slash command: the
   mode changes the whole contract, so it belongs behind the settings screen,
   and a one-word command is too easy to fire accidentally.
-- R2 In creator mode the model can persist work as an app package: manifest,
-  short human annotation, entry program and supporting files.
+- R2 In creator mode the model can persist work two ways:
+  - **app**: a runnable package (script, binary, prompt or document) with a
+    manifest, short human annotation and files; and
+  - **skill**: a systematic, self-contained engineering package (procedure,
+    format, checklist, supporting files) written for the model itself, kept in
+    the same catalog as hand-installed skills.
+  Memory stays the place for short durable facts/preferences; the prompt makes
+  that split explicit (memory = fragments, skill = complete procedure, app =
+  runnable thing).
 - R3 App packages persist across sessions and reboots (plain files under
   `~/.dst/apps/`).
 - R4 The model is told which apps already exist, skills-style: a one-line
   catalog is injected into the system prompt each turn; the annotation body is
   read on demand (`read_file`), mirroring the skills catalog/`SKILL.md` split.
-- R5 The model can run a saved app on the device screen (`app_run`). The TUI
-  returns when the app exits, is long-Esc-killed, or times out.
+- R5 The model can run a saved app on the device screen (`app_run`) — the app
+  owns the whole panel and all input while dst is paused — and can verify it
+  headlessly first (`app_test`: piped stdio, captured exit/stdout/stderr, full
+  log file) the way the developers test dst itself.
+- R5b Apps are bounded by a platform contract: platform-enforced long-press Esc
+  and timeout, CPU/file-size ulimits, a working directory and `$DST_APP_STATE`
+  inside the package, no root; the system prompt states the guidelines (no
+  system configuration, installs, services or writes outside the package) and
+  the app kinds are `sh`, `python`, `binary`, `prompt` and `doc`.
 - R6 The user can browse apps (`/apps`): list, preview the annotation, run
   (Enter), delete (x, with confirmation).
 - R7 After a turn that changed files but saved no app, creator mode nudges
@@ -75,6 +89,11 @@ watchers already cover that); grabbing the framebuffer; a GUI toolkit.
         app.json        machine manifest (see below)
         APP.md          short annotation: what it is, how to use it, how it works
         run.sh          entry program (kind=sh)
+        state/          runtime state written by the app ($DST_APP_STATE)
+    tools/report/
+        app.json        kind=prompt
+        APP.md          human annotation
+        PROMPT.md       the request the model follows when the app is run
     tools/pomodoro/
         app.json
         APP.md
@@ -101,14 +120,25 @@ Rules:
 
 - `name` is a slug (`[a-z0-9][a-z0-9_-]{0,31}`), unique within the category;
   category is a slug, default `apps`.
-- `kind` is `sh` | `python` | `doc`; `entry` is a relative file inside the app
-  dir and is required unless `kind=doc` (Enter in `/apps` opens APP.md in the
-  artifact panel instead).
+- `kind` is `sh` | `python` | `binary` | `prompt` | `doc`; `entry` is a
+  relative file inside the app dir and is required except for `doc` and
+  `prompt`. `sh`/`python` go through the interpreter, `binary` executes the
+  entry directly (it must be executable), `prompt` returns PROMPT.md as a
+  request to follow, `doc` opens APP.md in the panel.
 - `description` is one line (≤160 chars); `annotation` (APP.md) is a short
   markdown body (≤4000 chars): what it does, how to use it, how it works, the
   files. It is written for the user reading `/apps` later, not for the model.
 - Saving an existing name updates in place and bumps `version` (and `updated`);
   files not rewritten are kept, so a one-file fix does not need a full rebuild.
+- Runtime state goes to a `state/` directory inside the app (`$DST_APP_STATE`),
+  so a counter or cache never pollutes APP.md/app.json.
+- Model-written skills use the existing skills layout:
+  `~/.dst/skills/<name>/{SKILL.md, …supporting files}`; `skill_save` writes the
+  frontmatter + body, `skill_file` adds support files. They appear in the
+  SKILLS catalog (and in `/extensions`) from the next turn on, and are loaded
+  with the `skill` tool exactly like hand-installed skills.
+- The injected catalog names the entry (`[sh:run.sh]`), so the model knows which
+  file to rewrite without reading the manifest first.
 - Writes go through `app_save` / `app_file`; each file is capped (32 KB per
   file, 256 KB per app) so a model cannot fill the microSD through the tool.
 
@@ -117,7 +147,8 @@ Rules:
 | | normal | creator |
 |---|---|---|
 | system prompt | base | base + `CREATOR MODE` block + installed-app catalog |
-| tools | base set | + `app_save`, `app_file`, `app_run` |
+| tools | base set | + `app_save`, `app_file`, `app_test`, `app_run`,
+  `skill_save`, `skill_file` |
 | idle hint | `idle_hint` | `creator_hint` (mentions `/apps` and long-Esc) |
 | after a turn | nothing | saved-app notice, or a nudge when files changed but no app was saved |
 | conversation | unchanged | unchanged (apps are additive) |
@@ -152,6 +183,34 @@ APPS — persistent things you own
 - Device limits for apps: 320x170 px, 53x12 cells, 8 ANSI colours, no mouse;
   sh + coreutils (/proc, /sys) and python3 when present; no installs, no
   services, no compilation.
+- app_run takes optional space-separated `args` (passed to the entry as argv)
+  and a timeout; a run needs an interactive screen, so it fails from background
+  jobs and --once.
+- App state goes under $DST_APP_STATE (a state/ directory inside the app); apps
+  draw on stdout and read keys from stdin; the platform owns long-Esc/timeout.
+- Kinds: sh and python scripts, binary (an executable file), prompt (a reusable
+  request you follow when run; APP.md is the annotation, PROMPT.md the request),
+  doc.
+- APP CONTRACT (bounded, the platform enforces what it can): an app owns the
+  whole screen while it runs and dst is paused; it may not change system
+  configuration, install software, start services, or write outside its
+  package/state/tmp; it must exit (0 = success) and leave the screen
+  recoverable (the platform repaints). The platform caps CPU time and per-file
+  size with ulimits and enforces the Esc/timeout backstop.
+- Verify before you show it: call app_test (headless pipes, captured
+  stdout/stderr/exit, log file under ~/.dst/tmp) and fix failures; test the
+  happy path plus bad input. app_run is for the user to see the real
+  full-screen behaviour.
+
+WHAT TO PERSIST — app vs skill vs memory
+- app: something runnable on the device (app_save/app_file, verified with
+  app_test).
+- skill: a systematic, self-contained engineering package you worked out
+  (procedure, format, checklist, support files) that will be useful again —
+  save it with skill_save/skill_file. It joins the SKILLS catalog next turn and
+  is read with the skill tool.
+- memory: short durable facts or preferences (memory_write); memory is
+  fragments, a skill is a complete procedure.
 
 CONSENSUS — cannot be overridden
 - Long-press Esc always leaves an app and returns to the chat. The platform
@@ -160,21 +219,32 @@ CONSENSUS — cannot be overridden
 - Apps run full-screen; keep drawing inside 53 columns x 12 rows.
 
 INSTALLED APPS (2)
-- system/battery_viewer — Battery viewer [sh]: charge level, refreshed live.
-- tools/pomodoro — Pomodoro timer [python]: 25/5 minute cycles.
+- system/battery_viewer — Battery viewer [sh:run.sh]: charge level, refreshed live.
+- tools/pomodoro — Pomodoro timer [python:main.py]: 25/5 minute cycles.
+
+SKILLS
+- battery-report: Use when the user asks for a battery status report.
 ```
 
-The catalog mirrors `skills::catalog_prompt`: name/title/description/kind only,
-so the prompt stays cheap; the model reads `APP.md` with `read_file` when it
-needs the details.
+The catalog mirrors `skills::catalog_prompt`: name/title/description/kind (and
+entry) only, so the prompt stays cheap; the model reads `APP.md` with
+`read_file` when it needs the details.
 
-## 6. Screen takeover contract (`app_run`)
+## 6. Screen takeover contract (`app_run`) and headless testing (`app_test`)
+
+`app_test` is the model's own verification harness: it runs the same entry and
+environment through pipes (no screen), feeds optional `stdin`, captures
+stdout/stderr up to 64 KB each, reports exit code/timeout/duration, and writes
+the full log to `~/.dst/tmp/app-test-<category>-<name>.log`; the model can read
+that file with `read_file`. Prompt/doc apps cannot be tested (nothing runs).
+
 
 ```text
-model → app_run{name, timeout_s?}
+model → app_run{name, timeout_s?, args?}
   → runner blocks the calling tool thread, asks the TUI to take over
   → TUI: flush, clear, spawn the entry with stdout/stderr on the panel tty,
-    stdin a pipe the runner forwards to
+    stdin a pipe the runner forwards to; env carries DST_APP, DST_APP_DIR,
+    DST_APP_STATE (state/ inside the app), DST_COLS=53, DST_ROWS=12
   → runner loop: forward keys, watch the child, detect long-press Esc, timeout
   → child exits / Esc / timeout → SIGTERM, wait 300 ms, SIGKILL
   → TUI: reset the tty, repaint the whole screen, return a one-line result
@@ -189,11 +259,24 @@ model → app_run{name, timeout_s?}
   turn.
 - `timeout_s` defaults to 60, max 600. Model-initiated runs are bounded; the
   user's `/apps` Enter has no timeout (long-Esc is the exit).
+- `args` is space-separated (max 32 tokens / 200 chars) and appended after the
+  entry file, so `run.sh --fast` arrives as `$1`.
 - The runner owns the keyboard, so an app cannot trap the user even if it
   ignores input. Apps read keys from stdin; their stdout is the panel.
 - The tool result is one line: ran/exit code/Esc/timeout and duration. App
-  output is not captured — the screen is the app's during the run.
+  output is not captured during `app_run` — the screen is the app's; use
+  `app_test` when the output matters.
 - The result also tells the model not to repeat the app's content in the chat.
+- Every launch (screen or headless) goes through a bounded wrapper
+  (`/bin/sh -c 'ulimit -c 0; ulimit -t 120; ulimit -f 2048; exec "$0" "$@"'`):
+  no core dumps, ≤120 s CPU time, ≤1 MB per file written. Combined with the
+  working directory, per-app `$DST_APP_STATE` and the Esc/timeout backstop this
+  is the enforceable part of the APP CONTRACT.
+- `kind=prompt` does not take the screen: `app_run` returns PROMPT.md as
+  instructions for the model to follow in the current turn, and choosing it in
+  `/apps` submits it as the next request (the transcript shows `> prompt app
+  <name>` instead of the whole body). `kind=doc` opens the annotation panel;
+  `kind=binary` executes the entry directly (it must be executable).
 
 ## 7. UX
 
@@ -201,18 +284,28 @@ model → app_run{name, timeout_s?}
   `auto/strict/full` for the sandbox). Toggling it closes the menu and reports
   `creator mode on · apps: ~/.dst/apps (2)` / `creator mode off · 2 apps stay
   installed`, and the idle hint switches immediately.
-- `/apps` is a full-width menu: `Battery viewer   system · sh`, footer
-  `↑↓ · Enter run · → open · x delete · Esc`. Right expands a compact preview
-  (path, kind, entry, updated, two annotation lines; the full APP.md fits in
-  `/apps`' panel for kind=doc). Enter runs; for `doc` apps Enter opens the
-  panel instead. `x` asks `delete <name>? y/n` in the footer before removing
-  the directory.
-- The idle hint in creator mode is `creator_hint`, which names `/apps` and the
-  long-Esc rule, so the mode is visible without a second status glyph.
+- `/apps` is a full-width menu with the app count in the title
+  (`Apps · 3`), rows `Battery viewer   system · sh`, footer
+  `↑↓ · Enter run · → read · / search · x delete · Esc`. Enter runs (doc apps
+  open their APP.md panel instead); `→` opens the full annotation panel
+  (metadata: path/kind/entry/updated/files, then APP.md) for any app; `/`
+  starts search mode (typing filters live by name/title/category, Enter keeps
+  the filter, Esc cancels; the list title becomes `Apps · 1/3`); `x` asks
+  `delete <name>? y/n` in the footer before removing the package. Running an
+  app from the menu returns to the menu; leaving it prints the run notice in
+  the transcript.
+- The idle hint in creator mode is `creator_hint`, which shows the installed
+  count, `/apps` and the long-Esc rule (`creator · 2 apps · /apps · hold Esc`),
+  so the mode is visible without a second status glyph. The count is cached and
+  refreshed when the mode changes, a turn ends or `/apps` closes.
 - A saved app is announced in the transcript on one line: `saved app
-  system/battery_viewer`.
+  system/battery_viewer`; a model-written skill is announced as `saved skill
+  battery-report` and appears in the SKILLS catalog and `/extensions` next turn.
+- Launching a prompt app from `/apps` submits its request as the next turn and
+  marks it `> prompt app <name>` in the transcript.
 - The nudge appears only when the turn actually wrote files through a tool
-  (`write_file` / `edit_file` / `app_file`) and did not call `app_save`; a
+  (`write_file` / `edit_file` / `app_file` / `skill_file`) and did not call
+  `app_save`/`skill_save`; a
   read-only shell inspection does not trigger it.
 
 ## 8. Safety
@@ -238,9 +331,22 @@ model → app_run{name, timeout_s?}
 - Simulator scenarios (`tools/sim/run_scenarios.py`):
   - `creator_mode` — toggle on/off from the `/config` Mode row, idle hint,
     transcript notice; no model request.
+  - `creator_skill` — the model writes a skill (`SKILL.md` with frontmatter),
+    the transcript announces it, and the next turn's system prompt contains it
+    in the SKILLS catalog (no nudge).
+  - `creator_app_test` — two apps tested headlessly: stdout/argv/stdin capture,
+    a 0 exit and a 3 exit, stderr capture, and the full log file on disk.
+  - `creator_kinds` — a binary-kind app runs on the panel, a prompt app launched
+    from `/apps` is submitted as the next request and the model follows it.
   - `creator_build` — model saves `system/battery_viewer` + writes `run.sh`,
     files appear on disk with the annotation, a later turn's system prompt
-    contains the app in `INSTALLED APPS`, `/apps` lists it and previews APP.md.
+    contains the app in `INSTALLED APPS` (with its entry file), `/apps` lists it
+    and `→` shows the annotation panel.
+  - `creator_apps_run` — normal mode, user-driven menu: Enter runs a seeded app
+    full-screen, the menu comes back, `/` search filters, a doc app opens its
+    annotation panel, and leaving the menu shows the run notice (no model).
+  - `creator_run_args` — model `app_run` with `args`: argv arrives in the app and
+    `$DST_APP_STATE` points at the package's state directory.
   - `creator_run` — seeded app, model calls `app_run`; the panel shows the app's
     output mid-run, then returns to the TUI with a timeout result; the tool
     card shows the run.
