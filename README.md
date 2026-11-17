@@ -16,11 +16,22 @@ repository.
 ## Features
 
 **Animated splash**
-- The opening screen is the dsh-TUI pixel whale (`art.rs`, ported from
-  `whaleFrames.ts`): 13 unique frames — blink, fins, spout, tail, heart, sleep —
-  tone-mapped to `█ ▓ ░` so it reads on an 8-colour framebuffer terminal.
-- It animates while idle (any typing pauses it, the first message ends it), and
-  `/clear` brings the animated splash back.
+- The opening screen is a 53×9 night-sea scene built from the dsh-TUI pixel whale
+  (`art.rs`, tone-mapped to `█ ▓ ░` so it reads on an 8-colour framebuffer): the
+  original 9-row whale is a single sprite that is **lifted against a dim water
+  line** — calm at the surface, spout, rise, full breach, apex fluke swing,
+  fluke/back dive — then spray settles and the dim `dst` wordmark returns on the
+  water before the loop restarts. 18 static frames across three colour bands (dim
+  night sky, bright air with the whale, dim sea line), driven by a per-frame hold
+  table (300–1800 ms, quantised to the 300 ms idle tick) so the scene moves in
+  beats instead of a uniform frame rate.
+- It animates while idle (typing pauses it on the current frame, the first
+  message ends it); after three opening loops it settles into a slow sleeping
+  loop, and `/clear` restarts the opening animation. The frames and the schedule
+  are deterministic (no randomness), so simulator snapshots are reproducible.
+  Frame storyboard and reference analysis: [`docs/SPLASH-STORYBOARD.md`](docs/SPLASH-STORYBOARD.md);
+  stills in [`docs/splash-frames.png`](docs/splash-frames.png) and the loop as
+  [`docs/splash.gif`](docs/splash.gif) (simulator, device pixel grid).
 
 **Terminal UI**
 - Markdown-aware rendering (headings, bullets, numbered lists, dimmed code

@@ -12,7 +12,7 @@ asserted in code.
 
 | Area | Screen(s) | Result |
 | --- | --- | --- |
-| Startup | splash art + hint, idle hints, first-run tips | fixed: the hint no longer wraps/clips the 9-row whale with a long model name; tips open with the tagline and are cleared by the first prompt |
+| Startup | splash breach scene + hint, idle hints, first-run tips | splash is an 18-frame 53×9 scene where the original 9-row pixel whale is moved against a dim water line (spout → breach → apex fluke swing → fluke/back dive → splash → `dst` wordmark reveal) with a dim sky row and a dim sea row framing it; after three loops it settles into a sleeping loop. The hint stays on one 53-cell row with long model names in all six languages, and tips still open with the tagline and are cleared by the first prompt |
 | Onboarding | endpoint menu, sandbox picker | ok: previews explain tradeoffs, rows full width |
 | Input line | long prompts, editing keys, wide CJK text | fixed: the one-line input window scrolls around the cursor with `…` markers on the hidden sides (both sides for a mid-line cursor); Ctrl-A on a 136-char prompt used to print the whole string and wrap over the status row. Home/End/Ctrl-A/Ctrl-E and forward Delete are covered by the `long_input` scenario |
 | Chat | live thinking, streaming tail, steer marker, injected context | fixed: reasoning wraps at word boundaries; model-facing context (repeat reminders, goal wrap-up) is a one-line marker instead of a dumped paragraph, so the answer stays on screen |

@@ -1,7 +1,8 @@
 # `dst` splash storyboard — “the whale that comes up for air”
 
-Status: **research + storyboard (phase 1, docs only)** — no Rust is changed by this
-document. Implementation phase starts after the lead's regression commit.
+Status: **research + storyboard + phase-2 implementation record** — the design
+below is what shipped in `src/art.rs` + `src/main.rs`; §9 is the implementation
+record with the verification evidence.
 Audience: the phase-2 implementer (and the lead for sign-off).
 
 Repo: `deepseek-tui-cardputer` · target panel: 320×170 px, fbterm, **53×12** glyph
@@ -32,7 +33,7 @@ from. Files that matter (all paths relative to the reference repo root):
 | `src/components/splashLayout.ts` | 64 | Narrow-terminal degradation ladder: whale + big text → big text only → whale only → one plain line; `WHALE_BOX_WIDTH = 40`, `COLUMN_GAP = 2`. |
 | `src/components/bigfont.ts`, `src/components/splashFonts.ts` | 141 / 541 | 5-row block-font wordmark `DEEPSEEK` / `HARNESS`, 8 faces rotated by local date, horizontal colour gradient plus an 8-column highlight sweeping at 60 ms. |
 | `src/components/shimmer.ts` | 85 | Blue→ice→pale colour ladder (`#4D6BFE → #93BEFF → #D7E4FF`) and `sweep()` — a travelling highlight over the wordmark/tagline. |
-| `src/components/splashEggs.ts` | 117 | Date-window holiday word swap; 1-in-20 “star us” line with an OSC 8 link. Both deterministic (local date / injectable seams). |
+| `src/components/splashEggs.ts` | 117 | Date-window holiday word swap; milestone-gated “star us” line (launch-count / usage-hour ladder in `usageStats.ts`) with an OSC 8 link. Both deterministic and seam-injectable. |
 
 ### 1.1 How the opening actually runs
 
@@ -175,8 +176,8 @@ half-block 2:1 pixel packing, randomness, sound, input handling changes.
 
 ```
 row 0        K_DIM     night sky     — stars (and only stars)
-rows 1..=6   K_ART     air           — whale, spout, spray, droplets, Z's
-rows 7..=8   K_DIM     sea           — wave line, foam, submerged hull, bubbles, wordmark
+rows 1..=7   K_ART     air           — the moving whale, spout, spray, droplets, Z's
+row 8        K_DIM     sea           — wave line, foam, bubbles, `dst` wordmark
 ```
 
 This fixed split is the whole rendering extension: art rows carry a per-row kind
@@ -219,7 +220,7 @@ line. This design avoids that extension on purpose:
   at row 6 and the dim row 7–8 shows its silhouette through the sea. That is not a
   compromise, it is the depth cue.
 * Splash spray that crosses the surface lives in the bright rows above it; dim
-  foam lives in rows 7–8. No element straddles a band with two tones.
+  foam lives on row 8. No element straddles a band with two tones.
 * Cost: zero extra ANSI per line (still 1 SGR prefix + 1 reset + erase-to-EOL),
   zero extra bytes, and no risk of embedded ANSI confusing the 53-cell line width
   (which is measured nowhere for art rows but would matter for a future `fit()`).
@@ -272,7 +273,7 @@ reason.
 The brand is thematically a water mark: `dst` sits in the deep row (row 8), right
 of the submerged hull, dim, and is **revealed by the water settling**:
 
-* step 12: `d` (row 8, col 42)
+* step 12: `d` (row 8, col 45)
 * step 13: `ds`
 * step 0 of the next loop: `dst`
 
@@ -309,7 +310,7 @@ small (a future “wake on keypress” would need a new flag in `edit()`; not no
 
 | | today | this design |
 | --- | --- | --- |
-| sprite | one 40×9 static-ish whale, small deltas | 30×6 whale moving through a 53×9 scene |
+| sprite | one 40×9 static-ish whale, small deltas | the **same 40×9 whale**, moved vertically against a water line (plus the original fluke poses); never redrawn per frame |
 | colour | all 9 rows bright cyan | 1 dim sky row + 6 bright rows + 2 dim sea rows |
 | motion | 13 frames, fixed 300 ms, no vertical motion | 14 opening frames with 300–900 ms holds + vertical emergence, roll, flukes, splash |
 | loop | 3.9 s circle | 6.6 s story loop ×3, then 6.3 s sleep loop |
@@ -326,8 +327,8 @@ small (a future “wake on keypress” would need a new flag in `edit()`; not no
 | A · night sea | 0–1 | 1.5 s | stars, dim sea, whale back at the surface, `dst` in the deep |
 | B · breath | 2–4 | 1.2 s | blowhole, spout grows to a mushroom, droplets fall |
 | C · gather | 5 | 0.3 s | whale sinks, water dimples, bubbles rise, wordmark gone |
-| D · breach | 6–8 | 1.8 s | body rises out of the sea → full breach with side spray → belly-up roll at the apex |
-| E · dive | 9–10 | 0.6 s | fluke-up farewell, the sea throws a crown |
+| D · breach | 6–8 | 1.8 s | body rises out of the sea → full breach with side spray → apex fluke swing (old tail pose) |
+| E · dive | 9–10 | 0.6 s | fluke/back farewell, the sea throws a crown |
 | F · settle | 11 | 0.6 s | spray falls, bubbles rise, wave line calms |
 | G · wordmark | 12–13 (+ step 0 of the loop) | 1.5 s | `d` → `ds` → `dst`, stars, hull — loop |
 | H · sleep | 14–17 (after 3 loops) | 6.3 s loop | sleeping whale, Z drift, twinkle, slow breath, lazy puff |
@@ -344,8 +345,8 @@ small (a future “wake on keypress” would need a new flag in `edit()`; not no
 | 5 | 5 | `U05 ANTICIPATE` | 300 ms | 1 | 2.7 s | sink + dimple + bubbles (gather) |
 | 6 | 6 | `U06 RISE` | 300 ms | 1 | 3.0 s | 5 rows out, side spray starts |
 | 7 | 7 | `U07 BREACH` | 600 ms | 2 | 3.3 s | full body out, crown, droplets |
-| 8 | 8 | `U08 ROLL` | 900 ms | 3 | 3.9 s | belly-up at the apex (hold on the wow pose) |
-| 9 | 9 | `U09 FLUKES` | 300 ms | 1 | 4.8 s | fluke-up farewell as it dives |
+| 8 | 8 | `U08 ROLL` | 900 ms | 3 | 3.9 s | apex with the original fluke/tail pose swung out (hold on the wow pose) |
+| 9 | 9 | `U09 FLUKES` | 300 ms | 1 | 4.8 s | fluke/back farewell as it dives |
 | 10 | 10 | `U10 SPLASH` | 300 ms | 1 | 5.1 s | whale gone, crown falling, foam |
 | 11 | 11 | `U11 SETTLE` | 600 ms | 2 | 5.4 s | spray down, bubbles up, wave line calms |
 | 12 | 12 | `U12 WORD_d` | 300 ms | 1 | 6.0 s | first letter of the wordmark settles |
@@ -377,15 +378,17 @@ small (a future “wake on keypress” would need a new flag in `edit()`; not no
 ---
 
 
+""
 ## 5. Key frame sketches
 
 All blocks below are **9 rows of exactly 53 cells** (space padded). Monospace
 display required. Colour is *not* shown in these blocks — use the band rule:
-**row 0 dim, rows 1–6 bright cyan, rows 7–8 dim**. Note that an editor may strip
-the trailing spaces when you copy a block into `art.rs`; that is harmless because
-`art_frame_lines` right-pads every row and `draw()` erases to end-of-line, but the
-unit test must reject rows **wider** than 53 (that is the wrap bug).
-A width ruler for the first block (do not paste it into `art.rs`):
+**row 0 dim (night sky, stars), rows 1–7 bright cyan (whale and spray), row 8 dim
+(sea line, foam, wordmark)**. An editor may strip trailing spaces when copying
+into `art.rs`; that is harmless because `art_frame_lines` right-pads every row,
+but the unit tests reject rows **wider** than 53 (that is the wrap bug).
+
+Width ruler for the first block (do not paste into `art.rs`):
 
 ```
          1         2         3         4         5   
@@ -394,176 +397,220 @@ A width ruler for the first block (do not paste it into `art.rs`):
 
 ### 5.1 The ten key frames
 
+#### 1. frame `0` — U00 CALM  ·  900 ms
 
-#### 1. frame `0` — U00 CALM
+```
+    '        .         '       .        '      .     
+                                                     
+                                                     
+                                                     
+                             █▓▓▓█████▓▓█            
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█                
+▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁dst▁▁▁▁▁
+```
+
+**Read this:** the brand card. The original 9-row whale sits low: its fluke blade, back and tail stock are the four bright rows above the dim water line (row 8), the body below the line is simply not shown. Stars in the single sky row (row 0); `dst` rests on the water at the right.
+
+#### 2. frame `3` — U03 SPOUT_B  ·  300 ms
+
+```
+    '        .         '       .        '      .     
+                                                     
+                  o                                  
+                 ░ o                                 
+               . ░           █▓▓▓█████▓▓█            
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█                
+▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁dst▁▁▁▁▁
+```
+
+**Read this:** the spout column climbs from the blowhole (row 5) toward row 2, one droplet `o` separating; the body has not moved. 300 ms.
+
+#### 3. frame `5` — U05 ANTICIPATE  ·  300 ms
 
 ```
     '        .         '       .        '      .     
                                                      
                                                      
                                                      
-                             █▓▓████▓▓█              
-               ██████████     █▓▓▓▓▓▓█               
-             ██▓▓▓▓▓▓▓▓▓▓███   █▓▓▓██                
-▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁
-             ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░   dst         
+                             █▓▓▓█████▓▓█            
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█                
+▂▂▁▁▂▂▁▁▁▂▂▁▁▁▂▂o▁▂▂o▁▁▂▂▁▁▁▂▂o▁▂▂o▁▁▂▂▁▁▁▁▂▂▁▁▁▁▁▁▁ 
 ```
 
-**Read this:** the brand card. Whale back + raised flukes above the dim wave line (rows 4–6), the dim hull through the sea (row 8), `dst` far right in the deep, three `'`/`.` stars in the single dim sky row. Seven of nine rows are background; the bright mass is small and calm.
+**Read this:** gather/anticipation. Same height; the wave line turns choppy and dim bubbles `o` dot it, the wordmark has dissolved. The 300 ms cut into the rise makes the transition snap.
 
-#### 2. frame `3` — U03 SPOUT_B
-
-```
-    '        .         '       .        '      .     
-                     o                               
-                     ░o                              
-                   . ░                               
-                     ░       █▓▓████▓▓█              
-               ██████████     █▓▓▓▓▓▓█               
-             ██▓▓▓▓▓▓▓▓▓▓███   █▓▓▓██                
-▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁
-             ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░   dst         
-```
-
-**Read this:** the spout column climbs two rows, a droplet `o` separates. Hold is 300 ms so it reads as a breath being drawn.
-
-#### 3. frame `5` — U05 ANTICIPATE
+#### 4. frame `6` — U06 RISE  ·  300 ms
 
 ```
     '        .         '       .        '      .     
                                                      
-                                                     
-                 o           o                       
-                o           o                        
-                             █▓▓████▓▓█              
-               ██████████     █▓▓▓▓▓▓█               
-▂▂▁▁▂▂▁▁▁o▂▁▁▁▂▂▁▁▂▂▁▁▁▂▂▁▁▁▂▂▁▁▂▂▁▁▁▂▂▁▁▁▁▂▂o▁▁▁▁▁▁ 
-             ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░               
-```
-
-**Read this:** gather/anticipation. The back is at its lowest, the wave row dimples, bubbles (`o`) rise beside the body, the wordmark has dissolved. The 300 ms cut to the rise makes the transition snap.
-
-#### 4. frame `6` — U06 RISE
-
-```
-    '        .         '       .        '      .     
-                                                     
-                             █▓▓████▓▓█              
-               ██████████     █▓▓▓▓▓▓█               
-             ██▓▓▓▓▓▓▓▓▓▓███   █▓▓▓██                
-     .o     ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓███▓▓▓▓█          o.     
-       ░▒░  █▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓█▓▓▓▓█        ░▒░       
+                             █▓▓▓█████▓▓█            
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+  o      ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█            o   
+.o       █▓▓▓█▓▓▓▓▓▓█▓▓▓▓▓▓▓▓▓▓▓▓▓▓██             o. 
+ ░▒░     █▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓█▓▓▓▓██            ░▒░  
 ▂▃▄▄▃▂▂▁▁▂▄▅▄▂▁▁▂▃▄▃▂▁▁▂▃▂▁▁▂▃▂▁▁▁▂▃▂▁▁▂▂▃▄▂▁▁▁▁▁▁▁  
-          ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░              
 ```
 
-**Read this:** five rows of body are above the line, bright side spray `░▒░` appears at both flanks, stars stay fixed. The whale is still horizontal — the jump is told by how much body is out of the water.
+**Read this:** the whale is lifted two rows — six bright rows above the water: back, mouth and the raised fluke stock all clear; bright spray `░▒░` at both flanks, stars fixed. Still horizontal: the jump is told by how much whale is out of the water.
 
-#### 5. frame `7` — U07 BREACH
+#### 5. frame `7` — U07 BREACH  ·  600 ms
 
 ```
-    '        .         '       .        '      .     
-                             █▓▓████▓▓█              
-        .      ██████████     █▓▓▓▓▓▓█      .        
- o           ██▓▓▓▓▓▓▓▓▓▓███   █▓▓▓██             o  
-  .o        ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓███▓▓▓▓█             o.  
-    ░▒      █▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓█▓▓▓▓█          ▒░      
-      ░▒▒░  ██▓░░░      ░░█▓▓▓▓▓▓██        ░▒▒░      
+                                                     
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█                
+   o     █▓▓▓█▓▓▓▓▓▓█▓▓▓▓▓▓▓▓▓▓▓▓▓▓██           o    
+ .o      █▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓█▓▓▓▓██              o. 
+░▒       ██▓░           ▓█▓▓▓▓██▓██               ▒░ 
+░▒▒░       ███░░░      ░░██▓▓▓▓███              ░▒▒░ 
 ▂▃▄▄▃▂▂▁▁▂▄▅▄▂▁▁▂▃▄▃▂▁▁▂▃▂▁▁▂▃▂▁▁▁▂▃▂▁▁▂▂▃▄▂▁▁▁▁▁▁▁  
-          ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░              
 ```
 
-**Read this:** full breach. Six rows bright, crown spray at both sides (cols 4–9 and 43–48), droplets at the top corners; the dim hull still visible through the sea. Held 600 ms because this is the money pose.
+**Read this:** full breach — the money pose. The whole body is above the line: fluke (top-right), body, mouth gap and belly shading all readable, only the very tip of the fluke clips at the screen top; flank spray and droplets; the dim wave line is the only background beneath it. Held 600 ms.
 
-#### 6. frame `8` — U08 ROLL
+#### 6. frame `8` — U08 ROLL  ·  900 ms
 
 ```
     '        .         '       .        '      .     
-            ██▒░░░      ░░█▒▒▒▒▒▒██                  
-        o   █▒▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓█▓▓▓▓█         o        
-            ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓███▓▓▓▓█                 
-             ██▓▓▓▓▓▓▓▓▓▓███   █▓▓▓██                
-    .o         ██████████     █▓▓▓▓▓▓█       o.      
-      ░▒░                    █▓▓████▓▓█    ░▒░       
+                                 ██▓█     ██         
+            ████████████         █▓▓▓█ ███▓██        
+o         ██▓▓▓▓▓▓▓▓▓▓▓▓████     ██▓▓▓█▓▓▓██         
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓██████▓▓▓▓▓▓██          .
+         █▓▓▓█▓▓▓▓▓▓█▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓███             
+.o       █▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓█▓▓▓▓▓▓██             o.
+░▒░      ██▓░           ▓█▓▓▓▓██▓███            ░▒░  
 ▂▃▄▄▃▂▂▁▁▂▄▅▄▂▁▁▂▃▄▃▂▁▁▂▃▂▁▁▂▃▂▁▁▁▂▃▂▁▁▂▂▃▄▂▁▁▁▁▁▁▁  
-          ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░              
 ```
 
-**Read this:** the roll. The same body flipped belly-up (mouth gap and `▒` belly now on top), spray still hanging at the flanks. The 900 ms hold makes this the apex pose of the loop.
+**Read this:** apex with the original fluke/tail pose (sampled from the old frame set): the fluke is swung out to the right, spray still hangs at both flanks. The 900 ms hold makes this the “wow” frame of the loop.
 
-#### 7. frame `9` — U09 FLUKES
-
-```
-    '        .         '       .        '      .     
-                                   █▓▓█████▓▓█       
-                                    █▓▓▓▓▓▓▓█        
-                                      █▓▓▓▓█         
-                                       █▓▓█          
-                          o            █▓▓█     .    
-                            .o                o.     
-▃▄▅▄▃▂▂▃▄▅▆▅▄▂▁▁▂▄▅▄▂▁▁▂▃▄▃▂▁▁▂▃▂▁▁▂▃▄▂▒▒▁▂▃▄▃▂▁▁▁▁▁▁
-           ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░  ░▒▒▒▒▒▒▒       
-```
-
-**Read this:** the farewell. Bright flukes at the top right, tail stock descending into the sea, dim churn below, spray still hanging. The iconic “whale is gone” silhouette.
-
-#### 8. frame `10` — U10 SPLASH
-
-```
-    '        .         '       .        '      .     
-                                                     
-                                                     
-                    .            .                   
-              o             .           o            
-       .o           o              o            o.   
-          ░▒▒░        ░▒▒░      ░▒▒░        ░▒▒░     
-▃▄▅▄▃▂▂▃▄▅▆▅▄▂▁▁▂▄░▒▂▁▁▂▃▄▃▂▁▁▒░▂▁▁▂▃▄▂▁▁▁▂▃▄▃▂▁▁▁▁▁▁
-        ░▒▒▒            ▒▒▒▒            ▒▒▒░         
-```
-
-**Read this:** no whale. A falling crown (bright `░▒` clumps on rows 5–6, `o` droplets above), the surface still churning (row 7) and foam patches in the deep row. 300 ms — the fastest beat, the crash.
-
-#### 9. frame `13` — U13 WORD_ds
+#### 7. frame `9` — U09 FLUKES  ·  300 ms
 
 ```
     '        .         '       .        '      .     
                                                      
                                                      
                                                      
-                             █▓▓████▓▓█              
-               ██████████     █▓▓▓▓▓▓█               
-             ██▓▓▓▓▓▓▓▓▓▓███   █▓▓▓██                
-▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁
-             ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░   ds          
+                                    ██▓█             
+   o        ████████████           ██▓▓█         o   
+ .o       ██▓▓▓▓▓▓▓▓▓▓▓▓████       █▓▓▓███████    o. 
+  ░▒░    ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓███████▓▓▓▓▓▓▓▓▓██  ░▒░  
+▃▄▅▄▃▂▂▃▄▅▆▅▄▂▁▁▂▄▅▄▂▁▁▂▃▄▃▂▁▁▂▃▂▁▁▂▃▄▂▁▁▁▂▃▄▃▂▁▁▁▁▁▁
 ```
 
-**Read this:** reveal `ds` — two dim letters. The next loop's step 0 completes `dst` and holds it 900 ms.
+**Read this:** the farewell. The same sprite sits four rows up, so only the fluke and the top of the back remain above the water line; spray at both flanks. The iconic “whale is gone” silhouette before the splash.
 
-#### 10. frame `15` — I01 SLEEP_zz
+#### 8. frame `10` — U10 SPLASH  ·  300 ms
+
+```
+    '        .         '       .        '      .     
+                                                     
+                          o                          
+                  .                 .                
+            o          .          o                  
+     ▒░          ░▒        ░▒▒░          ▒░          
+        ░▒▒░        ░▒░     ░▒▒▒░     ░▒░       ░▒▒░ 
+                                                     
+▃▄▅▄▃▂▂▃▄▅▆▅▄▂▁▁▂▄▅▄▂▁▁▂▃▄▃▂▁▁▂▃▂▁▁▂▃▄▂▁▁▁▂▃▄▃▂▁▁▁▁▁▁
+```
+
+**Read this:** no whale. Falling spray (`░▒` clumps and `o`/`.` droplets) over the churned dim wave line; 300 ms — the fastest beat, the crash.
+
+#### 9. frame `13` — U13 WORD_ds  ·  300 ms
+
+```
+    '        .         '       .        '      .     
+                                                     
+                                                     
+                                                     
+                             █▓▓▓█████▓▓█            
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█                
+▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁ds▂▁▁▁▁▁
+```
+
+**Read this:** reveal `ds`; the next loop's step 0 completes `dst` and holds it 900 ms.
+
+#### 10. frame `15` — I01 SLEEP_zz  ·  1800 ms
 
 ```
   .        '       .        '      .        '        
+               z                                     
+                   z                                 
                                                      
-                        z                            
-                    z                                
-                                                     
-                             █▓▓████▓▓█              
-               ██████████     █▓▓▓▓▓▓█               
-▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁
-             ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░   dst         
+                             █▓▓▓█████▓▓█            
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█                
+▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁dst▁▁▁▁▁
 ```
 
-**Read this:** sleep, two Z's and the alternate star pattern (the twinkle). The sky is the only thing that changes between the sleep frames besides the Z height.
+**Read this:** sleep, two Zs and the alternate star pattern (the twinkle) — the sky is the only thing that changes between the sleep frames besides the Z height.
 
 ### 5.2 The other eight frames (intermediate variants)
 
-These are the remaining table entries. They are simple variants of the ten above
-(same scene, different height/spray/reveal stage); a cleaner redraw in phase 2 is
-allowed as long as the geometry contract (9×53, bands, glyph set) and the beat
-timing stay.
+Same single 9-row sprite, only its vertical position / water coverage / the
+original fluke pose changes — the whale never changes shape between frames.
 
+#### frame `1` — U01 BREATHE  ·  600 ms
 
-#### frame `1` — U01 BREATHE
+```
+    '        .         '       .        '      .     
+                                                     
+                                                     
+                                                     
+                             █▓▓▓█████▓▓█            
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█                
+▂▃▄▄▃▂▂▁▁▂▄▅▄▂▁▁▂▃▄▃▂▁▁▂▃▂▁▁▂▃▂▁▁▁▂▃▂▁▁▂▂▃▄▂▁dst▁▁▁  
+```
+
+**Read this:** exhale — the same low pose as CALM, only the wave pattern differs (this is the 600 ms breath before the spout).
+
+#### frame `2` — U02 SPOUT_A  ·  300 ms
+
+```
+    '        .         '       .        '      .     
+                                                     
+                                                     
+                                                     
+                 o           █▓▓▓█████▓▓█            
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█                
+▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁dst▁▁▁▁▁
+```
+
+**Read this:** first contact — one droplet `o` leaves the blowhole; the body has not moved.
+
+#### frame `4` — U04 SPOUT_C  ·  600 ms
+
+```
+    '        .         '       .        '      .     
+                ░░░o                                 
+                o░                                   
+                 ░ o                                 
+              .  ░           █▓▓▓█████▓▓█            
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█                
+▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁dst▁▁▁▁▁
+```
+
+**Read this:** the mushroom head is two rows wide with four falling droplets at different columns; the 600 ms hold lets the eye read the shape.
+
+#### frame `11` — U11 SETTLE  ·  600 ms
 
 ```
     '        .         '       .        '      .     
@@ -571,125 +618,79 @@ timing stay.
                                                      
                                                      
                                                      
-                             █▓▓████▓▓█              
-               ██████████     █▓▓▓▓▓▓█               
-▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁
-             ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░   dst         
-```
-
-**Read this:** exhale. The back drops one row; everything else is still. This is the 600 ms beat that gives the spout somewhere to grow from.
-
-#### frame `2` — U02 SPOUT_A
-
-```
-    '        .         '       .        '      .     
+                      o        o                     
+                  ░▒░              ░▒░               
                                                      
-                                                     
-                     o                               
-                                                     
-                             █▓▓████▓▓█              
-               ██████████     █▓▓▓▓▓▓█               
-▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁
-             ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░   dst         
+▁▁▂▁▁▁▁▂▁▁▁▁▁o▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁o▁▁▁▁▁▁▂▁▁▁▁▁
 ```
 
-**Read this:** first contact — a one-cell puff leaves the blowhole.
+**Read this:** aftermath. Spray is down to two dim clumps, two bubbles `o` sit back on the line, the wave pattern is calm again. 600 ms to let the eye exhale.
 
-#### frame `4` — U04 SPOUT_C
-
-```
-    '        .         '       .        '      .     
-                    ░░░o                             
-                    o░                               
-                     ░o                              
-                   . ░       █▓▓████▓▓█              
-               ██████████     █▓▓▓▓▓▓█               
-             ██▓▓▓▓▓▓▓▓▓▓███   █▓▓▓██                
-▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁
-             ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░   dst         
-```
-
-**Read this:** the mushroom head is two rows wide, four droplets fall at different columns. The 600 ms hold lets the eye read the shape.
-
-#### frame `11` — U11 SETTLE
+#### frame `12` — U12 WORD_d  ·  300 ms
 
 ```
     '        .         '       .        '      .     
                                                      
                                                      
                                                      
-                                                     
-                                                     
-                  ░▒░           ░▒░                  
-▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁o▁▁▁▁▂▁▁o▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁
-             ░▒▒▒▒▒o▒▒▒▒▒▒▒▒▒▒▒▒▒o▒▒▒░               
+                             █▓▓▓█████▓▓█            
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█                
+▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁d▁▂▁▁▁▁▁
 ```
 
-**Read this:** aftermath. Spray is reduced to two dim clumps, bubbles rise back into the sea; the wave line is calm again. 600 ms to let the eye exhale.
+**Read this:** wordmark reveal `d` — one dim letter on the water, right of the whale. Nothing else moves except the swell.
 
-#### frame `12` — U12 WORD_d
-
-```
-    '        .         '       .        '      .     
-                                                     
-                                                     
-                                                     
-                             █▓▓████▓▓█              
-               ██████████     █▓▓▓▓▓▓█               
-             ██▓▓▓▓▓▓▓▓▓▓███   █▓▓▓██                
-▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁
-             ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░   d           
-```
-
-**Read this:** reveal `d` — a single dim letter in the deep row. Nothing else moves except the swell.
-
-#### frame `14` — I00 SLEEP_z
+#### frame `14` — I00 SLEEP_z  ·  1800 ms
 
 ```
     '        .         '       .        '      .     
                                                      
+               z                                     
                                                      
-                                                     
-                    z                                
-                             █▓▓████▓▓█              
-               ██████████     █▓▓▓▓▓▓█               
-▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁
-             ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░   dst         
+                             █▓▓▓█████▓▓█            
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█                
+▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁dst▁▁▁▁▁
 ```
 
-**Read this:** sleep, one Z. The whale floats lower (only the back/tail strip bright above the line), `z` rises above the blowhole, dim hull below.
+**Read this:** sleep, one Z. The whale floats at the line, `z` rises over the back, stars hold.
 
-#### frame `16` — I02 BREATHE
+#### frame `16` — I02 BREATHE  ·  1500 ms
 
 ```
   .        '       .        '      .        '        
                                                      
                                                      
                                                      
-                             █▓▓████▓▓█              
-               ██████████     █▓▓▓▓▓▓█               
-             ██▓▓▓▓▓▓▓▓▓▓███   █▓▓▓██                
-▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁
-             ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░   dst         
+                             █▓▓▓█████▓▓█            
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█                
+▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁dst▁▁▁▁▁
 ```
 
-**Read this:** the sleep breath — the back rises one row with no Z.
+**Read this:** the sleep breath — same low pose, no Z; the wave line is the only motion.
 
-#### frame `17` — I03 SLEEP_SPOUT
+#### frame `17` — I03 SLEEP_SPOUT  ·  1200 ms
 
 ```
     '        .         '       .        '      .     
-                     o                               
-                     ░                               
-                     ░      z                        
-                                                     
-                             █▓▓████▓▓█              
-               ██████████     █▓▓▓▓▓▓█               
-▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁
-             ░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░   dst         
+                  o                                  
+                 ░          z                        
+                 ░                                   
+                             █▓▓▓█████▓▓█            
+            ████████████      ██▓▓▓▓▓▓▓█             
+          ██▓▓▓▓▓▓▓▓▓▓▓▓████   ██▓▓▓███              
+         ██▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓████▓▓▓▓█                
+▁▁▂▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁▁▂▁▁▁▁▁▁▂▁▁▁▁dst▁▁▁▁▁
 ```
 
-**Read this:** the lazy puff — short spout + Z, then back to step 0.
+**Read this:** the lazy puff — short spout from the blowhole plus a Z, then back to step 0.
+
+---
 
 ## 6. Implementation plan (phase 2)
 
@@ -707,10 +708,10 @@ from §5; every row exactly 53 chars):
 pub const ART_ROWS: usize = 9;
 pub const ART_WIDTH: usize = 53;
 
-/// Row tone bands: row 0 = night sky (dim), rows 1..=6 = air/whale (bright),
-/// rows 7..=8 = sea (dim). No art row is ever two colours.
+/// Row tone bands: row 0 = night sky (dim), rows 1..=7 = air/whale (bright),
+/// row 8 = sea (dim). No art row is ever two colours.
 pub const DIM_ROWS: [bool; ART_ROWS] =
-    [true, false, false, false, false, false, false, true, true];
+    [true, false, false, false, false, false, false, false, true];
 
 /// 18 frames, each exactly ART_ROWS rows of ART_WIDTH chars.
 pub const FRAMES: &[&[&str]] = &[
@@ -896,10 +897,10 @@ history) still do not pause it — identical to today's guard, per the brief's
    `IDLE[0]`; assert `sleep == true` only after the third loop and never before.
 5. **Wordmark**: frame 0 row 8 contains `dst`; frames 12/13 contain `d`/`ds`;
    the sleep frames keep `dst` (so the scenario probe keeps matching).
-6. **Band invariants**: row 0 contains only `'` and `.` (stars); rows 7–8 never
-   contain `█` or `▓` (the submerged/background band stays soft); rows 1–6 never
-   contain the water-line glyphs `▁▂▃▄▅▆`; frame 0 and the sleep frames have at
-   least one star in row 0.
+6. **Band invariants**: row 0 contains only `'` and `.` (stars); row 8 never
+   contains `█` or `▓` (the sea line stays soft); rows 1–7 never contain the
+   water-line glyphs `▁▂▃▄▅▆`; frame 0 and the sleep frames have at least one star
+   in row 0.
 
 ### 6.4 Optional fast path (do **not** ship it in the first implementation)
 
@@ -1059,7 +1060,7 @@ print(len(panels), 'panels ->', '/tmp/dst-splash-png/contact.png', sheet.size)
 
 What to look for at 3×/6×:
 
-* row 0 stars are visible but subordinate; row 7 wave line reads as a horizon;
+* row 0 stars are visible but subordinate; row 8 wave line reads as a horizon;
 * the whale silhouette is recognisable in `U00`/`U07`/`U08`; no glyph falls back
   to a hollow box (all glyphs are in the vendored 6×13 bitmap font);
 * bright vs dim contrast survives nearest-neighbour scaling (2 tones only);
@@ -1143,7 +1144,7 @@ higher, something is drawing twice per tick.
 | fastest hold | 300 ms (motion) |
 | longest hold | 1800 ms (sleep) |
 | opening frames / sleep frames | 14 / 4 (18 unique static frames) |
-| art block | 9 rows × 53 cells, single colour per row (row 0 / 7 / 8 dim) |
+| art block | 9 rows × 53 cells, single colour per row (row 0 / 8 dim) |
 
 ## Appendix B — cross-references
 
@@ -1158,3 +1159,117 @@ higher, something is drawing twice per tick.
   `tools/sim/run_demo.py` (splash check), `tools/sim/run_scenarios.py`
   (`check_clear`), `tools/sim/screen_sim.py` (`--watch`, `manifest.json`).
 * Brief constraints: 53×12 grid, 6×13 cells, 8 ANSI colours, 9-row art block.
+
+---
+
+## 9. Implementation record (phase 2, shipped)
+
+### 9.1 Files changed
+
+| file | change |
+| --- | --- |
+| `src/art.rs` | 18-frame scene built around the **original 9-row whale as one moving sprite**; `HOLD_MS`, `hold_ms()`, `hold_ticks()`, `OPENING`, `IDLE`, `IDLE_AFTER_LOOPS`, `TICK_MS`, `DIM_ROWS`, `row_is_dim()`, deterministic `Splash` scheduler + 6 unit tests (geometry/palette, holds, sequence bounds, scheduler order, band invariants, wordmark). |
+| `src/main.rs` | splash-only patch: `art: art::Splash` + `art_hold: u16` replace `art_frame`; `seed_splash` resets the scheduler; `anim_tick` is a hold countdown that repaints only when a frame changes; `art_frame_lines` returns `(line, kind)` and right-pads/truncates. Nothing else touched. |
+| `README.md` | “Animated splash” bullet describes the moving-whale scene, the bands and the sleep loop. |
+| `docs/UX-AUDIT.md` | startup row describes the scene and the one-row hint guarantee. |
+| `docs/SPLASH-STORYBOARD.md` | this document (phase table, final art §5, interface §6, implementation record §9). |
+
+Not committed — the lead owns the commit.
+
+### 9.2 Shipped art model: one whale, moved against a water line
+
+The hero is the **original 9-row 40-wide pixel whale from `cd64b87:src/art.rs`**
+(old frame 0), used verbatim and never redrawn per frame:
+
+| beat | what moves |
+| --- | --- |
+| CALM / BREATHE / SPOUT / ANTICIPATE / WORD / SLEEP | the sprite is **4 rows above the water line** → its top 4 rows (fluke blade, back, tail stock, tail/body join) are above water. Resting at 4 instead of 3 rows keeps the **fluke stock joined to the hull above the line** (the source art only joins them at that row). |
+| RISE | lifted 2 rows: six bright rows clear (back, mouth, fluke stock). |
+| BREACH | lifted to the top: seven bright rows clear — fluke, body, mouth gap and belly all readable; only the fluke **tip clips in the dim sky row** (it is not drawn, rather than drawn dim). |
+| ROLL | one row down with the **old fluke/tail pose** (old frame 7): the fluke is swung out at the apex. |
+| FLUKES | four rows up with the **old fluke/tail pose** (old frame 8): only the fluke and the top of the back remain above the line. |
+| SPLASH / SETTLE | no whale — spray and bubbles over the water line only. |
+
+Row bands changed to **`[sky, bright ×7, sea]`**: the previous two-row sea (rows
+7–8) cannot host the 9-row whale fully bright at the peak, so the sea is now a
+single dim water row (row 8) that paints the wave line, foam, bubbles and the
+`dst` wordmark; row 0 stays the dim star row. Every frame is 53×9; the whale’s
+shape is identical across frames — only its vertical position, the original
+fluke pose and the water coverage change.
+
+### 9.3 Cadence and per-tick CPU cost (unchanged from phase 1)
+
+* `anim_tick` = one **300 ms** idle key-poll tick; no new timer, thread or `stty` call.
+* Hold tick (majority): one integer decrement + return — no allocation, no I/O, no paint.
+* Frame-change tick: 9 rows formatted (~486 B) + one 12-row `draw()`; changes ≈
+  **2.1/s opening**, **0.6/s sleep**; ≈ **5.4 paints/s vs 6.7/s before** (~18 % fewer).
+* Measured pty output during an 8 s capture: **39.5 KB / 7.9 s ≈ 4.9 KiB/s**.
+* 90–140 ms motion holds are not used: the UI only wakes on the 300 ms poll
+  (optional fast path in §6.4, deliberately not shipped).
+
+### 9.4 Visual revision history
+
+1. **v1 (phase-2 first cut)**: 30×6 hand crop → read as a blocky barge; rejected in review.
+2. **v2**: 36×6 max-downsample of the same icon — still blocky, and the raised tail
+   had a black seam against the hull in rise/breach frames (rejected in review).
+3. **v3 (shipped)**: the original 9-row whale is a single sprite moved against the
+   water line. Defects fixed during the revision: tail/hull seam (resting frames
+   raised to 4 rows so the join stays above water); the fluke was briefly drawn
+   dim in the sky row (read as a grey bar) → the tip is now clipped instead of
+   dimmed; spout origin moved down to the blowhole row so the plume touches the
+   back; flank spray/droplets rebalanced for the 40-wide body.
+
+### 9.5 Old-vs-new comparison (for the reviewer)
+
+* Old splash captured from a `git worktree add /tmp/dst-old cd64b87` build with the
+  same simulator/HOME: `/tmp/dst-old-shots/01_old_000.png`.
+* Final 14-frame sheet (`--scale 3`, real device-fidelity renderer):
+  `/tmp/splash-final3/contact_sheet.png`
+* Side-by-side (old splash | new CALM | new BREACH): `/tmp/splash-final3/old_vs_new.png`
+* **Verdict**: at BREACH the whale is the old silhouette — fluke top-right, body,
+  mouth gap and belly at the same relative positions, tail attached — it reads at
+  least as clearly as the old splash (the only differences are the clipped fluke
+  tip at the screen edge and the bottom line hidden by the water row). At CALM the
+  fluke/back/tail-stock above the water line read as the same whale at the
+  surface; stars and `dst` frame it. The tail is joined to the hull in all 14
+  inspected frames.
+
+### 9.6 Verification evidence (all re-runnable)
+
+```bash
+cd /Users/bytedance/Works/m5stack-tools/deepseek-tui-cardputer
+cargo test                       # 67 passed, incl. the 6 art tests
+cargo build                      # debug binary for the simulator
+cd tools/sim
+python3 run_demo.py              # 10 checks passed, contact_sheet.png written
+python3 run_scenarios.py clear ux   # clear: screen reset to splash; ux: PASS
+```
+
+Splash-only recipe (closed `api.base`, `tui.tips_shown: true` → `--home /tmp/dst-splash-home`):
+
+```bash
+python3 screen_sim.py --home /tmp/dst-splash-home --out /tmp/splash-final3/seq \
+  --startup-ms 50 --watch 8 --interval-ms 100 --watch-prefix v --scale 3
+# 48 PNGs → 14 unique consecutive frames (0..=13), reviewed at 960x510
+# frame order/timing matches HOLD_MS within the 100 ms capture grid
+```
+
+Behaviour checks (same HOME):
+
+* **pause on typing**: `--send x --wait-ms 900 --snap p1 --wait-ms 900 --snap p2`
+  → art rows 0–8 identical (frozen), hint row still present, input shows `x`.
+* **end on first message**: `hi` + Enter → art and hint gone, `> hi` in the transcript.
+* **`/clear` re-seeds**: `hi` + Enter, `/clear` + Enter → 9 art rows + hint return at
+  the start of the opening loop.
+* **six languages** (en/zh/es/ja/de/it, short + 48-char model): splash hint row
+  measured through the simulator is 40–53 cells, art rows 53, no wrapping.
+* **narrow terminal** (`--cols 40`): rows truncate to 40 cells, max line 40, no wrap.
+
+### 9.7 Known follow-ups
+
+* The sea band is now **one dim row**; if a two-row sea is wanted later, the
+  clean way is a per-frame row-tone map (so the peak breach can paint the whale
+  bright on what are normally sea rows) — that is an interface change and was
+  explicitly out of scope for this revision.
+* A “wake on keypress” for the sleep loop would need a flag in `edit()`; out of scope.
+* The 100–150 ms motion-hold fast path (§6.4) remains optional/unshipped.

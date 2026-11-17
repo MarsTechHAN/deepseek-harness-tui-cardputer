@@ -66,8 +66,10 @@ pub struct Scr {
     /// Live reasoning lines (folded into one summary line when content starts).
     think_lines: Vec<String>,
     think_active: bool,
-    /// Animated splash: current frame and whether the animation is running.
-    art_frame: usize,
+    /// Animated splash: deterministic frame scheduler, hold countdown and
+    /// whether the animation is running. See `art::Splash`.
+    art: art::Splash,
+    art_hold: u16,
     art_on: bool,
     /// menuconfig-style configuration screen.
     menu: Option<Menu>,
@@ -188,7 +190,8 @@ impl Scr {
             speech_ok: true,
             think_lines: Vec::new(),
             think_active: false,
-            art_frame: 0,
+            art: art::Splash::new(),
+            art_hold: 0,
             art_on: false,
             menu: None,
             palette_sel: 0,
@@ -322,13 +325,17 @@ impl Scr {
         }
     }
 
-    /// Draw frame 0 of the animated splash plus the hint line. Used at startup
-    /// and whenever `/clear` resets the screen.
+    /// Draw the first frame of the animated splash plus the hint line. Used at
+    /// startup and whenever `/clear` resets the screen.
     pub fn seed_splash(&mut self, model: &str) {
         self.lines.clear();
         self.scroll = 0;
         self.splash_done = false;
-        self.art_frame = 0;
+        // The splash is a story: a seed always restarts it at step 0 of the
+        // opening loop (never the sleeping idle loop), including after /clear.
+        self.art = art::Splash::new();
+        let (frame, ticks) = self.art.current();
+        self.art_hold = ticks.saturating_sub(1);
         // A new screen must not inherit transient state: leaving the thinking
         // panel or the live line behind is what made `/clear` look half-done.
         self.think_lines.clear();
@@ -336,10 +343,10 @@ impl Scr {
         self.live = None;
         self.note = None;
         self.artifact = None;
-        for l in art_frame_lines(0, self.cols) {
-            self.lines.push((l, K_ART));
+        for (l, kind) in art_frame_lines(frame, self.cols) {
+            self.lines.push((l, kind));
         }
-        // One row is all the room under the 9-row sprite; a long model name
+        // One row is all the room under the 9-row art block; a long model name
         // is shortened so the key hints behind it stay readable.
         self.lines.push((splash_hint(model, self.cols), K_DIM));
         self.art_on = true;
@@ -347,6 +354,11 @@ impl Scr {
     }
 
     /// Advance the splash animation while the user has not started working.
+    ///
+    /// One call = one idle key-poll tick (300 ms, see `read_key_timeout`). A
+    /// frame only changes when its hold has expired, so calm/sleep frames cost
+    /// one swap per 0.6-1.8 s while motion frames swap every 0.3 s; the
+    /// top-of-loop `draw()` repaints the unchanged frame in between.
     fn anim_tick(&mut self) {
         if !self.art_on
             || !self.input.is_empty()
@@ -355,9 +367,14 @@ impl Scr {
         {
             return;
         }
-        self.art_frame = (self.art_frame + 1) % art::FRAMES.len();
-        for (i, l) in art_frame_lines(self.art_frame, self.cols).into_iter().enumerate() {
-            self.lines[i] = (l, K_ART);
+        if self.art_hold > 0 {
+            self.art_hold -= 1;
+            return;
+        }
+        let (frame, ticks) = self.art.next();
+        self.art_hold = ticks.saturating_sub(1);
+        for (i, (l, kind)) in art_frame_lines(frame, self.cols).into_iter().enumerate() {
+            self.lines[i] = (l, kind);
         }
         self.draw();
     }
@@ -2602,12 +2619,22 @@ pub(crate) fn poll_mode(on: bool) {
 
 // ------------------------------------------------------------------ splash
 
-/// One animation frame, centred in the current terminal width. The art is
-/// pre-rendered to block glyphs (see `art.rs`), so this stays cheap.
-fn art_frame_lines(frame: usize, cols: usize) -> Vec<String> {
+/// One animation frame, centred in the current terminal width. Rows carry their
+/// splash tone (dim night sky / sea vs bright air and whale) so the scene keeps
+/// its parallax on the 8-colour palette. Rows are right-padded so the block
+/// always occupies the same cells even if an editor stripped trailing spaces;
+/// on a terminal narrower than the panel they are truncated instead of wrapped.
+fn art_frame_lines(frame: usize, cols: usize) -> Vec<(String, u8)> {
     let f = &art::FRAMES[frame % art::FRAMES.len()];
     let pad = " ".repeat(cols.saturating_sub(art::ART_WIDTH) / 2);
-    f.iter().map(|l| format!("{pad}{l}")).collect()
+    f.iter()
+        .enumerate()
+        .map(|(row, line)| {
+            let body: String = line.chars().take(cols).collect();
+            let body = format!("{body:<width$}", width = cols.min(art::ART_WIDTH));
+            (format!("{pad}{body}"), if art::row_is_dim(row) { K_DIM } else { K_ART })
+        })
+        .collect()
 }
 
 /// Only one `dst` may own a terminal. Two instances both reading /dev/tty is
