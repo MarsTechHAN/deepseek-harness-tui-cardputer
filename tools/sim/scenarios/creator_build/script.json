@@ -14,7 +14,10 @@
       "description": "Shows the charge level and charging state.",
       "annotation": "Shows the battery level.\n\nRun it from /apps (Enter) or ask me to run it.\nIt reads /sys/class/power_supply/BAT0/capacity once a second.",
       "kind": "sh",
-      "entry": "run.sh"
+      "entry": "run.sh",
+      "requires": [
+       "sh"
+      ]
      }
     },
     {

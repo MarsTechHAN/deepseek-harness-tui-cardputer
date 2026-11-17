@@ -4586,6 +4586,9 @@ fn apps_menu(scr: &mut Scr, config_rc: &ConfigRc) -> AppsAction {
         if !app.default_args.is_empty() {
             d.push(i18n::tf("apps_args", &[&app.default_args]));
         }
+        if !app.requires.is_empty() {
+            d.push(i18n::tf("apps_requires", &[&app.requires.join(", ")]));
+        }
         for (label, stamp) in [
             ("apps_last_run", &app.last_run),
             ("apps_last_test", &app.last_test),

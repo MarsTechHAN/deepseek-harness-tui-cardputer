@@ -1,0 +1,1 @@
+{"name": "ok", "title": "OK app", "category": "tools", "description": "Declares sh; runs fine.", "kind": "sh", "entry": "run.sh", "version": 1, "created": "2026-01-01T10:00:00+08:00", "updated": "2026-01-01T10:00:00+08:00", "requires": ["sh"]}

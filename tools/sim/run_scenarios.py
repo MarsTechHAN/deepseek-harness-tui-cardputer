@@ -1318,6 +1318,7 @@ def check_creator_build(screens, reqs, work):
     checks.append(("kind: sh" in prev and "entry: run.sh" in prev,
                    "app preview shows kind and entry"))
     checks.append(("version: 1" in prev, "app preview shows the manifest version"))
+    checks.append(("requires: sh" in prev, "app preview shows declared requirements"))
     checks.append(("Shows the battery level." in prev,
                    "app preview shows the annotation"))
     checks.append(("CREATOR MODE" in sys1 and "INSTALLED APPS (0)" in sys1,
@@ -1720,7 +1721,25 @@ def check_creator_tty_test(screens, reqs, work):
     return checks
 
 
+
+def check_creator_requires(screens, reqs, work):
+    results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
+    tested = screens.get("tested", "")
+    checks = []
+    checks.append(("requires 'dst-definitely-missing-tool'" in results
+                   and "not installed on this device" in results,
+                   "a missing requirement is refused with an actionable error"))
+    checks.append(("SHOULD NOT RUN" not in results,
+                   "the refused app was never executed"))
+    checks.append(("OK APP RAN" in results and "exit=0" in results,
+                   "an app whose requirements exist still runs"))
+    checks.append(("* app_test" in tested, "both tests are shown as cards"))
+    checks.append((len(reqs) == 2, "exactly the scripted requests were made"))
+    return checks
+
+
 CHECKS = {
+    "creator_requires": check_creator_requires,
     "creator_tty_test": check_creator_tty_test,
     "creator_home": check_creator_home,
     "creator_capture": check_creator_capture,

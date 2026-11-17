@@ -147,7 +147,8 @@ repository.
   `last_test` with outcome, duration and time), shown in the `/apps` annotation
   panel (a `!` on the list row marks a failing app), and a failed last run/test
   is flagged in the model's app catalog so it fixes the app before reusing it.
-  `default_args` are used when the user launches an app from `/apps` (`i` there
+  Apps can declare `requires` (binaries on PATH or absolute paths); dst refuses
+  to run/test an app whose requirements are missing, naming the binary. `default_args` are used when the user launches an app from `/apps` (`i` there
   pre-fills an improvement request for the selected app). A `capture: true` app
   gets a piped stdout so dst can forward the bytes to the
   panel *and* record a cleaned `state/last-run.log`; `/apps` `l` replays it.
@@ -462,7 +463,7 @@ WeChat login chain, provider auth/rate-limit failures and their recovery, long
 input scrolling/editing (including CJK), the multi-entry tool-output viewer,
 the scrolling artifact panel, and creator mode `creator_mode`, `creator_build`,
 `creator_run`, `creator_run_esc`, `creator_run_args`, `creator_tty_test`,
-`creator_apps_run`,
+`creator_apps_run`, `creator_requires`,
 `creator_apps_zh`, `creator_home`, `creator_skill`, `creator_app_test`, `creator_tty_test`, `creator_kinds`,
 `creator_nudge`; app run/test history and skill management are asserted there)
 and

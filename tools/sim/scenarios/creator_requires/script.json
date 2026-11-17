@@ -1,0 +1,28 @@
+{
+ "responses": [
+  {
+   "reasoning": "Test both apps; one has a missing requirement.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "r1",
+     "name": "app_test",
+     "arguments": {
+      "name": "needs-missing"
+     }
+    },
+    {
+     "id": "r2",
+     "name": "app_test",
+     "arguments": {
+      "name": "ok"
+     }
+    }
+   ]
+  },
+  {
+   "reasoning": "One refused, one ran.",
+   "content": "The missing requirement was refused before running; the other app tested fine."
+  }
+ ]
+}

@@ -110,6 +110,7 @@ watchers already cover that); grabbing the framebuffer; a GUI toolkit.
   "description": "Shows the charge level and charging state, refreshed live.",
   "kind": "sh",
   "entry": "run.sh",
+  "requires": ["sh"],
   "default_args": "--fast",
   "capture": false,
   "version": 1,
@@ -137,6 +138,10 @@ Rules:
 - `app_export` packs the whole package (manifest, annotation, program, state)
   into `~/.dst/tmp/app-<category>-<name>.tar.gz` for backups or for copying an
   app off the device; it is the model-side export path.
+- `requires` lists binaries the app needs (commands on PATH or absolute
+  paths, max 8). `app_run`/`app_test` refuse to start an app whose
+  requirements are missing, with an error naming the exact binary — important
+  on a minimal device where python/curl may not exist.
 - `default_args` is passed when the user launches the app from `/apps`
   (model `app_run` args override it); useful for CLI-style apps with a fixed
   mode. The annotation panel shows the version and the default args.
@@ -397,6 +402,9 @@ model → app_run{name, timeout_s?, args?}
     transcript notice; no model request.
   - `creator_skill_rollback` — two saves build v1/v2, `skill_rollback` restores
     the v1 body as v3 with the pre-rollback body archived under `.history/v2.md`.
+  - `creator_requires` — an app declaring a missing binary is refused before
+    running (the other one still runs) and creator_build's panel shows
+    `requires: sh`.
   - `creator_apps_run` also checks `default_args` (menu launch passes
     `--fast`, panel shows `args: --fast`) and `creator_app_test` checks the
     launcher title failing count plus `i` pre-filling an improvement request.

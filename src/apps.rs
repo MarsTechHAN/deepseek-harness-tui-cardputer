@@ -65,6 +65,8 @@ pub struct App {
     /// can see whether an app still works without running it.
     pub last_run: Option<RunStamp>,
     pub last_test: Option<RunStamp>,
+    /// Binaries the app needs on the device (checked before every run/test).
+    pub requires: Vec<String>,
     /// Arguments passed when the user launches the app from /apps without
     /// typing any (model-initiated app_run args still win when provided).
     pub default_args: String,
@@ -179,6 +181,12 @@ fn manifest_json(a: &App) -> J {
     if let Some(r) = &a.last_test {
         pairs.push(("last_test", stamp_json(r)));
     }
+    if !a.requires.is_empty() {
+        pairs.push((
+            "requires",
+            J::Arr(a.requires.iter().map(|r| J::s(r)).collect()),
+        ));
+    }
     if !a.default_args.is_empty() {
         pairs.push(("default_args", J::s(&a.default_args)));
     }
@@ -243,6 +251,17 @@ fn parse_manifest(dir: &Path) -> Option<App> {
             .unwrap_or("")
             .trim()
             .to_string(),
+        requires: v
+            .get("requires")
+            .and_then(|x| x.as_arr())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -484,7 +503,7 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
 
     let dir = root.join(&category).join(&name);
     let existed = dir.join("app.json").is_file();
-    let (created, version, last_run, last_test, old_capture, old_args) = if existed {
+    let (created, version, last_run, last_test, old_capture, old_args, old_requires) = if existed {
         let old = parse_manifest(&dir).ok_or_else(|| {
             format!("{} already exists but its app.json is unreadable; fix it by hand", dir.display())
         })?;
@@ -495,9 +514,10 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
             old.last_test,
             old.capture,
             old.default_args,
+            old.requires,
         )
     } else {
-        (now_stamp(), 1, None, None, false, String::new())
+        (now_stamp(), 1, None, None, false, String::new(), Vec::new())
     };
     let capture = args
         .get("capture")
@@ -509,6 +529,33 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
         .unwrap_or(old_args);
     if default_args.chars().count() > 200 {
         return Err("default_args is longer than 200 characters".into());
+    }
+    let requires: Vec<String> = match args.get("requires") {
+        Some(J::Arr(arr)) => arr
+            .iter()
+            .filter_map(|x| x.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        Some(J::Str(s)) => s
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        _ => old_requires,
+    };
+    let mut requires = requires;
+    requires.truncate(8);
+    for r in &requires {
+        if r.chars().count() > 64
+            || !r
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+        {
+            return Err(format!(
+                "invalid requirement '{r}': use a command name or absolute path"
+            ));
+        }
     }
     let app = App {
         name,
@@ -525,6 +572,7 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
         last_test,
         capture,
         default_args,
+        requires,
     };
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     chmod(&dir, 0o755);
@@ -665,11 +713,33 @@ fn app_argv(args: &str) -> Vec<String> {
         .collect()
 }
 
+/// Refuse to run/test an app whose declared requirements are missing, with an
+/// error that names the exact binary (the device may not have python/curl).
+pub fn check_requires(app: &App) -> Result<(), String> {
+    for req in &app.requires {
+        let ok = if req.starts_with('/') {
+            Path::new(req).is_file()
+        } else {
+            command_exists(req)
+        };
+        if !ok {
+            return Err(format!(
+                "app '{}' requires '{}', which is not installed on this device; \
+install it or change the app to use something present",
+                app.label(),
+                req
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Like `run_plan`, with extra arguments appended after the entry file.
 pub fn run_plan_args(app: &App, args: &str) -> Result<(String, Vec<String>), String> {
     if args.chars().count() > 200 || args.contains('\0') {
         return Err("app arguments are too long (max 200 characters)".into());
     }
+    check_requires(app)?;
     let extra = app_argv(args);
     let (prog, mut argv) = run_plan_plain(app)?;
     argv.extend(extra);
@@ -828,6 +898,8 @@ for the real size). app_run is for the user to see the real full-screen behaviou
 - app_export / app_import move a package as a .tar.gz under ~/.dst/tmp (backup, copy off the \
 device, restore later); an imported archive must contain exactly one <category>/<name>/ tree \
 and is validated before it is installed (replace=true to overwrite).\n\
+- Declare the binaries your app needs in `requires` (e.g. [\"python3\", \"tar\"]); dst checks \
+them before every run/test and fails with an actionable error if one is missing.\n\
 - Use default_args for an app that needs a fixed argument when the user launches it from /apps; \
 app_run args override them for a one-off run.\n\
 - Set capture=true on an app that prints text and you want the run remembered: dst records its \
@@ -1517,6 +1589,7 @@ you do not rewrite.",
                 Param::opt("entry", "string", "Relative entry file (e.g. run.sh); required unless kind=doc."),
                 Param::opt("capture", "boolean", "Record stdout/stderr of app_run into state/last-run.log and replay it from /apps. Sets stdout to a pipe (not a tty): use for text apps, not full-screen TUIs."),
                 Param::opt("default_args", "string", "Arguments used when the user launches the app from /apps (max 200 chars); app_run args override them."),
+                Param::opt("requires", "array", "Command names or absolute paths the app needs (e.g. [\"python3\",\"/usr/bin/curl\"]); dst refuses to run/test when one is missing. Max 8."),
             ],
             concurrency_safe: false,
             timeout_ms: 10_000,
@@ -2114,6 +2187,7 @@ mod tests {
             last_test: None,
             capture: false,
             default_args: String::new(),
+            requires: Vec::new(),
         }
     }
 
@@ -2317,6 +2391,21 @@ mod tests {
         assert_eq!(buf, b"2345");
         append_capped(&mut buf, b"678", 4);
         assert_eq!(buf, b"5678");
+    }
+
+    #[test]
+    fn requirements_are_preflighted() {
+        let mut a = app("x", "sh", "run.sh");
+        a.requires = vec!["sh".into()];
+        assert!(check_requires(&a).is_ok(), "sh is on PATH");
+        a.requires = vec!["/bin/sh".into()];
+        assert!(check_requires(&a).is_ok(), "absolute path exists");
+        a.requires = vec!["dst-missing-tool-xyz".into()];
+        let err = check_requires(&a).unwrap_err();
+        assert!(err.contains("dst-missing-tool-xyz"), "{err}");
+        assert!(err.contains("requires"), "{err}");
+        a.requires = vec!["/no/such/binary".into()];
+        assert!(check_requires(&a).is_err());
     }
 
     #[test]
