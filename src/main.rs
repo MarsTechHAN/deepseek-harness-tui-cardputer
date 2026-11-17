@@ -3771,33 +3771,47 @@ fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
     };
     let mut sel = 0usize;
     let mut preview: Option<Vec<String>> = None;
+    let mut confirm: Option<String> = None;
+    let mut pending: Vec<(String, u8)> = Vec::new();
     loop {
         let skills = crate::skills::load_meta();
         let disabled = config_rc.borrow().disabled_skills.clone();
         let servers = crate::mcp::server_summary();
         let mut items: Vec<MenuItem> = Vec::new();
         let mut details: Vec<Vec<String>> = Vec::new();
-        // Some(name) = skill row (x toggles); None = MCP row (inspect only).
+        // Some(name) = skill row (x toggles, d deletes when user-owned);
+        // None = MCP row (inspect only).
         let mut kinds: Vec<Option<String>> = Vec::new();
+        let mut deletable: Vec<bool> = Vec::new();
         for sk in &skills {
             let off = disabled.iter().any(|d| d == &sk.name);
-            let label = if off {
-                format!("skill  {} {}", sk.name, i18n::t("ext_disabled"))
+            let model_tag = if sk.origin == "model" {
+                format!("  [{}]", i18n::t("ext_model_tag"))
             } else {
-                format!("skill  {}", sk.name)
+                String::new()
+            };
+            let label = if off {
+                format!("skill  {} {}{}", sk.name, i18n::t("ext_disabled"), model_tag)
+            } else {
+                format!("skill  {}{}", sk.name, model_tag)
             };
             items.push(MenuItem { label, value: String::new() });
-            details.push(vec![
+            let mut d = vec![
                 format!("skill: {}", sk.name),
                 format!("path: {}", shorten(sk.dir.display().to_string())),
                 format!(
                     "status: {}",
                     if off { i18n::t("ext_disabled") } else { "enabled" }
                 ),
-                String::new(),
-                sk.description.clone(),
-            ]);
+            ];
+            if sk.origin == "model" {
+                d.push(format!("origin: {}", i18n::t("ext_model_tag")));
+            }
+            d.push(String::new());
+            d.push(sk.description.clone());
+            details.push(d);
             kinds.push(Some(sk.name.clone()));
+            deletable.push(sk.is_user());
         }
         for (server, tools) in &servers {
             items.push(MenuItem {
@@ -3808,23 +3822,51 @@ fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             d.extend(tools.iter().map(|t| format!("- {t}")));
             details.push(d);
             kinds.push(None);
+            deletable.push(false);
         }
         if items.is_empty() {
             scr.push(i18n::t("ext_empty"), K_DIM);
-            return;
+            break;
         }
         if sel >= items.len() {
             sel = items.len() - 1;
         }
+        let hint = match &confirm {
+            Some(name) => i18n::tf("ext_delete_ask", &[name]),
+            None => i18n::t("ext_hint").to_string(),
+        };
         scr.menu = Some(Menu {
             title: i18n::t("ext_title").into(),
             items: items.clone(),
             sel,
-            hint: i18n::t("ext_hint").into(),
+            hint,
             preview: preview.clone(),
         });
         scr.draw();
         let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
+        if let Some(name) = confirm.clone() {
+            confirm = None;
+            if k == b'y' || k == b'Y' {
+                if let Some(sk) = skills.iter().find(|s| s.name == name) {
+                    match crate::skills::delete(sk) {
+                        Ok(_) => {
+                            pending.push((i18n::tf("ext_deleted_skill", &[&name]), K_DIM));
+                            let mut c = config_rc.borrow_mut();
+                            if let Some(pos) = c.disabled_skills.iter().position(|d| d == &name) {
+                                c.disabled_skills.remove(pos);
+                                let _ = c.save();
+                            }
+                        }
+                        Err(e) => pending.push((
+                            i18n::tf("ext_delete_failed", &[&name, &e]),
+                            K_ERR,
+                        )),
+                    }
+                }
+                preview = None;
+            }
+            continue;
+        }
         if k == 0x1b {
             match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
@@ -3832,11 +3874,11 @@ fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                     Some(b'B') => { sel = (sel + 1).min(items.len() - 1); preview = None; }
                     _ => {}
                 },
-                _ => { scr.menu = None; scr.draw(); return; }
+                _ => break,
             }
             continue;
         }
-        if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return; }
+        if k == 0x03 || k == b'q' { break; }
         if k == b'x' || k == b'X' {
             if let Some(name) = &kinds[sel] {
                 let mut c = config_rc.borrow_mut();
@@ -3846,8 +3888,17 @@ fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                     c.disabled_skills.push(name.clone());
                 }
                 let _ = c.save();
-                drop(c);
                 preview = None;
+            }
+            continue;
+        }
+        if k == b'd' || k == b'D' {
+            // Delete is offered only for skill packages dst owns (user dir):
+            // /etc/dst/skills stays read-only, MCP rows have no package.
+            if deletable[sel] {
+                if let Some(name) = &kinds[sel] {
+                    confirm = Some(name.clone());
+                }
             }
             continue;
         }
@@ -3855,6 +3906,11 @@ fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             preview = Some(details[sel].clone());
         }
     }
+    scr.menu = None;
+    for (text, kind) in pending {
+        scr.push(&text, kind);
+    }
+    scr.draw();
 }
 
 /// CtrlO: browse recent tool output and open the full text in the panel viewer.
@@ -4405,6 +4461,17 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
             d.push(i18n::tf("apps_entry", &[&app.entry]));
         }
         d.push(i18n::tf("apps_updated", &[&app.updated]));
+        for (label, stamp) in [
+            ("apps_last_run", &app.last_run),
+            ("apps_last_test", &app.last_test),
+        ] {
+            if let Some(r) = stamp {
+                d.push(i18n::tf(
+                    label,
+                    &[&r.outcome, &crate::apps::stamp_hhmm(&r.at)],
+                ));
+            }
+        }
         let files = crate::apps::files(app);
         if !files.is_empty() {
             let joined = files

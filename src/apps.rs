@@ -37,6 +37,15 @@ pub const MAX_TIMEOUT_S: u64 = 600;
 /// User-initiated runs from /apps: long-press Esc is the exit, not a timer.
 pub const DIRECT_TIMEOUT_S: u64 = 3_600;
 
+/// One recorded run/test of an app (written back into app.json).
+#[derive(Clone, Debug, Default)]
+pub struct RunStamp {
+    pub at: String,
+    pub secs: f32,
+    /// "exit 0" | "exit 3" | "timeout 2s" | "esc" | "signal"
+    pub outcome: String,
+}
+
 /// A saved app package, loaded from `<root>/<category>/<name>/app.json`.
 #[derive(Clone, Debug)]
 pub struct App {
@@ -52,6 +61,10 @@ pub struct App {
     pub created: String,
     pub updated: String,
     pub dir: PathBuf,
+    /// Last full-screen run and last headless test, so the user and the model
+    /// can see whether an app still works without running it.
+    pub last_run: Option<RunStamp>,
+    pub last_test: Option<RunStamp>,
 }
 
 impl App {
@@ -121,8 +134,29 @@ fn reserved_name(path: &str) -> bool {
     p == "app.json" || p == "app.md" || p == "prompt.md"
 }
 
-fn manifest_json(a: &App) -> J {
+fn stamp_json(r: &RunStamp) -> J {
     obj(vec![
+        ("at", J::s(&r.at)),
+        ("secs", J::Num(r.secs as f64)),
+        ("outcome", J::s(&r.outcome)),
+    ])
+}
+
+fn parse_stamp(v: &J) -> Option<RunStamp> {
+    let at = v.get("at")?.as_str()?.to_string();
+    Some(RunStamp {
+        at,
+        secs: v.get("secs").and_then(|x| x.as_num()).unwrap_or(0.0) as f32,
+        outcome: v
+            .get("outcome")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+    })
+}
+
+fn manifest_json(a: &App) -> J {
+    let mut pairs = vec![
         ("name", J::s(&a.name)),
         ("title", J::s(&a.title)),
         ("category", J::s(&a.category)),
@@ -132,7 +166,14 @@ fn manifest_json(a: &App) -> J {
         ("version", J::Num(a.version as f64)),
         ("created", J::s(&a.created)),
         ("updated", J::s(&a.updated)),
-    ])
+    ];
+    if let Some(r) = &a.last_run {
+        pairs.push(("last_run", stamp_json(r)));
+    }
+    if let Some(r) = &a.last_test {
+        pairs.push(("last_test", stamp_json(r)));
+    }
+    obj(pairs)
 }
 
 fn parse_manifest(dir: &Path) -> Option<App> {
@@ -178,6 +219,8 @@ fn parse_manifest(dir: &Path) -> Option<App> {
         created: v.get("created").and_then(|x| x.as_str()).unwrap_or("").to_string(),
         updated: v.get("updated").and_then(|x| x.as_str()).unwrap_or("").to_string(),
         dir: dir.to_path_buf(),
+        last_run: v.get("last_run").and_then(parse_stamp),
+        last_test: v.get("last_test").and_then(parse_stamp),
     })
 }
 
@@ -234,6 +277,13 @@ pub fn find(name: &str) -> Option<App> {
             .find(|a| a.category.eq_ignore_ascii_case(cat) && a.name.eq_ignore_ascii_case(n));
     }
     apps.into_iter().find(|a| a.name.eq_ignore_ascii_case(want))
+}
+
+/// Compact "HH:MM" from an ISO stamp (only the time of a run matters in the
+/// 12-row panel; the full timestamp stays in app.json).
+pub fn stamp_hhmm(at: &str) -> String {
+    let idx = at.find('T').map(|i| i + 1).unwrap_or(0);
+    at[idx..].chars().take(5).collect()
 }
 
 /// The request body of a prompt app (never the generated APP.md header).
@@ -383,13 +433,13 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
 
     let dir = root.join(&category).join(&name);
     let existed = dir.join("app.json").is_file();
-    let (created, version) = if existed {
+    let (created, version, last_run, last_test) = if existed {
         let old = parse_manifest(&dir).ok_or_else(|| {
             format!("{} already exists but its app.json is unreadable; fix it by hand", dir.display())
         })?;
-        (old.created, old.version.saturating_add(1))
+        (old.created, old.version.saturating_add(1), old.last_run, old.last_test)
     } else {
-        (now_stamp(), 1)
+        (now_stamp(), 1, None, None)
     };
     let app = App {
         name,
@@ -402,6 +452,8 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
         created,
         updated: now_stamp(),
         dir: dir.clone(),
+        last_run,
+        last_test,
     };
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     chmod(&dir, 0o755);
@@ -512,6 +564,27 @@ fn command_exists(prog: &str) -> bool {
     false
 }
 
+/// Write one run/test stamp back into the app's manifest (best effort: a run
+/// must not fail because history could not be written).
+fn record_stamp(app: &App, key: &str, outcome: &str, secs: f32) {
+    let path = app.dir.join("app.json");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    let mut v = match crate::json::parse(&text) {
+        Some(v) => v,
+        None => return,
+    };
+    let stamp = RunStamp {
+        at: now_stamp(),
+        secs,
+        outcome: outcome.to_string(),
+    };
+    v.set(key, stamp_json(&stamp));
+    let _ = write_atomic(&path, &(v.dump() + "\n"));
+}
+
 /// Split user/model supplied app arguments into argv tokens.
 fn app_argv(args: &str) -> Vec<String> {
     args.split_whitespace()
@@ -606,11 +679,25 @@ pub fn catalog(apps: &[App]) -> String {
         } else {
             format!("{}:{}", app.kind, app.entry)
         };
+        // A failed last run/test is the one thing the model must know before
+        // deciding to reuse or rewrite an app; successful history stays out of
+        // the prompt to keep the catalog cheap.
+        let mut health = String::new();
+        for (label, stamp) in [("last run", &app.last_run), ("last test", &app.last_test)] {
+            if let Some(st) = stamp {
+                let bad = !(st.outcome == "exit 0" || st.outcome == "esc" || st.outcome.is_empty());
+                if bad {
+                    health.push_str(&format!(" (!{label}: {})", st.outcome));
+                    break;
+                }
+            }
+        }
         s.push_str(&format!(
-            "- {} — {} [{}]{}\n",
+            "- {} — {} [{}]{}{}\n",
             app.label(),
             if app.title.is_empty() { &app.name } else { &app.title },
             kind,
+            health,
             desc
         ));
     }
@@ -921,6 +1008,15 @@ fn run_headless(app: &App, args: &str, stdin_text: &str, timeout_s: u64) -> Resu
     let _ = std::fs::create_dir_all(&dir);
     let log_path = dir.join(format!("app-test-{safe}.log"));
     let _ = std::fs::write(&log_path, &log);
+    let outcome = if timed_out {
+        format!("timeout {timeout_s}s")
+    } else {
+        match code {
+            Some(c) => format!("exit {c}"),
+            None => "signal".to_string(),
+        }
+    };
+    record_stamp(app, "last_test", &outcome, secs);
     Ok(HeadlessRun {
         code,
         timed_out,
@@ -1381,6 +1477,15 @@ pub fn run_on_screen_args(app: &App, timeout_s: u64, args: &str) -> Result<Strin
     clear_screen();
     let secs = started.elapsed().as_secs_f32();
     let code = status.and_then(|s| s.code());
+    let outcome_label = match outcome {
+        "esc" => "esc".to_string(),
+        "timeout" => format!("timeout {timeout_s}s"),
+        _ => match code {
+            Some(c) => format!("exit {c}"),
+            None => "signal".to_string(),
+        },
+    };
+    record_stamp(app, "last_run", &outcome_label, secs);
     let result = match outcome {
         "esc" => format!(
             "app '{label}' stopped by long-press Esc after {secs:.1}s; screen back on dst."
@@ -1419,6 +1524,8 @@ mod tests {
             created: String::new(),
             updated: String::new(),
             dir: PathBuf::from("/nonexistent"),
+            last_run: None,
+            last_test: None,
         }
     }
 
@@ -1536,6 +1643,49 @@ mod tests {
         assert!(save_at(&root, &args(&[("name", "x"), ("title", ""), ("description", "d"), ("annotation", "a")])).is_err());
         assert!(save_at(&root, &args(&[("name", "x"), ("title", "t"), ("description", "d"), ("annotation", ""), ])).is_err());
         assert!(save_at(&root, &args(&[("name", "x"), ("title", "t"), ("description", "d"), ("annotation", "a"), ("kind", "sh")])).is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn run_history_roundtrips_and_survives_saves() {
+        let root = tmpdir("history");
+        let (app, _) = save_at(
+            &root,
+            &args(&[
+                ("name", "runner"),
+                ("title", "Runner"),
+                ("description", "d"),
+                ("annotation", "a"),
+                ("kind", "sh"),
+                ("entry", "run.sh"),
+            ]),
+        )
+        .unwrap();
+        std::fs::write(app.dir.join("run.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+        record_stamp(&app, "last_run", "exit 3", 1.25);
+        record_stamp(&app, "last_test", "exit 0", 0.5);
+        let loaded = load_at(&root);
+        assert_eq!(loaded[0].last_run.as_ref().unwrap().outcome, "exit 3");
+        assert_eq!(loaded[0].last_run.as_ref().unwrap().secs, 1.25);
+        assert_eq!(loaded[0].last_test.as_ref().unwrap().outcome, "exit 0");
+        // A manifest update (new description) keeps the recorded history.
+        let (again, _) = save_at(
+            &root,
+            &args(&[
+                ("name", "runner"),
+                ("title", "Runner"),
+                ("description", "now with more docs"),
+                ("annotation", "a"),
+                ("kind", "sh"),
+                ("entry", "run.sh"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(again.version, 2);
+        let reloaded = load_at(&root);
+        assert_eq!(reloaded[0].description, "now with more docs");
+        assert_eq!(reloaded[0].last_run.as_ref().unwrap().outcome, "exit 3");
+        assert_eq!(reloaded[0].last_test.as_ref().unwrap().outcome, "exit 0");
         std::fs::remove_dir_all(&root).ok();
     }
 

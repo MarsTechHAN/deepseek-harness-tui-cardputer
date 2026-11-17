@@ -1333,6 +1333,7 @@ def check_creator_build(screens, reqs, work):
 def check_creator_run(screens, reqs, work):
     app = screens.get("app_screen", "")
     after = screens.get("after_run", "")
+    panel = screens.get("panel", "")
     checks = []
     checks.append(("charge  87%" in app, "the app draws on the panel"))
     checks.append(("Battery viewer" in app, "the panel belongs to the app while it runs"))
@@ -1341,6 +1342,8 @@ def check_creator_run(screens, reqs, work):
     checks.append(("* app_run" in after, "the tool card records the run"))
     checks.append(("time limit" in after, "the time limit returns the screen"))
     checks.append(("It ran on the panel" in after, "the turn finishes after the app returns"))
+    checks.append(("last run: timeout 2s" in panel,
+                   "/apps records the last run (timeout 2s) in the panel"))
     checks.append((len(reqs) == 2, "one request before and one after the app run"))
     return checks
 
@@ -1481,7 +1484,23 @@ def check_creator_skill(screens, reqs, work):
     checks.append(("creator: files changed but no app saved" not in built,
                    "saving a skill counts as persisted work (no nudge)"))
     checks.append(("one skill: battery-report" in second, "the model sees its own skill"))
-    checks.append((len(reqs) == 3, "exactly the scripted requests were made"))
+    ext = screens.get("ext_list", "")
+    ask = screens.get("ext_confirm", "")
+    after = screens.get("ext_after", "")
+    sys4 = system_text(reqs[3]) if len(reqs) > 3 else ""
+    checks.append(("battery-report" in ext and "battery-probe" in ext
+                   and "[model]" in ext,
+                   "/extensions marks the model-written skills"))
+    checks.append(("delete skill battery-probe? y/n" in ask,
+                   "d asks before deleting a skill package"))
+    checks.append((not os.path.isdir(os.path.join(home, ".dst", "skills", "battery-probe"))
+                   and os.path.isdir(os.path.join(home, ".dst", "skills", "battery-report")),
+                   "only the selected skill package is removed"))
+    checks.append(("deleted skill battery-probe" in after,
+                   "the deletion is reported in the transcript"))
+    checks.append(("- battery-probe:" not in sys4 and "- battery-report:" in sys4,
+                   "the deleted skill leaves the catalog on the next turn"))
+    checks.append((len(reqs) == 4, "exactly the scripted requests were made"))
     return checks
 
 
@@ -1507,6 +1526,9 @@ def check_creator_app_test(screens, reqs, work):
                    "the full log file exists for the model to read"))
     checks.append(("exit=Some(3)" in broken_log or "cannot continue" in broken_log,
                    "the failing run is logged too"))
+    panel = screens.get("panel", "")
+    checks.append(("last test: exit 3" in panel and "last run:" not in panel,
+                   "the panel records the headless test (and no screen run)"))
     checks.append((len(reqs) == 2, "exactly the scripted requests were made"))
     return checks
 

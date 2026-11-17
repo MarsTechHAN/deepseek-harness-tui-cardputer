@@ -33,6 +33,15 @@ pub struct Skill {
     pub description: String,
     pub body: String,
     pub dir: PathBuf,
+    /// "model" for skills the agent wrote itself; empty for hand-installed ones.
+    pub origin: String,
+}
+
+impl Skill {
+    /// Is the package writable by dst (under the user skills dir, not /etc)?
+    pub fn is_user(&self) -> bool {
+        self.dir.starts_with(crate::config::skills_dir())
+    }
 }
 
 fn frontmatter(text: &str) -> (Vec<(String, String)>, String) {
@@ -176,13 +185,16 @@ pub fn save_at(
     let dir = root.join(&name);
     let existed = dir.join("SKILL.md").is_file();
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let text = format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}\n");
+    let text = format!(
+        "---\nname: {name}\ndescription: {description}\norigin: model\n---\n\n{body}\n"
+    );
     write_atomic(&dir.join("SKILL.md"), &text)?;
     let sk = Skill {
         name,
         description,
         body: body.to_string(),
         dir,
+        origin: "model".to_string(),
     };
     note_saved(&sk);
     Ok((sk, !existed))
@@ -225,8 +237,20 @@ pub fn write_file(name: &str, path: &str, content: &str) -> Result<(Skill, Strin
         description: String::new(),
         body: String::new(),
         dir,
+        origin: "model".to_string(),
     };
     Ok((sk, rel, content.len()))
+}
+
+/// Remove a user-owned skill package (refuses /etc or anything outside the
+/// user skills dir). Returns the package path that was removed.
+pub fn delete(sk: &Skill) -> Result<String, String> {
+    let root = crate::config::skills_dir();
+    if !sk.dir.starts_with(&root) {
+        return Err("refusing to delete a skill outside the user skills dir".into());
+    }
+    std::fs::remove_dir_all(&sk.dir).map_err(|e| format!("{}: {e}", sk.dir.display()))?;
+    Ok(sk.dir.display().to_string())
 }
 
 fn ok(pairs: Vec<(&str, J)>) -> J {
@@ -372,11 +396,17 @@ pub fn load_meta() -> Vec<Skill> {
                 .find(|(k, _)| k == "description")
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default();
+            let origin = meta
+                .iter()
+                .find(|(k, _)| k == "origin")
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
             out.push(Skill {
                 name,
                 description,
                 body,
                 dir,
+                origin,
             });
         }
     }
@@ -469,6 +499,7 @@ mod tests {
         assert!(sk.dir.join("SKILL.md").is_file());
         let text = std::fs::read_to_string(sk.dir.join("SKILL.md")).unwrap();
         assert!(text.starts_with("---\nname: battery-report\n"));
+        assert!(text.contains("origin: model"));
         assert!(text.contains("description: Use when the user asks for a battery report"));
         assert!(text.contains("# Steps"));
         assert!(save_at(&root, "bad/name", "d", "b").is_err());
@@ -486,6 +517,7 @@ mod tests {
             description: "d".into(),
             body: "body".into(),
             dir: PathBuf::from("/tmp/demo"),
+            origin: String::new(),
         };
         let all = vec![sk];
         let got = body_for(&all, "demo").unwrap();

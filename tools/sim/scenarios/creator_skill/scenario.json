@@ -7,7 +7,7 @@
    }
   },
   {
-   "send": "把读取电量并出报告的方法记成一个 skill"
+   "send": "\u628a\u8bfb\u53d6\u7535\u91cf\u5e76\u51fa\u62a5\u544a\u7684\u65b9\u6cd5\u8bb0\u6210\u4e00\u4e2a skill"
   },
   {
    "key": "Enter"
@@ -31,6 +31,53 @@
     "timeout_ms": 30000
    },
    "snap": "second"
+  },
+  {
+   "send": "/extensions"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 600,
+   "snap": "ext_list"
+  },
+  {
+   "send": "d"
+  },
+  {
+   "wait_ms": 350,
+   "snap": "ext_confirm"
+  },
+  {
+   "send": "y"
+  },
+  {
+   "wait_ms": 500,
+   "snap": "ext_deleted"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 350
+  },
+  {
+   "wait_ms": 300,
+   "snap": "ext_after"
+  },
+  {
+   "send": "any skills now?"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 1200,
+    "timeout_ms": 30000
+   },
+   "snap": "gone"
   }
  ]
 }

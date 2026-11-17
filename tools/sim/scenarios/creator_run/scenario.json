@@ -36,6 +36,34 @@
   },
   {
    "snap": "after_run"
+  },
+  {
+   "send": "/apps"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_ms": 450
+  },
+  {
+   "key": "Right"
+  },
+  {
+   "wait_ms": 500,
+   "snap": "panel"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 250
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 250
   }
  ]
 }

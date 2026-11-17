@@ -134,11 +134,22 @@ Rules:
   so a counter or cache never pollutes APP.md/app.json.
 - Model-written skills use the existing skills layout:
   `~/.dst/skills/<name>/{SKILL.md, …supporting files}`; `skill_save` writes the
-  frontmatter + body, `skill_file` adds support files. They appear in the
-  SKILLS catalog (and in `/extensions`) from the next turn on, and are loaded
-  with the `skill` tool exactly like hand-installed skills.
+  frontmatter + body (including `origin: model`), `skill_file` adds support
+  files. They appear in the SKILLS catalog (and in `/extensions`) from the next
+  turn on, and are loaded with the `skill` tool exactly like hand-installed
+  skills.
+- `/extensions` marks model-written skills with a localized `[model]` badge and
+  lets the user manage them: `x` disables/enables (existing), `d` deletes the
+  selected user-owned package after `delete skill <name>? y/n`. Packages under
+  `/etc/dst/skills` are read-only (no delete).
 - The injected catalog names the entry (`[sh:run.sh]`), so the model knows which
-  file to rewrite without reading the manifest first.
+  file to rewrite without reading the manifest first. A failed last run/test is
+  appended to the catalog line (` (!last test: exit 3)`) so the model knows to
+  fix an app before reusing it.
+- Each run/test is recorded back into `app.json` as `last_run` / `last_test`
+  (`{at, secs, outcome}`, outcome `exit N` / `timeout Ns` / `esc` / `signal`).
+  The `/apps` annotation panel shows both with a short time; a manifest update
+  by `app_save` preserves them.
 - Writes go through `app_save` / `app_file`; each file is capped (32 KB per
   file, 256 KB per app) so a model cannot fill the microSD through the tool.
 
@@ -331,11 +342,14 @@ model → app_run{name, timeout_s?, args?}
 - Simulator scenarios (`tools/sim/run_scenarios.py`):
   - `creator_mode` — toggle on/off from the `/config` Mode row, idle hint,
     transcript notice; no model request.
-  - `creator_skill` — the model writes a skill (`SKILL.md` with frontmatter),
-    the transcript announces it, and the next turn's system prompt contains it
-    in the SKILLS catalog (no nudge).
+  - `creator_skill` — the model writes skills (`SKILL.md` with frontmatter and
+    `origin: model`), the transcript announces them, the next turn's system
+    prompt contains them in the SKILLS catalog (no nudge), `/extensions` marks
+    them `[model]`, and `d` + `y` deletes the selected package (only the
+    selected one; the catalog drops it next turn).
   - `creator_app_test` — two apps tested headlessly: stdout/argv/stdin capture,
-    a 0 exit and a 3 exit, stderr capture, and the full log file on disk.
+    a 0 exit and a 3 exit, stderr capture, the full log file on disk, and
+    `last test: exit 3` recorded in the broken app's panel.
   - `creator_kinds` — a binary-kind app runs on the panel, a prompt app launched
     from `/apps` is submitted as the next request and the model follows it.
   - `creator_build` — model saves `system/battery_viewer` + writes `run.sh`,
@@ -349,7 +363,8 @@ model → app_run{name, timeout_s?, args?}
     `$DST_APP_STATE` points at the package's state directory.
   - `creator_run` — seeded app, model calls `app_run`; the panel shows the app's
     output mid-run, then returns to the TUI with a timeout result; the tool
-    card shows the run.
+    card shows the run, and the `/apps` annotation panel records
+    `last run: timeout 2s`.
   - `creator_run_esc` — long-press Esc kills a long-running app and returns.
   - `creator_apps_zh` — `/apps` menu, empty state and creator hint in Chinese.
 - `run_all.py --quick` (demo + all scenarios), then the full suite; the visual

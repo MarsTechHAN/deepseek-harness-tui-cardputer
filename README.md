@@ -141,6 +141,10 @@ repository.
   takes over the panel full-screen and hands it back when the app exits.
   Launches are bounded by the platform: long-Esc/timeout backstop, cwd + state
   dir inside the package, and ulimits (no core dumps, CPU time, file size).
+  Runs and headless tests are recorded back into `app.json` (`last_run` /
+  `last_test` with outcome, duration and time), shown in the `/apps` annotation
+  panel, and a failed last run/test is flagged in the model's app catalog so it
+  fixes the app before reusing it.
 - A skills-style catalog (`- system/battery_viewer — Battery viewer [sh:run.sh]:
   …`, one line per app, capped) is injected into the system prompt each turn, so
   the model knows what already exists and which file to rewrite instead of
@@ -158,8 +162,11 @@ repository.
   changed files without saving an app, so work is not lost between sessions.
 - Creator mode also writes **skills**: `skill_save` / `skill_file` create a
   systematic, self-contained package under `~/.dst/skills/<name>/` (SKILL.md
-  frontmatter + body + support files). It joins the SKILLS catalog on the next
-  turn and is loaded with the `skill` tool, exactly like hand-installed skills.
+  frontmatter + body + support files, marked `origin: model`). It joins the
+  SKILLS catalog on the next turn and is loaded with the `skill` tool, exactly
+  like hand-installed skills. `/extensions` badges model-written skills and lets
+  the user disable (`x`) or delete (`d`, with y/n) them; `/etc/dst/skills` stays
+  read-only.
   The prompt spells out the split: app = runnable device thing, skill = complete
   reusable procedure, memory = short fragments/preferences.
 - Only available on the interactive TUI: `app_run` fails cleanly in `--once`,
@@ -438,7 +445,8 @@ input scrolling/editing (including CJK), the multi-entry tool-output viewer,
 the scrolling artifact panel, and creator mode `creator_mode`, `creator_build`,
 `creator_run`, `creator_run_esc`, `creator_run_args`, `creator_apps_run`,
 `creator_apps_zh`, `creator_skill`, `creator_app_test`, `creator_kinds`,
-`creator_nudge`) and
+`creator_nudge`; app run/test history and skill management are asserted there)
+and
 asserts on captured screens *and* on the request log
 (e.g. that a `<goal_round>` prompt was sent, or that a checkpoint message
 reached the next request). `check_memory.py` samples RSS across a 20-turn

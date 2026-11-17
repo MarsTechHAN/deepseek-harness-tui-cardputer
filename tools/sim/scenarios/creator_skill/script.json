@@ -12,16 +12,29 @@
       "description": "Use when the user asks for a battery status report",
       "instructions": "# Battery report\n\n1. Read /sys/class/power_supply/*/capacity and status.\n2. Render a three-line summary: level, state, time remaining if known.\n3. End with one actionable line.\n\n## Output format\nBAT 87% discharging\n"
      }
+    },
+    {
+     "id": "s2",
+     "name": "skill_save",
+     "arguments": {
+      "name": "battery-probe",
+      "description": "Use when the user asks to probe the battery node for debugging",
+      "instructions": "# Battery probe\n\nPrint /sys/class/power_supply/*/capacity raw values.\n"
+     }
     }
    ]
   },
   {
    "reasoning": "Saved.",
-   "content": "Saved the `battery-report` skill; it joins the SKILLS catalog next turn."
+   "content": "Saved the `battery-report` and `battery-probe` skills; they join the SKILLS catalog next turn."
   },
   {
    "reasoning": "Reading the catalog.",
    "content": "You have one skill: battery-report (battery status report)."
+  },
+  {
+   "reasoning": "Catalog check.",
+   "content": "No skills saved."
   }
  ]
 }
