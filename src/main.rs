@@ -259,10 +259,18 @@ impl Scr {
                     break;
                 }
                 // Break at a space when one is reasonably near the edge.
-                let end = match last_space {
+                let mut end = match last_space {
                     Some(b) if b > i + cols / 2 => b,
                     _ => j.max(i + 1),
                 };
+                // A hard break can strand one or two characters on the next
+                // line (a long saved-file path ended in a lone `t`); when the
+                // overflow is that small, break at the preceding space.
+                if end == j && chars.len() - j <= 3 {
+                    if let Some(b) = last_space {
+                        end = b;
+                    }
+                }
                 out.push(chars[i..end].iter().collect::<String>().trim_end().to_string());
                 i = end;
                 while i < chars.len() && chars[i] == ' ' {
@@ -324,11 +332,9 @@ impl Scr {
         for l in art_frame_lines(0, self.cols) {
             self.lines.push((l, K_ART));
         }
-        // One row is all the room under the 9-row sprite; ellipsise long
-        // model names instead of letting the hint wrap and push art off the
-        // top of the panel.
-        let hint = format!("  {}", i18n::tf("hints", &[model]));
-        self.lines.push((fit_ellipsis(&hint, self.cols), K_DIM));
+        // One row is all the room under the 9-row sprite; a long model name
+        // is shortened so the key hints behind it stay readable.
+        self.lines.push((splash_hint(model, self.cols), K_DIM));
         self.art_on = true;
         self.draw();
     }
@@ -632,13 +638,22 @@ impl Scr {
         s.push_str("\x1b[1;37m");
         s.push_str(&fit(&format!(" {} {}", i18n::t("approval_tool"), a.tool), self.cols));
         s.push_str("\x1b[0m\x1b[K\r\n\r\n");
-        s.push_str("\x1b[0;37m");
         let mut shown = 0usize;
         for raw in a.args.lines() {
+            // Colour removed/added lines so an edit is readable at a glance;
+            // the framebuffer terminal has 8 colours, red/green are safe.
+            let colour = if raw.trim_start().starts_with("- ") {
+                "\x1b[0;31m"
+            } else if raw.trim_start().starts_with("+ ") {
+                "\x1b[0;32m"
+            } else {
+                "\x1b[0;37m"
+            };
             for line in wrap(raw) {
                 if shown >= 6 {
                     break;
                 }
+                s.push_str(colour);
                 s.push_str(&fit(&format!(" {line}"), self.cols));
                 s.push_str("\x1b[0m\x1b[K\r\n");
                 shown += 1;
@@ -1716,6 +1731,46 @@ fn dw(s: &str) -> usize {
     s.chars().map(Scr::cw).sum()
 }
 
+/// Splash hint line under the 9-row sprite. If the model name pushes the
+/// line past the panel width, shorten the model instead of cutting the key
+/// hints after it (`... | hold Tab to talk | /help` stays visible).
+fn splash_hint(model: &str, cols: usize) -> String {
+    let full = format!("  {}", i18n::tf("hints", &[model]));
+    if dw(&full) <= cols {
+        return full;
+    }
+    let suffix = i18n::tf("hints", &[""]);
+    let room = cols.saturating_sub(2 + dw(&suffix));
+    if room >= 8 {
+        let short = fit_dots(model, room);
+        return format!("  {}", i18n::tf("hints", &[&short]));
+    }
+    fit_dots(&full, cols)
+}
+
+/// Truncate to `cols` cells with an ASCII `...` marker.
+///
+/// Transcript helpers run text through `tidy`, which expands a single `…`
+/// into three cells; a line that fit with `fit_ellipsis` then re-wrapped and
+/// split its last word (the blocked-reason preview is the live example).
+fn fit_dots(s: &str, cols: usize) -> String {
+    if dw(s) <= cols {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    let mut w = 0usize;
+    for ch in s.chars() {
+        let cw = Scr::cw(ch);
+        if w + cw > cols.saturating_sub(3) {
+            break;
+        }
+        out.push(ch);
+        w += cw;
+    }
+    out.push_str("...");
+    out
+}
+
 /// Like `fit`, but marks visible truncation with an ellipsis.
 fn fit_ellipsis(s: &str, cols: usize) -> String {
     if dw(s) <= cols {
@@ -2086,10 +2141,11 @@ impl<'a> harness::Ui for TermUi<'a> {
                 let preview = first_lines(&content, if is_error { 3 } else { 1 });
                 if !preview.trim().is_empty() {
                     let kind = if is_error { K_ERR } else { K_RES };
-                    self.scr.push(
-                        &fit(&format!("  \u{21b3} {preview}"), cols.saturating_sub(1)),
-                        kind,
-                    );
+                    // One row per card: flatten and ellipsise. The full text
+                    // stays available in CtrlO, and a hard cut looked broken.
+                    let flat = preview.split_whitespace().collect::<Vec<_>>().join(" ");
+                    let line = format!("  \u{21b3} {flat}");
+                    self.scr.push(&fit_dots(&line, cols), kind);
                 }
             }
             Ev::Artifact { title, body } => {
@@ -2110,7 +2166,7 @@ impl<'a> harness::Ui for TermUi<'a> {
                 });
                 self.scr.draw();
             }
-            Ev::Context(c) => self.scr.push(&format!("\u{ff0b} {c}"), K_DIM),
+            Ev::Context(c) => self.scr.push(&context_marker(&c), K_DIM),
             Ev::Compacting { tokens, messages } => {
                 self.reset_think();
                 self.scr.live = Some((
@@ -2314,6 +2370,29 @@ impl<'a> TermUi<'a> {
         self.scr
             .push(&i18n::tf("force_sent", &[&line]), K_TOOL);
     }
+}
+
+/// Compact, localized one-line marker for an injected context message.
+///
+/// Ambient context is written for the model, not the user: the goal wrap-up
+/// and repeat-call reminders are paragraphs. Dumping them into the transcript
+/// pushed the actual answer off a 12-row panel, so only a marker is shown; the
+/// full text still reaches the model. Human-readable injections (steering)
+/// keep their first line, ellipsised.
+fn context_marker(text: &str) -> String {
+    let key = if text.starts_with("<goal_complete>") {
+        "context_goal_complete"
+    } else if text.starts_with("<goal_blocked>") {
+        "context_goal_blocked"
+    } else if text.starts_with("You are repeating the exact same tool call")
+        || text.starts_with("Repeated tool call detected")
+    {
+        "context_repeat"
+    } else {
+        let first = text.lines().next().unwrap_or("").trim();
+        return format!("\u{ff0b} {}", fit_dots(first, 50));
+    };
+    format!("\u{ff0b} {}", i18n::t(key))
 }
 
 fn first_line_short(s: &str, n: usize) -> String {

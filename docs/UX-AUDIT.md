@@ -14,15 +14,15 @@ asserted in code.
 | --- | --- | --- |
 | Startup | splash art + hint, idle hints, first-run tips | fixed: the hint no longer wraps/clips the 9-row whale with a long model name; tips open with the tagline and are cleared by the first prompt |
 | Onboarding | endpoint menu, sandbox picker | ok: previews explain tradeoffs, rows full width |
-| Chat | live thinking, streaming tail, steer marker | fixed: reasoning now wraps at word boundaries (it used to split words at the column edge and fold into a `▸ thinking …` line) |
-| Tools | pending card, result row, CtrlO list, artifact viewer | ok: one row per card, full output scrolls/saves |
-| Permissions | strict approval (bash + edit diff) | ok: human summary, -old/+new preview, keys |
+| Chat | live thinking, streaming tail, steer marker, injected context | fixed: reasoning wraps at word boundaries; model-facing context (repeat reminders, goal wrap-up) is a one-line marker instead of a dumped paragraph, so the answer stays on screen |
+| Tools | pending card, result row, CtrlO list, artifact viewer | fixed: the result preview is one ellipsised row (long errors used to be cut mid-word); full text stays in CtrlO |
+| Permissions | strict approval (bash + edit diff) | fixed: `-`/`+` diff lines are coloured red/green; human summary, keys |
 | Commands | palette, help menu, previews, 1/N position | fixed: `/help` dropped a redundant footer row (8 commands visible, was 7) and its hint now reads `Enter run/complete` |
 | Config | all 15 rows, numeric prompts, model/judge/edit, extensions | fixed: the third-party capability footer fits 53 cells in all six languages instead of being cut mid-word; menu values keep a 2-cell gap |
 | Sessions | resume list/search/expanded/resumed, rewind list/preview | fixed: resume hint shortened so it no longer truncates |
-| Background | task list (all/running/watchers), save, full output | ok: filter titles, full-width rows |
+| Background | task list (all/running/watchers), save, full output | fixed: the footer hint fits 53 cells in all six languages (it was cut to `f…`); filter titles and full-width rows |
 | Queue | CtrlQ editor, delete, pull back into prompt | ok: full-width selection |
-| Goal | pursuing / objective / paused / done badges | ok: badge and todo progress fit the right slot |
+| Goal | pursuing / objective / paused / done badges, wrap-up | fixed: state glyphs are ASCII-safe (paused/done rendered as boxes before); the model-facing wrap-up paragraph is now a one-line `+ goal wrap-up …` marker instead of filling the transcript |
 | Login | `/login` menu, direct typing prompts, WeChat QR screen | fixed: choice menus say `select · Enter choose · Esc back` instead of the config-editor wording; three paths, numbered guide left + QR right, live scanned/finishing status, QR validity countdown, `r retry` after repeated failures |
 | Login QA | phone page states, i18n, QR scanability | ok: six-language page, countdown/expired/retry/cancel, QR decodes with jsQR (`https://open.weixin.qq.com/connect/confirm?...`), cancel aborts the flow |
 | Voice | push-to-talk REC, transcript insertion, `speak` tool card, mocked offline | ok: `DST_MOCK_SPEECH=1` fakes ASR/TTS so the whole voice path is reviewable on the simulator; `auto_send_voice` now actually applies |
@@ -43,6 +43,15 @@ asserted in code.
 - reasoning panel wraps at word boundaries
 - menu label/value gap fixed (2 cells) so an ellipsised title never touches the
   right-hand value
+- menu/status footer hints capped at 53 cells in all six languages (unit test)
+  and truncated with an ASCII `...` inside the transcript, where `tidy()`
+  expands `…` and used to re-wrap the last word onto its own line
+- transcript wrapper no longer strands one or two characters on the next line
+  (a saved-file path ended in a lone `t`)
+- injected model instructions (repeat-call reminder, goal wrap-up) render as a
+  localized one-line marker; the model still receives the full text
+- goal badge glyphs ASCII-safe (`|| Goal paused`, `ok Goal done`); strict-mode
+  edit diff coloured red/green
 - voice: `auto_send_voice` wired, localized "official API only" error,
   `DST_MOCK_SPEECH` test hooks (ASR/TTS) for the simulator
 - (from earlier rounds) full-width menus, right-aligned values, ellipsised

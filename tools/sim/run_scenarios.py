@@ -326,6 +326,11 @@ def check_repeat_reminder(screens, reqs, work):
     checks.append((len(reqs) == 4, "three repeated calls plus the final answer"))
     checks.append(("Stopped repeating." in "\n".join(screens.values()),
                    "model answer after the reminder rendered"))
+    done = screens.get("done", "")
+    checks.append(("You are repeating the exact same tool call" not in done,
+                   "model-facing reminder text is not dumped into the transcript"))
+    checks.append(("repeated tool call" in done,
+                   "a one-line context marker explains the injected reminder"))
     return checks
 
 
@@ -369,6 +374,10 @@ def check_goal_complete(screens, reqs, work):
     checks.append(("Goal marked complete; closing message." in done,
                    "closing message rendered after completion"))
     checks.append(("Pursuing Goal" not in done and "Goal done" in done, "goal status shows done"))
+    checks.append(("<goal_complete>" not in done,
+                   "model-facing wrap-up instructions are not dumped"))
+    checks.append(("goal wrap-up" in done,
+                   "a one-line context marker explains the wrap-up"))
     checks.append(('"phase": "complete"' in goal or '"phase":"complete"' in goal,
                    "goal persisted as complete"))
     checks.append((len(reqs) == 2, "no further goal round after completion"))
@@ -1032,6 +1041,12 @@ def check_goal_blocked(screens, reqs, work):
     all_screens = "\n".join(screens.values())
     checks.append(("Blocked rejected" in all_screens,
                    "model continues after the rejected report"))
+    rejected = screens.get("rejected", "")
+    reason = next((l for l in rejected.splitlines()
+                   if "blocked requires at least 3" in l), "")
+    checks.append((bool(reason) and reason.rstrip().endswith("...")
+                   and "consecutive goal rounds" not in reason,
+                   "long tool error preview is ellipsised, not cut mid-word"))
     checks.append((len(reqs) >= 1, "the rejected tool call produced a request"))
     checks.append(("goal disarmed after interrupt" in all_screens or
                    "disarmed" in all_screens, "Esc stops the autonomous run"))

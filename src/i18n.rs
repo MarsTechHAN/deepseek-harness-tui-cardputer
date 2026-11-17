@@ -148,7 +148,7 @@ const EN: &[(&str, &str)] = &[
     ("ext_title", "Skills & MCP"),
     ("ext_hint", "↑↓ select · Enter details · x toggle · Esc"),
     ("menu_extensions", "Skills & MCP"),
-    ("jobs_hint", "\u{2191}\u{2193} select \u{b7} Enter output \u{b7} s save \u{b7} x kill \u{b7} Esc · f filter"),
+    ("jobs_hint", "↑↓ · Enter open · s save · x kill · f filter"),
     ("jobs_none", "No background jobs or watchers"),
     ("menu_save", "Save & exit"),
     ("menu_hint", "\u{2191}\u{2193} move \u{b7} Enter change \u{b7} Esc exit"),
@@ -300,6 +300,9 @@ const EN: &[(&str, &str)] = &[
     ("ui_collapsed", "thinking {}s | {} chars (collapsed)"),
     ("ui_steer", "steer: {} (next step)"),
     ("ui_goal_round", "goal round {}"),
+    ("context_goal_complete", "goal wrap-up: writing the closing message"),
+    ("context_goal_blocked", "goal wrap-up: writing the blocked report"),
+    ("context_repeat", "repeated tool call: reminder injected"),
     ("ui_queued", "queued ({}): {}"),
     ("ui_saved", "saved {}"),
     ("ui_save_failed", "save failed: {}"),
@@ -393,7 +396,7 @@ const ZH: &[(&str, &str)] = &[
     ("ext_title", "技能与 MCP"),
     ("ext_hint", "↑↓ 选择 · Enter 详情 · x 启用/禁用 · Esc"),
     ("menu_extensions", "技能与 MCP"),
-    ("jobs_hint", "\u{2191}\u{2193} 选择 \u{b7} Enter 输出 \u{b7} s 保存 \u{b7} x 结束 \u{b7} Esc · f 过滤"),
+    ("jobs_hint", "↑↓ · Enter 输出 · s 保存 · x 结束 · f 过滤"),
     ("jobs_none", "没有后台任务或监视器"),
     ("menu_save", "保存并退出"),
     ("menu_hint", "\u{2191}\u{2193} 移动 \u{b7} Enter 修改 \u{b7} Esc 退出"),
@@ -552,6 +555,9 @@ const ZH: &[(&str, &str)] = &[
     ("ui_collapsed", "思考 {}s | {} 字符（已折叠）"),
     ("ui_steer", "注入: {}（下一步）"),
     ("ui_goal_round", "Goal 第 {} 轮"),
+    ("context_goal_complete", "goal 收尾：生成总结消息"),
+    ("context_goal_blocked", "goal 收尾：生成阻塞说明"),
+    ("context_repeat", "检测到重复工具调用：已注入提醒"),
     ("ui_queued", "排队 ({}): {}"),
     ("ui_saved", "已保存 {}"),
     ("ui_save_failed", "保存失败: {}"),
@@ -684,7 +690,7 @@ const ES: &[(&str, &str)] = &[
     ("ext_title", "Skills y MCP"),
     ("ext_hint", "↑↓ elegir · Enter detalles · x activar · Esc"),
     ("menu_extensions", "Skills y MCP"),
-    ("jobs_hint", "↑↓ elegir · Enter salida · s guardar · x matar · Esc · f filtro"),
+    ("jobs_hint", "↑↓ · Enter abrir · s guardar · x matar · f filtro"),
     ("jobs_none", "Sin trabajos ni watchers"),
     ("menu_hint", "↑↓ mover · Enter cambiar · Esc salir"),
     ("choose_hint", "↑↓ elegir · Enter confirmar · Esc volver"),
@@ -803,6 +809,9 @@ const ES: &[(&str, &str)] = &[
     ("ui_collapsed", "pensando {}s | {} caracteres (plegado)"),
     ("ui_steer", "steer: {} (siguiente paso)"),
     ("ui_goal_round", "ronda de objetivo {}"),
+    ("context_goal_complete", "cierre del goal: escribiendo el mensaje final"),
+    ("context_goal_blocked", "cierre del goal: informe de bloqueo"),
+    ("context_repeat", "llamada repetida: recordatorio inyectado"),
     ("ui_queued", "en cola ({}): {}"),
     ("ui_saved", "guardado {}"),
     ("ui_save_failed", "falló el guardado: {}"),
@@ -936,7 +945,7 @@ const JA: &[(&str, &str)] = &[
     ("ext_title", "Skills と MCP"),
     ("ext_hint", "↑↓ 選択 · Enter 詳細 · x 切替 · Esc"),
     ("menu_extensions", "Skills と MCP"),
-    ("jobs_hint", "↑↓ 選択 · Enter 出力 · s 保存 · x 終了 · Esc · f 絞込"),
+    ("jobs_hint", "↑↓ · Enter 出力 · s 保存 · x 終了 · f 絞込"),
     ("jobs_none", "バックグラウンドタスクはありません"),
     ("menu_hint", "↑↓ 移動 · Enter 変更 · Esc 終了"),
     ("choose_hint", "↑↓ 選択 · Enter 決定 · Esc 戻る"),
@@ -1055,6 +1064,9 @@ const JA: &[(&str, &str)] = &[
     ("ui_collapsed", "思考 {}s | {} 文字（折りたたみ）"),
     ("ui_steer", "steer: {}（次のステップ）"),
     ("ui_goal_round", "ゴール {} ラウンド目"),
+    ("context_goal_complete", "ゴール締めくくり: 最終メッセージを作成中"),
+    ("context_goal_blocked", "ゴール締めくくり: ブロック報告を作成中"),
+    ("context_repeat", "ツール呼び出しの繰り返し: リマインダー注入"),
     ("ui_queued", "キュー ({}): {}"),
     ("ui_saved", "保存しました {}"),
     ("ui_save_failed", "保存に失敗: {}"),
@@ -1148,7 +1160,7 @@ const DE: &[(&str, &str)] = &[
     ("idle_hint", "↑↓ Verlauf · PgUp/PgDn · CtrlO Ausgabe · /help"),
     ("help_hint", "↑↓ wählen · Enter ausf./ergänzen · Esc schließen"),
     ("tool_log_title", "Werkzeugausgabe"),
-    ("tool_log_hint", "↑↓ wählen · Enter öffnen · s speichern · Esc schließen"),
+    ("tool_log_hint", "↑↓ · Enter öffnen · s sichern · Esc"),
     ("tool_log_empty", "Noch keine Werkzeugausgabe"),
     ("artifact_back", "Esc zurück"),
     ("artifact_more", "{} weitere Zeilen"),
@@ -1188,7 +1200,7 @@ const DE: &[(&str, &str)] = &[
     ("ext_title", "Skills & MCP"),
     ("ext_hint", "↑↓ wählen · Enter Details · x umschalten · Esc"),
     ("menu_extensions", "Skills & MCP"),
-    ("jobs_hint", "↑↓ wählen · Enter Ausgabe · s speichern · x beenden · Esc · f Filter"),
+    ("jobs_hint", "↑↓ · Enter zeigen · s sichern · x kill · f Filter"),
     ("jobs_none", "Keine Jobs oder Watcher"),
     ("menu_hint", "↑↓ bewegen · Enter ändern · Esc verlassen"),
     ("choose_hint", "↑↓ wählen · Enter bestätigen · Esc zurück"),
@@ -1220,7 +1232,7 @@ const DE: &[(&str, &str)] = &[
     ("onboard_prev_sandbox", "Sandbox ist auto: sichere Befehle laufen, riskante werden bewertet/abgelehnt; in /config änderbar."),
     // DE queue keys
     ("queue_title", "Eingereihte Nachrichten"),
-    ("queue_hint", "↑↓ wählen · x löschen · Enter bearbeiten · Esc schließen"),
+    ("queue_hint", "↑↓ · x löschen · Enter bearbeiten · Esc"),
     ("queue_empty", "Warteschlange ist leer"),
     // DE sandbox judge keys
     ("menu_sandbox_judge", "Sandbox-Prüfmodell"),
@@ -1307,6 +1319,9 @@ const DE: &[(&str, &str)] = &[
     ("ui_collapsed", "denkt {}s | {} Zeichen (eingeklappt)"),
     ("ui_steer", "Steuerung: {} (nächster Schritt)"),
     ("ui_goal_round", "Zielrunde {}"),
+    ("context_goal_complete", "Goal-Abschluss: Abschlussmeldung wird geschrieben"),
+    ("context_goal_blocked", "Goal-Abschluss: Blockierungsbericht wird geschrieben"),
+    ("context_repeat", "wiederholter Tool-Aufruf: Hinweis injiziert"),
     ("ui_queued", "eingereiht ({}): {}"),
     ("ui_saved", "gespeichert {}"),
     ("ui_save_failed", "Speichern fehlgeschlagen: {}"),
@@ -1440,7 +1455,7 @@ const IT: &[(&str, &str)] = &[
     ("ext_title", "Skill e MCP"),
     ("ext_hint", "↑↓ scegli · Enter dettagli · x attiva · Esc"),
     ("menu_extensions", "Skill e MCP"),
-    ("jobs_hint", "↑↓ scegli · Enter output · s salva · x termina · Esc · f filtro"),
+    ("jobs_hint", "↑↓ · Enter apri · s salva · x termina · f filtro"),
     ("jobs_none", "Nessun job o watcher"),
     ("menu_hint", "↑↓ muovi · Enter modifica · Esc esci"),
     ("choose_hint", "↑↓ scegli · Enter conferma · Esc indietro"),
@@ -1559,6 +1574,9 @@ const IT: &[(&str, &str)] = &[
     ("ui_collapsed", "pensa {}s | {} caratteri (compresso)"),
     ("ui_steer", "steer: {} (passo successivo)"),
     ("ui_goal_round", "round obiettivo {}"),
+    ("context_goal_complete", "chiusura del goal: scrivo il messaggio finale"),
+    ("context_goal_blocked", "chiusura del goal: rapporto di blocco"),
+    ("context_repeat", "chiamata ripetuta: promemoria iniettato"),
     ("ui_queued", "in coda ({}): {}"),
     ("ui_saved", "salvato {}"),
     ("ui_save_failed", "salvataggio fallito: {}"),
@@ -1645,6 +1663,55 @@ mod tests {
         }
     }
 
+    /// Menu and status footers are one 53-cell row. A longer hint is cut or
+    /// ellipsised and loses its last action (the jobs panel once advertised
+    /// `f…` instead of `f filter`), so keep the curated footer set inside the
+    /// panel width in every language.
+    #[test]
+    fn footer_hints_fit_the_panel() {
+        let _g = LOCK.lock().unwrap();
+        fn width(s: &str) -> usize {
+            s.chars()
+                .map(|c| {
+                    let u = c as u32;
+                    let wide = (0x1100..=0x115F).contains(&u)
+                        || (0x2E80..=0xA4CF).contains(&u)
+                        || (0xAC00..=0xD7A3).contains(&u)
+                        || (0xF900..=0xFAFF).contains(&u)
+                        || (0xFE30..=0xFE4F).contains(&u)
+                        || (0xFF00..=0xFF60).contains(&u)
+                        || (0xFFE0..=0xFFE6).contains(&u)
+                        || (0x1F300..=0x1F64F).contains(&u);
+                    if wide { 2 } else { 1 }
+                })
+                .sum()
+        }
+        let keys = [
+            "jobs_hint", "queue_hint", "tool_log_hint", "help_hint",
+            "choose_hint", "menu_hint", "menu_hint_gated", "menu_hint_no_web",
+            "menu_model_hint", "onboard_hint", "sandbox_pick_hint",
+            "resume_hint", "rewind_hint", "ext_hint", "menu_endpoint_hint",
+            "idle_hint",
+        ];
+        for l in [Lang::En, Lang::Zh, Lang::Es, Lang::Ja, Lang::De, Lang::It] {
+            let table = table(l);
+            for key in keys {
+                let text = table
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| *v)
+                    .unwrap_or("");
+                assert!(!text.is_empty(), "language {:?} misses {key}", l);
+                assert!(
+                    width(text) <= 53,
+                    "language {:?}: {key} is {} cells: {text:?}",
+                    l,
+                    width(text)
+                );
+            }
+        }
+    }
+
     /// Guard against a key that the TUI uses but the catalog forgot: t()
     /// silently returns "" for that, which shows up as a blank menu footer
     /// (exactly how the config-menu hint once disappeared).
@@ -1700,7 +1767,9 @@ mod tests {
             set(code);
             for key in ["menu_hint", "choose_hint", "menu_hint_gated",
                         "menu_hint_no_web", "help_hint", "hints",
-                        "voice_official_only", "tagline"] {
+                        "voice_official_only", "tagline",
+                        "context_goal_complete", "context_goal_blocked",
+                        "context_repeat"] {
                 assert!(!t(key).is_empty(), "{code}: empty {key}");
             }
         }

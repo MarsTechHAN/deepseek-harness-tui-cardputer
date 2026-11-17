@@ -467,10 +467,12 @@ pub fn badge() -> Option<String> {
         format!("{}/{}", g.rounds_started, g.max_rounds)
     };
     Some(match g.phase {
+        // ASCII-safe state glyphs: U+23F8, U+2298 and U+2713 are missing from
+        // the 6x13 panel font and rendered as boxes in the simulator.
         Phase::Active if g.armed => format!("\u{25ce} Pursuing Goal {budget}"),
-        Phase::Active | Phase::Paused => format!("\u{23f8} Goal paused {budget}"),
-        Phase::Blocked => "\u{2298} Goal blocked".to_string(),
-        Phase::Complete => "\u{2713} Goal done".to_string(),
+        Phase::Active | Phase::Paused => format!("|| Goal paused {budget}"),
+        Phase::Blocked => "x Goal blocked".to_string(),
+        Phase::Complete => "ok Goal done".to_string(),
     })
 }
 
