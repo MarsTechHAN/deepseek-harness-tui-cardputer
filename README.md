@@ -1,559 +1,501 @@
-# dst — a DeepSeek harness TUI for the M5Stack Cardputer Zero
+<div align="center">
 
-A single-binary, zero-crate Rust agent harness + terminal UI for a 320×170
-handheld (53 columns × 12 rows of framebuffer terminal).
+<img src="docs/banner.png" alt="dst — a DeepSeek agent harness for the M5Stack Cardputer Zero" width="100%">
 
-The turn/step driver and tool pipeline follow the DeepSeek Harness (DSH)
-architecture: a turn owns steps, a step is one model request plus its tool
-batch, and every call traverses
-`tool/call → pre-execute → execute → post-execute → tool/result` with
-`additionalContexts` injected after the batch. Tool `execute()` returns a
-canonical JSON value; a separate `render()` projects it to model-facing text.
+# dst
 
-No API keys, credentials, or third-party speech services are present in this
-repository.
+**The whole DeepSeek Harness agent loop — turns, tools, goals, compaction — in one
+zero-dependency Rust binary, on a 320×170 handheld.**
+
+*a DeepSeek harness TUI for the M5Stack Cardputer Zero*
+
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-22d3ee?style=flat-square" alt="License: GPL-3.0"></a>
+<img src="https://img.shields.io/badge/rust-2021-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust 2021">
+<img src="https://img.shields.io/badge/dependencies-0-2ea043?style=flat-square" alt="Zero dependencies">
+<img src="https://img.shields.io/badge/binary-1.0%20MB-2ea043?style=flat-square" alt="1 MB binary">
+<img src="https://img.shields.io/badge/panel-320%C3%97170%20%C2%B7%2053%C3%9712%20cells-22d3ee?style=flat-square" alt="320x170 panel, 53x12 cells">
+<img src="https://img.shields.io/badge/UI%20languages-6-8b5cf6?style=flat-square" alt="6 UI languages">
+<img src="https://img.shields.io/badge/tests-73%20passing-2ea043?style=flat-square" alt="73 unit tests">
+<a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs welcome"></a>
+
+<a href="#quick-start">Quick start</a> ·
+<a href="#screenshots">Screenshots</a> ·
+<a href="#features">Features</a> ·
+<a href="#commands">Commands</a> ·
+<a href="#architecture">Architecture</a> ·
+<a href="#testing-without-the-device">Simulator</a> ·
+<a href="#documentation">Documentation</a>
+
+</div>
+
+---
+
+`dst` is a pocket-sized agent: a terminal UI and an agent harness that run
+entirely on a **M5Stack Cardputer Zero** — a Raspberry Pi CM0 handheld with
+512 MB of RAM and a 320×170 panel that holds **53 columns × 12 rows** of text.
+
+It is not a chat client with a keyboard bolted on. The loop is the real thing,
+ported from the DeepSeek Harness (DSH): a turn owns steps, a step is one model
+request plus its tool batch, and every call travels
+`tool/call → pre-execute → sandbox gate → execute → post-execute → tool/result`
+with `additionalContexts` injected after the batch. Tools return canonical JSON;
+a separate `render()` projects it to the text the model reads.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**Why it exists**
+
+Everything else assumes a desktop: a browser, a big terminal, a fast CPU, a
+battery you can drain. `dst` assumes the opposite — 12 rows, a thumb keyboard,
+and a 512 MB device that still deserves a real agent loop with permissions,
+memory and goals.
+
+</td>
+<td width="50%" valign="top">
+
+**What it is not**
+
+No subagents, no remote server, no cloud sandbox, no telemetry. One process,
+one binary, `~/.dst` for state, an OpenAI-compatible (or DeepSeek) endpoint for
+intelligence, and `curl` for the wire.
+
+</td>
+</tr>
+</table>
+
+---
+
+## Table of Contents
+
+- [Screenshots](#screenshots)
+- [Features](#features)
+  - [Agent loop](#agent-loop)
+  - [Tools](#tools)
+  - [Permissions and sandbox](#permissions-and-sandbox)
+  - [Goals, context and memory](#goals-context-and-memory)
+  - [Interface](#interface)
+  - [Creator mode](#creator-mode)
+  - [Voice](#voice)
+  - [Internationalisation](#internationalisation)
+- [Quick start](#quick-start)
+- [Commands](#commands)
+- [Key bindings](#key-bindings)
+- [Configuration](#configuration)
+- [Architecture](#architecture)
+- [Testing without the device](#testing-without-the-device)
+- [Deploying to the device](#deploying-to-the-device)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
+## Screenshots
+
+<table>
+<tr>
+<td width="50%"><img src="docs/live-walkthrough.png" alt="Twelve-screen live walkthrough: startup, streaming, reply, tool call, push-to-talk, help, config, resume, login"><br><sub><b>Live walkthrough</b> — 12 real screens against a local model: streaming, reasoning, a tool card, push-to-talk, <code>/help</code>, <code>/config</code>, <code>/resume</code>, <code>/login</code>.</sub></td>
+<td width="50%"><img src="docs/live-creator.png" alt="Creator mode: the model builds, saves and runs a battery app"><br><sub><b>Creator mode</b> — the model writes an app (<code>battery</code>), saves the package, and <code>/apps</code> runs it full-screen.</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/splash.gif" alt="Animated splash: the DeepSeek whale breaches out of a night sea on the 53x9 pixel grid"><br><sub><b>Splash</b> — a 14-frame whale breach drawn on the device pixel grid, deterministic so snapshots are reproducible.</sub></td>
+<td width="50%"><img src="docs/login-page.png" alt="Phone login page with a WeChat QR, live steps and a manual API-key form"><br><sub><b>Sign-in</b> — scan a WeChat QR on the panel, use the LAN page from a phone, or type the credential on the device.</sub></td>
+</tr>
+</table>
+
+<div align="center">
+<sub><a href="docs/splash-frames.png">Frame sheet</a> · <a href="docs/login-qr-screen.png">QR on the panel</a> · <a href="docs/login-i18n-sheet.png">login in six languages</a></sub>
+</div>
+
+---
 
 ## Features
 
-**Animated splash**
-- The opening screen is a 53×9 night-sea scene built from the dsh-TUI pixel whale
-  (`art.rs`, tone-mapped to `█ ▓ ░` so it reads on an 8-colour framebuffer): the
-  original 9-row whale is a single sprite that is **lifted against a dim water
-  line** — calm at the surface, spout, rise, full breach, apex fluke swing,
-  fluke/back dive — then spray settles and the dim `dst` wordmark returns on the
-  water before the loop restarts. 18 static frames across three colour bands (dim
-  night sky, bright air with the whale, dim sea line), driven by a per-frame hold
-  table (300–1800 ms, quantised to the 300 ms idle tick) so the scene moves in
-  beats instead of a uniform frame rate.
-- It animates while idle (typing pauses it on the current frame, the first
-  message ends it); after three opening loops it settles into a slow sleeping
-  loop, and `/clear` restarts the opening animation. The frames and the schedule
-  are deterministic (no randomness), so simulator snapshots are reproducible.
-  Frame storyboard and reference analysis: [`docs/SPLASH-STORYBOARD.md`](docs/SPLASH-STORYBOARD.md);
-  stills in [`docs/splash-frames.png`](docs/splash-frames.png) and the loop as
-  [`docs/splash.gif`](docs/splash.gif) (simulator, device pixel grid).
+### Agent loop
 
-**Terminal UI**
-- Markdown-aware rendering (headings, bullets, numbered lists, dimmed code
-  blocks), word-aware wrapping at the real 53-cell width, UTF-8 input.
-- Live **reasoning panel**: the model's thinking text streams into the space
-  above the prompt and collapses to one dim line when the answer starts.
-- Tool calls are shown when they *start* (before execution), then settle into a
-  one-row card with duration and a one-line result preview (`tool/call` before
-  `tool/result`, as in DSH).
-- Full-screen **artifacts**: the model can take over the display with a panel it
-  composes (tables, code, checklists); `Esc` dismisses, `PgUp`/`PgDn` scroll.
-- Runtime control: `Esc` aborts the running turn (including a `speak` clip that
-  is still playing); typing while busy is **queued** by default and
-  **Shift+Enter** interrupts and sends immediately; push-to-talk (`Tab`) during
-  a turn is queued too. A queued `/command` is dispatched as a command when the
-  turn ends, never sent to the model.
+- **DSH turn/step driver.** A turn owns steps; a step is one model request plus
+  its tool batch. Tool calls are rendered when they *start* and settle into a
+  one-row card with duration and a preview, in `tool/call` → `tool/result` order.
+- **Streaming with a live reasoning panel.** Reasoning deltas stream above the
+  prompt and fold to one dim line when the answer begins.
+- **No step cap by default.** A turn may use as many steps as it needs
+  (`agent.max_steps` opts into a cap, `0` = unlimited). Every tool declares a
+  deadline; an overrun settles as `tool timed out after Ns` without freezing the
+  prompt, and `Esc` still works while a tool runs.
+- **Prefix-cache friendly requests.** The system prompt and shadowed history are
+  replayed verbatim so DeepSeek's cache keeps hitting across turns.
 
-**Human commands** (execute locally, never sent to the model)
-- `/help`, `/model [name]` (lists models from `/v1/models`), `/effort
-  [auto|low|high|max]`, `/config` (interactive wizard: options everywhere, text
-  input only for the API key and a custom base URL), `/login` (real DeepSeek
-  Platform sign-in; see below), `/usage`, `/key`, `/resume` (menu picker), `/rename <title>`,
-  `/compact`, `/goal`, `/apps`, `/clear`, `/quit`.
-- `/goal <objective>` starts a long-running goal; `/goal` shows it, and
-  `/goal edit|pause|resume|clear` manages it. `/compact` summarises older
-  history immediately with the same method automatic compaction uses.
-- `/apps` opens the manager for the apps dst built, where Enter runs one and
-  `x` deletes it. Creator mode itself is a row in `/config` (see below).
+### Tools
 
-**Usage and context**
-- `/usage` reports cumulative totals in Claude Code's style: cache hit rate,
-  cache read, uncached input and output, each with a share bar. Totals persist in
-  `~/.dst/usage.json`.
-- A small ring (`○ ◔ ◑ ◕ ●` + percentage) on the status line shows how much of the
-  model's context window the last request used (denominator read from `/models`).
+The model sees 32 tools in normal mode (list yours with `dst --tools`);
+creator mode adds the app and skill tools at the bottom of the table:
 
-**Goals** (`src/goal.rs`, ported from DSH `dsh-goal` + `dsh-goal-round-driver`)
-- A goal is a persisted objective that keeps the session working across
-  automatic continuation rounds. The model judges progress itself through
-  `get_goal` / `create_goal` / `update_goal`: it marks the goal `complete` only
-  when the objective is achieved, and `blocked` only when one concrete
-  condition has persisted for at least 3 rounds.
-- Between rounds the driver injects DSH's `<goal_round>` prompt verbatim; the
-  status line shows `◎ goal <round>/<cap> <objective>`. `Esc` disarms the goal,
-  `/goal resume` re-arms it. After a restart an active goal is disarmed until
-  the user resumes it (same activation rule as DSH).
-- Round cap: `goal.max_rounds` (DSH default 256; `0` = unlimited). Per-round step cap:
-  `goal.max_steps` (`0` = unlimited). Stopping a goal is always possible with
-  `/goal pause` or `/goal clear`.
+| group | tools |
+| --- | --- |
+| shell & files | `bash`, `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep` |
+| web + vision | `search`, `fetch`, `ocr` |
+| orchestration | `artifact`, `speak`, `rename`, `todo_read`, `todo_write`, `skill` |
+| background | `job_start`, `job_output`, `job_wait`, `job_kill`, `job_list`, `watcher_start`, `watcher_list`, `watcher_stop` |
+| goals | `get_goal`, `create_goal`, `update_goal` |
+| memory | `memory_write`, `memory_read`, `memory_search` |
+| scheduling | `cron`, `watch` |
+| creator mode | `app_save`, `app_file`, `app_run`, `app_test`, `app_export`, `app_import`, `skill_save`, `skill_file`, `skill_rollback` |
 
-**Context management** (`src/compact.rs`, ported from DSH `dsh-compaction-basic`)
-- Automatic compaction runs at `agent/pre-step`, i.e. before the next request is
-  built, once request pressure reaches the budget:
-  `threshold = min(window × 0.8, window − reserved_output − 64K headroom, compact_threshold)`
-  (default absolute cap **512K tokens**, `compaction.threshold_tokens`).
-- The algorithm is DSH's: prune oversized old tool-result middles first
-  (model-free), keep the newest tail worth 16% of the message budget on a
-  user-message boundary, then make **one** streamed summary call that replays
-  the conversation's own system prompt and shadowed messages and appends DSH's
-  compaction instruction as the final user message (prefix-cache friendly).
-  The result is framed as `This is an automatically generated checkpoint…` +
-  `<compacted-summary>…</compacted-summary>` in one user message; a summary
-  that is not smaller than the region it replaces is rejected.
-- A provider-reported context overflow bypasses the threshold and forces one
-  compaction, then retries the request once.
-- Manual `/compact` skips the threshold and keeps no verbatim tail.
-- The ring in the corner shows context pressure, and `/usage` reports usage.
+Any MCP server in `~/.dst/mcp.json` adds its tools as `mcp__<server>__<tool>`.
 
-**In-progress context injection** (`src/context.rs`, ported from DSH `dsh-time-context`)
-- Before each request the harness may append an attributed clock reading
-  (DSH verbatim format: `Time sampled while preparing turn N, step M: …`,
-  browser/process time zone, elapsed time). Rate-limited by
-  `context.time_refresh_secs` (default 600 s; `0` = every step).
-- Repeated identical tool calls inject DSH's `repeat-tool-reminder` text after
-  the third and fifth repetition, so the model sees that it is looping.
-- Tool results can attach `additionalContexts`; they are injected as a
-  `user/message` after the batch's tool results, exactly as DSH orders it.
+### Permissions and sandbox
 
-**Internationalisation**
-- UI language via `language: en|zh|es|ja|de|it` in the config (default `en`),
-  switchable from `/config`. Every user-visible string is translated — menus,
-  help/palette previews, approval dialogs, onboarding, login pages and device
-  login screen, jobs/queue/watcher states, thinking/steer/queue/status labels,
-  command feedback and tips. A unit test enforces that each language covers the
-  full English catalog (missing keys would fall back to English). Only interface text is translated; tool descriptions and the system
-  prompt stay English so model behaviour is unchanged.
+Every tool call passes a gate with three modes (`sandbox.mode`; switched in
+`/config`, chosen once during onboarding):
 
-**Command palette**
-- Typing `/` opens an inline palette of every command with its description; Up/Down
-  select, Enter runs it (commands that need an argument are completed with a space
-  instead). The list scrolls with the selection.
+- **`auto`** (default) — known-safe reads and workspace writes pass; system
+  changes (`sudo`, `systemctl start/stop`, package managers, mounts, writes
+  under `/etc`, `/boot`, `/usr`, reboot) are refused outright; anything else
+  gets one short LLM call to judge it.
+- **`strict`** — a full-screen allow/reject dialog for every non-safe call.
+- **`full`** — everything runs.
 
-**Creator mode** (`src/apps.rs`, design in [docs/CREATOR.md](docs/CREATOR.md))
-- Opt-in mode where dst is the device's only program: everything the user uses
-  is something dst built and saved. Off by default; the `Mode` row in
-  `/config` switches it (`tui.mode: normal|creator`), and the switch is
-  announced in the transcript with a creator idle hint afterwards
-  (`creator · 2 apps · /apps · hold Esc`).
-- Every build becomes a persistent app package under
-  `~/.dst/apps/<category>/<name>/`: `app.json` (manifest), `APP.md` (a short
-  annotation written for the user), the entry program, and a `state/` dir for
-  runtime data (`$DST_APP_STATE`). Kinds: `sh`, `python`, `binary` (executable
-  entry), `prompt` (a reusable request the model follows; PROMPT.md) and `doc`.
-  The model creates them with `app_save` / `app_file`, verifies them headlessly
-  with `app_test` (piped stdio by default, `tty=true` for a real pty;
-  captured exit/stdout/stderr, full log under
-  `~/.dst/tmp`), and runs them with `app_run` (`args` + `timeout_s`), which
-  takes over the panel full-screen and hands it back when the app exits.
-  Launches are bounded by the platform: long-Esc/timeout backstop, cwd + state
-  dir inside the package, ulimits (no core dumps, CPU time, file size) and a
-  scrubbed environment (no credentials inherited; HOME/TMPDIR inside state/).
-  Runs and headless tests are recorded back into `app.json` (`last_run` /
-  `last_test` with outcome, duration and time), shown in the `/apps` annotation
-  panel (a `!` on the list row marks a failing app), and a failed last run/test
-  is flagged in the model's app catalog so it fixes the app before reusing it.
-  Apps can declare `requires` (binaries on PATH or absolute paths); dst refuses
-  to run/test an app whose requirements are missing, naming the binary. `default_args` are used when the user launches an app from `/apps` (`i` there
-  pre-fills an improvement request for the selected app). A `capture: true` app
-  gets a piped stdout so dst can forward the bytes to the
-  panel *and* record a cleaned `state/last-run.log`; `/apps` `l` replays it.
-  `app_export` packs the package into `~/.dst/tmp/app-*.tar.gz` for backups and
-  `app_import` restores/validates such an archive (`replace=true` overwrites).
-- A skills-style catalog (`- system/battery_viewer — Battery viewer [sh:run.sh]:
-  …`, one line per app, capped) is injected into the system prompt each turn, so
-  the model knows what already exists and which file to rewrite instead of
-  duplicating it;
-  `APP.md` is read on demand with `read_file`.
-- `/apps` is the user's side: a menu with the app count, `/` search mode that
-  filters by name/title/category, `→` opens the full annotation panel (metadata +
-  APP.md), Enter runs (doc apps open their panel; prompt apps are previewed
-  first and Enter sends), `x` deletes after `y/n`, `l` replays recorded output.
-  Rows are ordered by most
-  recent use and show that time (`system · sh · 18:20`); failing apps carry a
-  `!` and the creator idle hint counts them (`creator · 2 apps · 1! · …`).
-  Running from the menu comes back to the menu; leaving it prints the run notice.
-- Consensus the platform enforces, not the apps: **long-press Esc always leaves
-  an app** and gives the screen back to the chat (the runner watches keyboard
-  auto-repeat and kills the app; trailing Esc repeats are swallowed). Model-side
-  runs have a 60 s default time limit (`timeout_s`), user-started runs have none.
-- Creator mode announces saved apps in the transcript and nudges when a turn
-  changed files without saving an app, so work is not lost between sessions.
-- Creator mode also writes **skills**: `skill_save` / `skill_file` create a
-  systematic, self-contained package under `~/.dst/skills/<name>/` (SKILL.md
-  frontmatter + body + support files, marked `origin: model`). It joins the
-  SKILLS catalog on the next turn and is loaded with the `skill` tool, exactly
-  like hand-installed skills and can be loaded with the `skill` tool in the
-  same turn they are written; updates bump the SKILL.md version and keep the
-  previous body under `.history/vN.md` and `skill_rollback` restores an
-  earlier body as a new version (catalog updates next turn).
-  In creator mode `/apps` is always available — even with zero apps it shows
-  the app/skill counts and a `+ new app` row that pre-fills "Build an app: " in
-  the prompt. `/extensions` badges model-written skills, opens
-  the full SKILL.md body with `→`, and lets the user disable (`x`) or delete
-  (`d`, with y/n) them; `/etc/dst/skills` stays read-only.
-  The prompt spells out the split: app = runnable device thing, skill = complete
-  reusable procedure, memory = short fragments/preferences.
-- Only available on the interactive TUI: `app_run` fails cleanly in `--once`,
-  background jobs and `--call`. Writes are confined to the app/skill roots by
-  the tools (slug/path validation, per-file and per-package size caps).
+A refusal becomes a failed tool result with the concrete reason, so the model
+can explain instead of retrying. HTTPS is enforced: non-TLS endpoints are
+refused.
 
-**Configuration screen**
-- `/config` is a menuconfig-style screen: arrows move, Enter edits, Esc leaves. It
-  edits model, effort, endpoint, API key, TTS voice, auto-send, queue mode,
-  language, UI mode (normal/creator), step/compaction/goal budgets, sandbox
-  mode and the auto-judge model, and warns before switching to a third-party
-  endpoint.
+### Goals, context and memory
 
-**Endpoint capabilities**
-- Speech and the server-side tools (`search`/`fetch`/`ocr`) only exist on DeepSeek's
-  official API. On a third-party endpoint those tools are removed from the registry
-  and the model is told they are unavailable; the wizard warns first. `dst --tools`
-  prints the effective tool set for diagnosis.
+- **Goals** (`/goal`) are persisted objectives that keep the session working
+  across automatic continuation rounds. The model judges itself through
+  `update_goal`: `complete` only when achieved, `blocked` only after one concrete
+  condition persisted for three rounds. Round and step caps are configurable;
+  `Esc` disarms, `/goal resume` re-arms.
+- **Automatic compaction** at `agent/pre-step`: prune oversized old tool results,
+  keep a verbatim tail on a user-message boundary, then one streamed summary
+  call framed as an `<compacted-summary>` checkpoint. A provider overflow forces
+  one compaction and retries once. `/compact` runs it on demand.
+- **Context injection** — an attributed clock reading
+  (`Time sampled while preparing turn N, step M: …`), a repeat-tool reminder
+  after the third and fifth identical call, and `additionalContexts` from tools.
+- **Memory** — `AGENTS.md` from the workspace and `~/.dst` is loaded into the
+  prompt (bounded), and `memory_write`/`memory_read`/`memory_search` keep short
+  preferences across sessions.
+- **`/usage`** reports cache hit rate, cache read, uncached input and output
+  with share bars; a ring (`○ ◔ ◑ ◕ ●`) on the status line shows context pressure.
 
-**Interaction polish**
-- The `/` palette footer shows the match position (`1/5 ↑↓ Enter Esc`).
-- `/help` and the `/` palette group commands by category (session, goal, core,
-  setup, tools, info); `/help` previews usage, the palette keeps only short
-  argument hints so descriptions stay readable. Enter runs a no-argument
-  command or completes one that needs input, Esc closes.
-- Up/Down on an empty prompt recall input history (60 entries persisted in
-  `~/.dst/history`, mode 600; `/key` never recorded); PgUp/PgDn scroll the
-  transcript a page at a time.
-- The idle status line shows key hints; running tools report live progress on
-  the status line (`bash running 1.2s`).
-- CtrlQ while a turn is running opens the queued-message editor: arrows select,
-  `x` deletes, Enter moves the message back into the prompt, Esc closes.
-- CtrlO opens a recent tool-output list; Enter shows the full result in the
-  scrollable panel viewer, `s` saves it under `~/.dst/tmp/`. Ctrl+A/Ctrl+E move the cursor, Ctrl+W deletes a word;
-  Home/End jump to the top/bottom of the scrollback when not editing.
-- Menus show a `current/total` position in the title when the list is longer
-  than the panel (config 1/16, help 1/16, long resume/task lists).
-- Menu right-hand text truncates with `…` instead of silently cutting words;
-  `/help`, `/rewind`, `/config` and onboarding show a live description/preview
-  for the highlighted row.
-- The background-task manager opens the full task output in the scrollable
-  panel viewer; the viewer supports `s` to save the panel text.
-- Numeric config rows (max steps, compaction threshold, goal rounds) open an
-  edit prompt instead of only cycling fixed values.
-- Failed requests print an actionable hint (auth → `/key`, rate limit → wait or
-  `/model`, network → check Wi-Fi).
-- `/resume` previews include the recent exchange, not just a summary line.
+### Interface
 
-**No title/header row**: every row belongs to the transcript, status line and
-prompt; the session title appears in `/resume`, and goal state is shown as a
-bottom-right badge (`◎ Pursuing Goal 2/10`, `⏸ Goal paused`, `✓ Goal done`).
+- Markdown-aware rendering (headings, lists, dimmed code blocks), word-aware
+  wrapping at the real 53-cell width, UTF-8 and CJK input.
+- **Command palette** — type `/` for every command with its description and
+  argument hint; menus are menuconfig-style with right-aligned values.
+- **Full-screen artifacts** — the model can take over the panel with tables,
+  code or checklists; `Esc` dismisses, `PgUp`/`PgDn` scroll.
+- **Sessions** — every turn is saved with a title the model keeps current via
+  the `rename` tool; `/resume` previews sessions grouped by directory, `/rewind`
+  restores a checkpoint.
+- **Background tasks** — jobs and watchers with a manager (Down on an empty
+  prompt), live progress on the status line, and coalesced watcher messages.
+- **Tool output viewer** (`CtrlO`) — recent tool results in a scrollable panel,
+  `s` saves the text under `~/.dst/tmp/`.
+- **Queueing** — typing during a turn queues by default; `Shift+Enter`
+  interrupts and sends; `CtrlQ` edits the queue.
+- **Animated splash** — a deterministic whale breach, frame-scheduled rather
+  than constant-rate; typing pauses it, the first message ends it, `/clear`
+  brings it back.
 
-**Background-task manager**: press Down on an empty prompt while jobs or
-watchers exist to open a list of tasks (`Job 1`, `Watcher 1`, …) with command,
-status and age; Enter shows the output tail, `f` cycles all/running/watchers, `x` kills the task, Esc closes.
+### Creator mode
 
-**Menus** are menuconfig-style with full-width rows: labels left-aligned,
-values right-aligned at the panel edge.
+An opt-in mode where `dst` is the device's only program: everything you use is
+something it built and saved.
 
-**Permissions / sandbox**
+- Each build becomes a package under `~/.dst/apps/<category>/<name>/` —
+  `app.json` manifest, `APP.md` annotation, entry program, `state/` dir.
+  Kinds: `sh`, `python`, `binary`, `prompt`, `doc`.
+- The model writes apps with `app_save`/`app_file`, verifies them headlessly with
+  `app_test` (piped stdio or a real pty), runs them with `app_run` (full-screen
+  takeover, args, timeout) and packs them with `app_export`/`app_import`.
+- Launches are bounded: long-press `Esc` always leaves an app, a timeout
+  backstop, ulimits, a scrubbed environment, and cwd/state inside the package.
+- Run and test history lands back in `app.json`, is shown in `/apps` (a `!`
+  marks a failing app) and is surfaced to the model so it fixes what it broke.
+- **Skills** are the other half: `skill_save`/`skill_file` write a versioned
+  `SKILL.md` package with `.history/vN.md` and `skill_rollback`.
 
-Onboarding explains the default `auto` sandbox on the endpoint-choice preview,
-then offers a first-run picker (`auto` / `strict` / `full`) after the endpoint is
-configured; Esc keeps `auto`, and `/config` changes it later.
-- Every tool call passes a permission gate. `auto` (default) allows known-safe
-  operations (read-only commands, `read_file`/`list_dir`, web reads, writes under
-  the current workspace), refuses system-configuration changes (sudo, systemctl
-  start/stop, package managers, mounts, writes under /etc /boot /usr, reboot),
-  and asks a short LLM call to judge anything else. `strict` shows a full-screen
-  allow/reject pop-up for every non-safe call. `full` runs everything.
-- Switch mode in `/config` (`sandbox.mode`); rejected calls become failed tool
-  results with the concrete reason, so the model can explain instead of retrying.
+> Full design: [`docs/CREATOR.md`](docs/CREATOR.md).
 
-**Background jobs and watchers**
-- `job_start` launches a shell command in the background (multiple at once),
-  `job_output` peeks, `job_wait` blocks up to a timeout, `job_kill` stops it.
-- `watcher_start` runs a command and delivers its lines to the agent as
-  `[watcher <id>]` user messages on the next idle tick; a chatty watcher is
-  coalesced (last 5 lines + "+N more lines") and auto-turns are rate-limited to
-  at most one per 1.2 s. `watcher_list` / `watcher_stop` manage them.
-  Jobs/watchers are killed when dst exits.
+### Voice
 
-**Sessions and task titles**
-- Every turn is saved to `~/.dst/sessions/<timestamp>.json` with a `title`.
-- The model keeps that title current through the `rename` tool (the system
-  prompt tells it to call `rename` as soon as it understands the task and when
-  the task changes); `/rename <title>` lets the human set it too. The title is
-  shown in the header and is what `/resume` lists.
-- `/resume` is a menuconfig-style picker grouped by directory: sessions from
-  the current folder come first, then the rest, each sorted by last talk time
-  with a relative age (`now`, `5m`, `3h`, `2d`, `1w`) at the row start. Typing
-  filters by session name; Right/Tab expands a preview (title, model, turns,
-  last user/reply); Enter resumes; Esc clears the search then exits.
+Push-to-talk (`Tab`) records with `arecord`, posts to `/v1/tools/asr` and
+auto-sends the transcript; TTS (`/v1/tools/tts`) plays through `aplay`.
+Resampling and WAV framing are done in Rust. Speech tools exist only on
+DeepSeek's official API — on a third-party endpoint they are removed from the
+registry and the model is told so.
 
-**Skills** (DSH-style progressive disclosure)
-- `~/.dst/skills/<name>/SKILL.md` with YAML frontmatter (`name`,
-  `description`). Only the catalog enters the prompt; the `skill` tool returns
-  the body on demand.
+### Internationalisation
 
-**MCP**
-- `~/.dst/mcp.json` (`mcpServers` map, same shape as other MCP clients). Servers
-  are spawned over stdio, `initialize` + `tools/list` run at startup, and each
-  discovered tool is exposed as `mcp__<server>__<tool>`.
+`language: en | zh | es | ja | de | it` in the config (switchable in `/config`).
+Every user-visible string is translated — menus, palette previews, approval
+dialogs, onboarding, login pages, job and watcher states. A unit test fails the
+build if any language misses a key. Tool descriptions and the system prompt stay
+English so model behaviour does not change with the UI language.
 
-**Voice**
-- Push-to-talk ASR (`POST /v1/tools/asr`), TTS (`POST /v1/tools/tts`). Capture
-  and playback use `arecord`/`aplay`; resampling and WAV framing are in Rust.
-  TTS is only used when the user explicitly asks to be told aloud.
+---
 
-**Tools**: `bash`, `read_file`, `write_file`, `list_dir`, `search`, `fetch`,
-`ocr`, `speak`, `skill`, `artifact`, `cron`, `watch`, `get_goal`, `create_goal`,
-`update_goal`, plus any MCP tools.
+## Quick start
 
-**Timeouts and limits**
-- Every tool declares an executor deadline (`ToolDef.timeout_ms`; 60 s default
-  for tools that omit one). A call that overruns settles as
-  `tool timed out after Ns` without freezing the prompt; `Esc` still works
-  while a tool runs.
-- There is **no step limit by default** (a turn may use as many model steps as
-  it needs, as in DSH). `agent.max_steps` opts into a cap; `0` = unlimited.
-  Goal rounds use `goal.max_steps` the same way.
+### 1. Requirements
 
-## Home layout (`~/.dst`)
+| need | why |
+| --- | --- |
+| Linux (Debian 13 on the device) | `fbterm`, `alsa-utils` for the panel and audio |
+| Rust 2021 (dev machine for the simulator) | building `dst` |
+| `curl` | every HTTP request (model, web tools, login) |
+| `arecord`/`aplay` (`alsa-utils`) | optional: ASR capture, TTS playback |
+| `qrencode`, `python3` + Pillow | optional: phone-page QR, WeChat QR on the panel |
 
-```
-~/.dst/
-  config.yml     all settings, including api.key (mode 600)
-  sessions/      resumable conversation logs
-  skills/        skill packages (SKILL.md per folder)
-  apps/          creator-mode app packages (<category>/<name>/{app.json,APP.md,…})
-  mcp.json       MCP server definitions
-  jobs.json      cron / file-watch jobs
-  cache/         transient audio and scratch files
-  logs/          voice.log, mcp.log
-  tmp/           per-run temporary files
+### 2. Build
+
+Zero crates, so the build needs no network at all:
+
+```sh
+git clone git@github.com:MarsTechHAN/deepseek-harness-tui-cardputer.git
+cd deepseek-harness-tui-cardputer
+
+# On the device the 512 MB of RAM cannot survive parallel LTO:
+CARGO_BUILD_JOBS=1 cargo build --release
+install -m755 target/release/dst /usr/local/bin/dst
 ```
 
-The first launch with no configuration shows a short guide: choose DeepSeek
-official or a custom OpenAI-compatible endpoint, then pick the sandbox mode.
+Release profile: `opt-level="z"`, LTO, `panic=abort`, `strip` → a ~1 MB binary.
 
-### `/login`: real DeepSeek Platform sign-in (DSH token)
+### 3. First run
 
-Full guides: [English](docs/LOGIN.md) · [中文](docs/LOGIN.zh.md) ·
-[Español](docs/LOGIN.es.md) · [日本語](docs/LOGIN.ja.md) ·
-[Deutsch](docs/LOGIN.de.md) · [Italiano](docs/LOGIN.it.md) — each includes
-states, requirements and troubleshooting.
+```sh
+dst
+```
 
-`/login` offers three paths, all saving credentials to `~/.dst/config.yml`
-(mode 600):
+The first launch asks for an endpoint (DeepSeek official or any
+OpenAI-compatible one) and a sandbox mode. To sign in to the DeepSeek Platform
+properly, use `/login`:
 
-1. **WeChat QR on this screen** — dst runs the same nine-step flow as the DSH
-   desktop client (WeChat QR from `open.weixin.qq.com`, callback nonce, web
-   session token, PKCE `auth_init`/`auth_approve`/`auth_exchange`) and shows the
-   real WeChat QR on the panel: a compact numbered text guide on the left
-   (title / steps / page / Esc) and the QR on the right, with a live status
-   line that updates to "scanned — confirm on the phone" and "finishing login"
-   as the phone proceeds, plus a `QR valid for m:ss` countdown while waiting. An expired QR refreshes automatically once; after a
-   second failure the screen offers `r retry · Esc cancel`. The DSH token is stored under `api.dsh_token` and sent to the model
-   API as `x-dsh-auth-token` (no Bearer). Requires `python3` + Pillow only to
-   convert the WeChat JPEG QR into panel modules; without a framebuffer the same
-   QR and live progress are shown on the phone page.
-2. **Phone page** — a LAN page with the WeChat QR, live steps, a Cancel button
-   that aborts an in-flight flow, a QR expiry countdown, a Retry label after a
-   failure, and a manual API-key form (`http://<device-ip>:8787/`). The page
-   follows the device UI language (en/zh/es/ja/de/it).
-3. **Type directly** — menuconfig-style typing for either a DSH token or an
-   OpenAI-compatible base URL + API key + model.
+1. **WeChat QR on the panel** — the same nine-step flow as the DSH desktop
+   client, with live status and a QR countdown;
+2. **Phone page** — `http://<device-ip>:8787/` shows the QR, live steps and a
+   manual API-key form, in the device's UI language;
+3. **Type it** — a DSH token, or base URL + API key + model.
 
-Model requests and voice/OCR pick the auth header automatically: DSH token →
-`x-dsh-auth-token`, API key → `Authorization: Bearer`. `/config` shows
-`API key / token` as the credential row, shows `DSH token` as the value when one
-is stored, and setting an API key (`/key` or the config prompt) replaces the
-token so the new key is not shadowed.
+Credentials live in `~/.dst/config.yml` (mode `600`). A DSH token is sent as
+`x-dsh-auth-token`; an API key as `Authorization: Bearer`.
 
-## Configuration (`~/.dst/config.yml`)
+### 4. Talk to it
 
-The file is YAML and follows DSH's patch dialect: plain settings plus `insert:`
-rows shaped `{ id, name, config, disabled }` (the row fields DSH uses to compose
-plugin lists). Here a row targets a tool by `name`.
+```sh
+dst                      # interactive TUI
+dst --once "summarise this repo"        # one turn, prints events
+dst --tools                             # effective tool set + capability decision
+dst --call bash '{"command":"uname -a"}'  # run one tool exactly as the model would
+dst --voice-selftest 3                  # record, report RMS and transcript
+```
+
+---
+
+## Commands
+
+Commands run locally and are never sent to the model.
+
+| command | what it does |
+| --- | --- |
+| `/help` | list commands, grouped by category, with a live preview |
+| `/model [name]` | show models from `/v1/models` or switch to one |
+| `/effort [auto, low, high, max]` | reasoning effort |
+| `/config [wizard]` | interactive configuration (options first) |
+| `/login` | DeepSeek sign-in: WeChat QR, phone page, or typed credential |
+| `/key <api-key>` | set the API key directly |
+| `/usage` | cache hit rate, tokens in/out, context pressure |
+| `/compact` | summarise older history now |
+| `/goal [show, <objective>, edit, pause, resume, clear]` | long-running objective |
+| `/apps [run <name>]` | browse, run or delete apps the model built |
+| `/extensions` | inspect skills and MCP servers |
+| `/resume` | pick a previous session (preview on `→`) |
+| `/rewind` | restore a checkpoint from an earlier turn |
+| `/rename <title>` | name the current session |
+| `/clear` | clear the transcript and restart the splash |
+| `/quit` | exit |
+
+## Key bindings
+
+| key | action |
+| --- | --- |
+| `Enter` | send |
+| `Shift+Enter` | interrupt the running turn and send immediately |
+| `Esc` | abort the turn (and any playing speech); long-press leaves an app |
+| `Tab` | push-to-talk while held |
+| `/` | command palette |
+| `Up`/`Down` | input history; on an empty prompt with jobs: the task manager |
+| `PgUp`/`PgDn`, `Home`/`End` | scroll the transcript / jump to top or bottom |
+| `CtrlO` | recent tool output (Enter opens, `s` saves) |
+| `CtrlQ` | edit the queued message |
+| `CtrlA`/`CtrlE`, `CtrlW` | cursor to start/end, delete a word |
+
+---
+
+## Configuration
+
+`~/.dst/config.yml` — DSH's YAML patch dialect: plain settings plus `insert:`
+rows shaped `{ id, name, config, disabled }` that target a tool by `name`.
 
 ```yaml
 model: deepseek-flash
-effort: high            # auto | low | high | max
+effort: high                 # auto | low | high | max
 max_tokens: 4096
 api:
   base: https://api.deepseek.com/v1
-  key: sk-...           # kept in this same file, mode 600
-voice:
-  tts_voice: stella     # stella | tide
+  key: sk-...                # kept in this file, mode 600
 tui:
-  queued_default: true
-  auto_send_voice: true
-  language: en          # en | zh
+  language: en               # en | zh | es | ja | de | it
+  mode: normal               # normal | creator
 agent:
-  max_steps: 0          # 0 = unlimited (default)
+  max_steps: 0               # 0 = unlimited
 goal:
-  max_rounds: 256       # DSH default; 0 = unlimited
-  max_steps: 0          # steps per goal round; 0 = unlimited
-  judge: true           # model self-judges via update_goal complete/blocked
+  max_rounds: 256
+  max_steps: 0
 compaction:
   enabled: true
-  threshold_tokens: 512000   # absolute pressure cap; window ratio/headroom still clamp it
-  keep_messages: 2           # minimum trailing messages kept verbatim (token tail is authoritative)
-  max_tokens: 8192           # output budget of the summary call
-  # model: deepseek-flash    # optional separate summariser model
-tools:
-  call_timeout_ms: 60000
-context:
-  time: true
-  time_refresh_secs: 600     # 0 = inject the clock on every step
+  threshold_tokens: 512000
+sandbox:
+  mode: auto                 # auto | strict | full
 
-# DSH-style patch rows: disable a tool or pass it config
 insert:
   - id: speak
     name: speak
     disabled: true
 ```
 
-`/config` edits the same values interactively, and `/config path` prints the
-file location.
+Every key, including the numeric budgets and the `insert:` rows, is documented
+in [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md). `/config` edits the same
+values interactively; `/config path` prints the file location.
 
-## Build
+---
 
-Zero crates, so no network is needed to build:
+## Architecture
 
-```sh
-# The device only has 512 MB; LTO can be OOM-killed. Build single-threaded there.
-CARGO_BUILD_JOBS=1 cargo build --release
-install -m755 target/release/dst /usr/local/bin/dst
-```
+<img src="docs/architecture.svg" alt="dst architecture: device I/O, TUI, harness, tools, sandbox, model, state" width="100%">
 
-Release profile: `opt-level="z"`, LTO, `panic=abort`, `strip`.
+| file | role |
+| --- | --- |
+| `src/main.rs` | TUI: framebuffer terminal, input, panels, wizard, resume |
+| `src/harness.rs` | turn/step driver (DSH agent-loop port) |
+| `src/tool.rs` | tool contracts and the execution pipeline |
+| `src/tools.rs` | built-in tool registry |
+| `src/sandbox.rs` | permission gate: safe rules, danger rules, LLM judge |
+| `src/api.rs` | streaming chat client over a `curl` subprocess |
+| `src/compact.rs` | automatic and manual context compaction |
+| `src/context.rs` | in-progress context injection (clock, repeat reminder) |
+| `src/goal.rs` | goal state machine, tools and the round driver |
+| `src/session.rs` | session titles, `rename` tool, `/resume` previews |
+| `src/checkpoint.rs` | turn checkpoints for `/rewind` |
+| `src/bg.rs` | background jobs and line watchers |
+| `src/jobs.rs` | cron and file-watch scheduler |
+| `src/skills.rs` | skill catalog and progressive loader |
+| `src/apps.rs` | creator mode: app packages, catalog, screen takeover |
+| `src/mcp.rs` | MCP stdio client |
+| `src/voice.rs` | TTS/ASR, resampling, WAV framing, recorder |
+| `src/config.rs` | `~/.dst` home and the DSH-dialect YAML config |
+| `src/cmd.rs` | human commands |
+| `src/i18n.rs` | six-language UI catalog |
+| `src/login.rs`, `src/dsh_login.rs` | login page + QR, nine-step DSH/WeChat login |
+| `src/art.rs` | the animated splash |
+| `src/json.rs` | minimal JSON |
 
-## Runtime requirements
+Deeper notes on the loop, compaction, goals and the permission model:
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-| need | package | used by |
-|---|---|---|
-| `curl` | curl | all HTTP |
-| `arecord`, `aplay` | alsa-utils | ASR capture, TTS playback |
-| `qrencode` | qrencode | optional; QR for the phone-page URL (falls back to printing the URL) |
-| `python3` + Pillow | Python 3 + Pillow | optional; converts the WeChat JPEG QR to panel modules (falls back to the phone page) |
+---
 
-Non-interactive entry points:
+## Testing without the device
 
-```sh
-dst --once "<prompt>"                    # one turn, prints events
-dst --tools                              # effective tool set + capability decision
-dst --call <name> '<json args>'          # run one tool exactly as the model would
-dst --voice-selftest [seconds]           # record, report RMS and transcript
-```
-
-## Testing without the device (`tools/sim`)
-
-The TUI is a pure ANSI terminal program, so it can run under a pty on a
-development machine. `tools/sim` contains a screen simulator and a scripted
-OpenAI-compatible mock server; no network or API key is involved.
+The TUI is a plain ANSI program, so it runs under a pty anywhere.
+[`tools/sim`](tools/sim/README.md) contains a screen simulator (53×12 pty → pyte
+→ PNG at the device's native 320×170 with the X11 6×13 bitmap font) and a
+scripted OpenAI-compatible mock server. No hardware, no network, no API key.
 
 ```sh
 cargo build                       # host binary
 
 cd tools/sim
-python3 run_demo.py               # splash / thinking / tool call / reply + PNG contact sheet
-python3 run_scenarios.py          # feature + voice + login scenario checks
-python3 run_live.py               # UI walkthrough against the real local vLLM model
+python3 run_demo.py               # splash → thinking → tool call → reply + contact sheet
+python3 run_scenarios.py          # feature scenarios, asserts on screens *and* request logs
+python3 run_live.py               # visual walkthrough against a real local endpoint
+python3 check_memory.py           # samples RSS over 20 turns
 ```
 
-`run_demo.py` writes snapshots and a contact sheet under `screenshots/`;
-`run_scenarios.py` runs the feature scenarios (thinking panel, tool call
-ordering, tool timeout, Esc interrupt, step limits, repeat/time context
-injection, auto+manual compaction, all `/goal` flows, `/clear`, `/config`,
-command palette, artifact panel, `rename`+`/resume` session menu across a
-restart, onboarding menu, sandbox auto/strict/full, background jobs, watchers,
-searchable resume, push-to-talk with mocked speech, `speak`, the nine-step
-WeChat login chain, provider auth/rate-limit failures and their recovery, long
-input scrolling/editing (including CJK), the multi-entry tool-output viewer,
-the scrolling artifact panel, and creator mode `creator_mode`, `creator_build`,
-`creator_run`, `creator_run_esc`, `creator_run_args`, `creator_tty_test`,
-`creator_apps_run`, `creator_requires`,
-`creator_apps_zh`, `creator_home`, `creator_skill`, `creator_app_test`, `creator_tty_test`, `creator_kinds`,
-`creator_nudge`; app run/test history and skill management are asserted there)
-and
-asserts on captured screens *and* on the request log
-(e.g. that a `<goal_round>` prompt was sent, or that a checkpoint message
-reached the next request). `check_memory.py` samples RSS across a 20-turn
-session, and `run_all.py` runs them together.
+`run_scenarios.py` covers the feature matrix end to end: thinking panel, tool
+call ordering, timeouts, `Esc`, step limits, repeat/time context injection,
+automatic and manual compaction, every `/goal` flow, `/config`, the palette,
+artifacts, sessions across a restart, onboarding, sandbox modes, jobs, watchers,
+searchable resume, push-to-talk with mocked speech, the nine-step WeChat login
+chain, provider failures and recovery, CJK input and the creator-mode scenarios.
 
-PNG captures are rendered at the panel's native resolution: a 320×170
-framebuffer with a 53×12 grid of 6×14 px cells (6×13 glyph box), the public
-domain X11 6×13 bitmap font (`tools/sim/fonts/`) for Latin and a 12×13
-subpixel-antialiased CJK fallback, then integer-upscaled for viewing — see
-`tools/sim/README.md`. `live_creator_check.py` proves creator mode end-to-end with the same live
-endpoint: the model must call `app_save`/`app_file`, a package must appear under
-`~/.dst/apps` and `/apps` must show it (`docs/live-creator.png`).
-`run_live.py` is the common-usage visual pass: it uses the **real local vLLM
-endpoint** from `~/.dsh/settings.yaml` (real reasoning/streaming/tool calls)
-and mocks only TTS/ASR (`DST_MOCK_SPEECH=1`), capturing startup, streaming,
-tool running/done, push-to-talk, `/help`, `/config`, `/resume` and `/login` into
-`docs/live-walkthrough.png`. See `docs/UX-LIVE.md`. Everything else binds the
-mock API to 127.0.0.1 only.
+Unit tests (host, no network): `cargo test` — 73 tests over the harness, tool
+pipeline, compaction budgets, goal state machine, context formatting, config
+round-trip, skills, apps and the i18n catalogue.
 
-Voice test hooks (never set on the device): `DST_MOCK_SPEECH=1` fakes the
-recorder/ASR (text from `DST_MOCK_ASR_TEXT`) and logs TTS instead of playing
-(`DST_MOCK_TTS_MS`); `~/.dst/logs/voice.log` records both paths.
-
-Unit tests (host, no network): `cargo test` — harness/tool pipeline, compaction
-budgets, goal state machine, context formatting, config round-trip.
-
-HTTPS is enforced: non-TLS endpoints are refused.
-
-## Layout
-
-```
-src/main.rs      TUI: framebuffer terminal, input, panels, wizard, resume
-src/harness.rs   turn/step driver (DSH agent-loop port)
-src/tool.rs      tool contracts + execution pipeline (timeouts, call/result)
-src/tools.rs     built-in tool registry
-src/compact.rs   automatic/manual context compaction (DSH compaction-basic port)
-src/context.rs   in-progress context injection (clock, repeat-call reminder)
-src/goal.rs      goals: state machine, tools, round driver prompt (DSH goal port)
-src/session.rs   saved-session title: rename tool, /resume menu previews
-src/sandbox.rs   tool permission gate: safe rules, danger rules, LLM judge
-src/bg.rs        background jobs + line watchers (job_*/watcher_* tools)
-src/api.rs       streaming chat client over a curl subprocess
-src/config.rs    ~/.dst home, DSH-dialect YAML config
-src/cmd.rs       human commands (/model, /compact, /goal, /resume, ...)
-src/dsh_login.rs real DSH/WeChat nine-step login (curl + std crypto)
-src/login.rs     login HTTP page (WeChat QR + API key) and QR rendering
-src/skills.rs    skill catalog and loader
-src/apps.rs      creator mode: app packages, catalog, screen takeover runtime
-src/mcp.rs       MCP stdio client
-src/jobs.rs      cron + file-watch scheduler
-src/voice.rs     TTS/ASR, resampling, WAV framing, recorder
-src/json.rs      minimal JSON
-tools/sim/       pty screen simulator + scripted mock API + live-API walkthrough
-docs/UX-AUDIT.md 12-row screen-by-screen UX audit checklist and known limits
-docs/UX-LIVE.md  common-usage walkthrough against the real local vLLM model
-docs/CREATOR.md  creator mode: requirements, data layout, prompt + takeover contract
-tools/sim/mock_login.py  mock of the nine-step DSH login chain (host tests)
-tools/sim/qr_scan.js     jsQR decoder for the panel QR image
-tools/sim/check_qr_scan.py  renders the panel QR and proves it decodes
-tools/sim/check_login_page_i18n.py  starts the login page in all six languages
-tools/sim/check_login_cancel.py  proves the page's Cancel stops the flow
-tools/sim/render_login_i18n.py  renders the QR login screen in all six languages
-                               and asserts the text never overlaps the QR
-tools/sim/run_live.py  real-vLLM UX walkthrough (speech mocked) + contact sheet
-tools/deploy/    scp/build/install and systemd-ordering fix for the device
-```
+---
 
 ## Deploying to the device
 
-The device boots `cpzterm.service`, which runs `fbterm` + `dst` on the panel.
-`tools/deploy/deploy.sh` copies `src/`, builds on the device with
-`CARGO_BUILD_JOBS=1` (512 MB is not enough for parallel LTO), installs
-`/usr/local/bin/dst`, and restarts the service:
+The device boots `cpzterm.service` (`fbterm` + `dst`). The deploy script copies
+sources, builds on the device (single-threaded LTO), installs the binary and
+restarts the service:
 
 ```sh
-tools/deploy/deploy.sh hanxiao@192.168.88.234
+tools/deploy/deploy.sh hanxiao@192.168.43.49
 ```
 
-`tools/deploy/fix-cpzterm-order.sh` repairs an early-boot ordering cycle: the
-base unit must not declare `Before=sysinit.target` (that combined with the
-keymap unit deadlocks boot with `Resource deadlock avoided`). Run it on the
-device once; it removes the ordering edge, reloads systemd and verifies with
-`systemd-analyze verify`.
+`DST_SSH_KEY` selects a key; `DST_SSH_PASSWORD` (needs `sshpass`) uses password
+auth. `tools/deploy/fix-cpzterm-order.sh` repairs an early-boot ordering cycle
+(`Before=sysinit.target` deadlocks boot with `Resource deadlock avoided`).
 
-## Notes
+---
 
-- Built for the Cardputer Zero (Raspberry Pi CM0, 512 MB, Debian 13, fbterm at
-  53×12 cells). Wrap width is pinned to 53 cells and the UI clamps to 13 rows.
-- Keyboard layers (`sym`/`fn`) and the vendor keymap are device concerns, not
-  part of this binary.
+## Documentation
+
+| document | contents |
+| --- | --- |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | turn/step loop, tool pipeline, compaction, goals, permissions |
+| [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) | every config key, `insert:` rows, capabilities per endpoint |
+| [`docs/CREATOR.md`](docs/CREATOR.md) | creator mode: requirements, package layout, prompt and takeover contract |
+| [`docs/LOGIN.md`](docs/LOGIN.md) | DeepSeek sign-in: states, requirements, troubleshooting — [中文](docs/LOGIN.zh.md) · [ES](docs/LOGIN.es.md) · [日本語](docs/LOGIN.ja.md) · [DE](docs/LOGIN.de.md) · [IT](docs/LOGIN.it.md) |
+| [`docs/UX-AUDIT.md`](docs/UX-AUDIT.md) | screen-by-screen UX audit checklist and known limits |
+| [`docs/UX-LIVE.md`](docs/UX-LIVE.md) | the common-usage walkthrough behind the screenshots |
+| [`docs/SPLASH-STORYBOARD.md`](docs/SPLASH-STORYBOARD.md) | splash frame storyboard and reference analysis |
+| [`tools/sim/README.md`](tools/sim/README.md) | simulator, mock API, scenario DSL, screenshot pipeline |
+
+## Contributing
+
+Issues and pull requests are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md)
+for the build, test and screenshot workflow. Security reports: see
+[`SECURITY.md`](SECURITY.md).
+
+`dst` keeps a few promises that make review easy: **no third-party crates**, no
+credentials in the tree, and every UI string in the i18n catalogue.
+
+## License
+
+[GPL-3.0](LICENSE) © MarsTechHAN
+
+## Acknowledgements
+
+- The DeepSeek Harness (DSH) for the agent-loop, compaction, goal and
+  instructions architecture this port follows.
+- The public-domain X11 6×13 bitmap font, vendored for pixel-accurate
+  screenshots.
+- The original dsh-TUI pixel whale, reused frame-for-frame in the splash.
+
+<div align="center">
+<br>
+<a href="https://star-history.com/#MarsTechHAN/deepseek-harness-tui-cardputer&Date">
+  <img src="https://api.star-history.com/svg?repos=MarsTechHAN/deepseek-harness-tui-cardputer&type=Date" alt="Star history" width="70%">
+</a>
+<br><br>
+<sub>Built for a 320×170 screen — and for the idea that a pocket device deserves a real agent loop.</sub>
+</div>
