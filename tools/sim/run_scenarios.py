@@ -1317,6 +1317,7 @@ def check_creator_build(screens, reqs, work):
                    "app preview shows the package path"))
     checks.append(("kind: sh" in prev and "entry: run.sh" in prev,
                    "app preview shows kind and entry"))
+    checks.append(("version: 1" in prev, "app preview shows the manifest version"))
     checks.append(("Shows the battery level." in prev,
                    "app preview shows the annotation"))
     checks.append(("CREATOR MODE" in sys1 and "INSTALLED APPS (0)" in sys1,
@@ -1439,10 +1440,14 @@ def check_creator_apps_run(screens, reqs, work):
                    "the manager lists both apps with a count in the title"))
     checks.append(("QUICK APP" in running and "creator \u00b7" not in running,
                    "Enter runs the selected app full-screen"))
+    checks.append(("ARG=--fast" in running,
+                   "menu launches pass the app's default_args"))
     checks.append(("Apps \u00b7 2" in menu_back,
                    "the menu comes back after the app returns"))
     checks.append(("app system/quick returned to dst" in after,
                    "leaving the menu shows the run notice in the transcript"))
+    checks.append(("args: --fast" in screens.get("quick_panel", ""),
+                   "the annotation panel shows default args"))
     checks.append(("Apps \u00b7 1/2" in filtered and "Notes" in filtered
                    and "Quick app" not in filtered,
                    "typing filters the app list"))
@@ -1559,6 +1564,11 @@ def check_creator_app_test(screens, reqs, work):
     lst = screens.get("list", "")
     checks.append(("tools \u00b7 sh !" in lst and "tools \u00b7 sh ! \u00b7" in lst,
                    "the app list flags the failing app and shows its last-use time"))
+    checks.append(("Apps \u00b7 2 \u00b7 1!" in lst,
+                   "the launcher title counts the failing app"))
+    improve = screens.get("improve", "")
+    checks.append(("Improve the app tools/broken:" in improve,
+                   "i pre-fills an improvement request for the selected app"))
     checks.append((" \u00b7 1!" in screens.get("tested", ""),
                    "the creator idle hint counts the failing app"))
     checks.append((len(reqs) == 2, "exactly the scripted requests were made"))

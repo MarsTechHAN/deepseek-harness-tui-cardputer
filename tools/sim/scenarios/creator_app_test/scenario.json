@@ -46,7 +46,11 @@
    "wait_ms": 250
   },
   {
-   "key": "Esc"
+   "send": "i"
+  },
+  {
+   "wait_ms": 400,
+   "snap": "improve"
   },
   {
    "wait_ms": 250

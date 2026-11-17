@@ -147,7 +147,9 @@ repository.
   `last_test` with outcome, duration and time), shown in the `/apps` annotation
   panel (a `!` on the list row marks a failing app), and a failed last run/test
   is flagged in the model's app catalog so it fixes the app before reusing it.
-  A `capture: true` app gets a piped stdout so dst can forward the bytes to the
+  `default_args` are used when the user launches an app from `/apps` (`i` there
+  pre-fills an improvement request for the selected app). A `capture: true` app
+  gets a piped stdout so dst can forward the bytes to the
   panel *and* record a cleaned `state/last-run.log`; `/apps` `l` replays it.
   `app_export` packs the package into `~/.dst/tmp/app-*.tar.gz` for backups and
   `app_import` restores/validates such an archive (`replace=true` overwrites).

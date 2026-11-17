@@ -4556,6 +4556,8 @@ enum AppsAction {
     RunPrompt(String, String),
     /// Pre-fill the prompt so the user can describe an app to build.
     NewApp,
+    /// Pre-fill the prompt asking the model to change this app.
+    Improve(String),
 }
 
 /// Creator app launcher: run/read/delete apps, replay captured output, search,
@@ -4579,7 +4581,11 @@ fn apps_menu(scr: &mut Scr, config_rc: &ConfigRc) -> AppsAction {
         if !app.entry.is_empty() {
             d.push(i18n::tf("apps_entry", &[&app.entry]));
         }
+        d.push(i18n::tf("apps_version", &[&app.version.to_string()]));
         d.push(i18n::tf("apps_updated", &[&app.updated]));
+        if !app.default_args.is_empty() {
+            d.push(i18n::tf("apps_args", &[&app.default_args]));
+        }
         for (label, stamp) in [
             ("apps_last_run", &app.last_run),
             ("apps_last_test", &app.last_test),
@@ -4725,16 +4731,22 @@ fn apps_menu(scr: &mut Scr, config_rc: &ConfigRc) -> AppsAction {
         let title = if creator {
             let skills = crate::skills::load_meta().len().to_string();
             let skills = i18n::tf("apps_skills_count", &[&skills]);
-            if filter.is_empty() {
-                format!("{} · {} · {}", i18n::t("apps_title"), apps.len(), skills)
+            let broken = apps.iter().filter(|a| crate::apps::is_broken(a)).count();
+            let count = if filter.is_empty() {
+                apps.len().to_string()
             } else {
+                format!("{}/{}", filtered.len(), apps.len())
+            };
+            if broken > 0 {
                 format!(
-                    "{} · {}/{} · {}",
+                    "{} · {} · {}! · {}",
                     i18n::t("apps_title"),
-                    filtered.len(),
-                    apps.len(),
+                    count,
+                    broken,
                     skills
                 )
+            } else {
+                format!("{} · {} · {}", i18n::t("apps_title"), count, skills)
             }
         } else if filter.is_empty() {
             format!("{} · {}", i18n::t("apps_title"), apps.len())
@@ -4873,6 +4885,14 @@ fn apps_menu(scr: &mut Scr, config_rc: &ConfigRc) -> AppsAction {
                     confirm = Some(app.label());
                     continue;
                 }
+                if (k == b'i' || k == b'I') && creator {
+                    scr.menu = None;
+                    for (text, kind) in pending.drain(..) {
+                        scr.push(&text, kind);
+                    }
+                    scr.draw();
+                    return AppsAction::Improve(app.label());
+                }
                 if k == b'l' || k == b'L' {
                     let log_path = app.dir.join("state").join("last-run.log");
                     let text = std::fs::read_to_string(&log_path).unwrap_or_default();
@@ -4933,7 +4953,11 @@ fn apps_menu(scr: &mut Scr, config_rc: &ConfigRc) -> AppsAction {
                     }
                     scr.menu = None;
                     scr.draw();
-                    match crate::apps::run_on_screen(&app, crate::apps::DIRECT_TIMEOUT_S) {
+                    match crate::apps::run_on_screen_args(
+                        &app,
+                        crate::apps::DIRECT_TIMEOUT_S,
+                        &app.default_args,
+                    ) {
                         Ok(_) => pending.push((i18n::tf("apps_exited", &[&app.label()]), K_DIM)),
                         Err(e) => pending.push((e, K_ERR)),
                     }
@@ -5520,6 +5544,12 @@ fn main() {
                             scr.input = i18n::t("apps_new_prompt").chars().collect();
                             scr.cursor = scr.input.len();
                             scr.push(&format!("+ {}", i18n::t("apps_new_hint")), K_DIM);
+                        }
+                        AppsAction::Improve(label) => {
+                            // Seed an edit request for the selected app.
+                            scr.input = i18n::tf("apps_fix_prompt", &[&label]).chars().collect();
+                            scr.cursor = scr.input.len();
+                            scr.push(&format!("+ {}", i18n::t("apps_fix_hint")), K_DIM);
                         }
                         AppsAction::None => {}
                     }

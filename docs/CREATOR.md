@@ -110,6 +110,7 @@ watchers already cover that); grabbing the framebuffer; a GUI toolkit.
   "description": "Shows the charge level and charging state, refreshed live.",
   "kind": "sh",
   "entry": "run.sh",
+  "default_args": "--fast",
   "capture": false,
   "version": 1,
   "created": "2026-11-17T15:00:00+08:00",
@@ -136,6 +137,9 @@ Rules:
 - `app_export` packs the whole package (manifest, annotation, program, state)
   into `~/.dst/tmp/app-<category>-<name>.tar.gz` for backups or for copying an
   app off the device; it is the model-side export path.
+- `default_args` is passed when the user launches the app from `/apps`
+  (model `app_run` args override it); useful for CLI-style apps with a fixed
+  mode. The annotation panel shows the version and the default args.
 - `capture: true` makes `app_run` give the app a **piped** stdout/stderr
   (not a tty) while dst forwards the bytes to the panel and records a cleaned
   copy (`state/last-run.log`, ANSI/CR stripped) for replay. It is for text
@@ -328,7 +332,8 @@ model → app_run{name, timeout_s?, args?}
   `creator mode on · apps: ~/.dst/apps (2)` / `creator mode off · 2 apps stay
   installed`, and the idle hint switches immediately.
 - `/apps` is a full-width menu with the app count in the title
-  (`Apps · 3 · skills 2` in creator mode — apps and the skill catalog count),
+  (`Apps · 3 · 1! · skills 2` in creator mode — apps, failing apps and the
+  skill catalog count; `1!` only appears when an app needs fixing),
   rows `Battery viewer   system · sh · 18:20` — most recently
   used apps first, with the last-run/test time in the value column (a `!`
   after the kind means its last run/test failed) — footer
@@ -350,7 +355,9 @@ model → app_run{name, timeout_s?, args?}
   system/battery_viewer`; a model-written skill is announced as `saved skill
   battery-report` and appears in the SKILLS catalog and `/extensions` next turn.
 - `l` in `/apps` replays the selected app's last recorded output
-  (`state/last-run.log`, capture apps only) in the panel viewer.
+  (`state/last-run.log`, capture apps only) in the panel viewer; `i` asks the
+  model to improve the selected app (creator mode): it closes the launcher and
+  pre-fills `Improve the app <category>/<name>: ` in the prompt.
 - In creator mode the launcher always exists: with zero apps it still opens
   (title `Apps · 0 · skills N`) and ends with a `+ new app` row. Enter on it
   closes the launcher and pre-fills the prompt with the localized
@@ -390,6 +397,9 @@ model → app_run{name, timeout_s?, args?}
     transcript notice; no model request.
   - `creator_skill_rollback` — two saves build v1/v2, `skill_rollback` restores
     the v1 body as v3 with the pre-rollback body archived under `.history/v2.md`.
+  - `creator_apps_run` also checks `default_args` (menu launch passes
+    `--fast`, panel shows `args: --fast`) and `creator_app_test` checks the
+    launcher title failing count plus `i` pre-filling an improvement request.
   - `creator_home` — creator mode with no apps: `/apps` opens the launcher
     (`Apps · 0 · skills 1`), `+ new app` pre-fills `Build an app:`, typing the
     description and Enter sends it to the model.

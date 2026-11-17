@@ -65,6 +65,9 @@ pub struct App {
     /// can see whether an app still works without running it.
     pub last_run: Option<RunStamp>,
     pub last_test: Option<RunStamp>,
+    /// Arguments passed when the user launches the app from /apps without
+    /// typing any (model-initiated app_run args still win when provided).
+    pub default_args: String,
     /// Record the app's stdout/stderr to state/last-run.log while it runs.
     /// Implies a piped stdout (not a tty), so it is for text apps.
     pub capture: bool,
@@ -176,6 +179,9 @@ fn manifest_json(a: &App) -> J {
     if let Some(r) = &a.last_test {
         pairs.push(("last_test", stamp_json(r)));
     }
+    if !a.default_args.is_empty() {
+        pairs.push(("default_args", J::s(&a.default_args)));
+    }
     if a.capture {
         pairs.push(("capture", J::Bool(true)));
     }
@@ -231,6 +237,12 @@ fn parse_manifest(dir: &Path) -> Option<App> {
             .get("capture")
             .map(|b| matches!(b, J::Bool(true)))
             .unwrap_or(false),
+        default_args: v
+            .get("default_args")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string(),
     })
 }
 
@@ -472,7 +484,7 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
 
     let dir = root.join(&category).join(&name);
     let existed = dir.join("app.json").is_file();
-    let (created, version, last_run, last_test, old_capture) = if existed {
+    let (created, version, last_run, last_test, old_capture, old_args) = if existed {
         let old = parse_manifest(&dir).ok_or_else(|| {
             format!("{} already exists but its app.json is unreadable; fix it by hand", dir.display())
         })?;
@@ -482,14 +494,22 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
             old.last_run,
             old.last_test,
             old.capture,
+            old.default_args,
         )
     } else {
-        (now_stamp(), 1, None, None, false)
+        (now_stamp(), 1, None, None, false, String::new())
     };
     let capture = args
         .get("capture")
         .map(|b| matches!(b, J::Bool(true)))
         .unwrap_or(old_capture);
+    let default_args = str_arg(args, "default_args")
+        .map(|s| s.trim().chars().take(200).collect::<String>())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(old_args);
+    if default_args.chars().count() > 200 {
+        return Err("default_args is longer than 200 characters".into());
+    }
     let app = App {
         name,
         title,
@@ -504,6 +524,7 @@ pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
         last_run,
         last_test,
         capture,
+        default_args,
     };
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     chmod(&dir, 0o755);
@@ -807,6 +828,8 @@ for the real size). app_run is for the user to see the real full-screen behaviou
 - app_export / app_import move a package as a .tar.gz under ~/.dst/tmp (backup, copy off the \
 device, restore later); an imported archive must contain exactly one <category>/<name>/ tree \
 and is validated before it is installed (replace=true to overwrite).\n\
+- Use default_args for an app that needs a fixed argument when the user launches it from /apps; \
+app_run args override them for a one-off run.\n\
 - Set capture=true on an app that prints text and you want the run remembered: dst records its \
 stdout/stderr to state/last-run.log (shown in /apps with `l`) and mentions the path in app_run's \
 result. Capture makes stdout a pipe, not a tty, so do not use it for full-screen TUI apps.\n\
@@ -936,7 +959,12 @@ fn run_exec(args: &J) -> Result<J, Fail> {
     let timeout = num_arg(args, "timeout_s")
         .unwrap_or(DEFAULT_TIMEOUT_S as f64)
         .clamp(1.0, MAX_TIMEOUT_S as f64) as u64;
-    let extra = str_arg(args, "args").unwrap_or_default();
+    let supplied = str_arg(args, "args").unwrap_or_default();
+    let extra = if supplied.trim().is_empty() {
+        app.default_args.clone()
+    } else {
+        supplied
+    };
     if app.kind == "prompt" {
         let body = prompt_body(&app);
         if body.trim().is_empty() {
@@ -1488,6 +1516,7 @@ you do not rewrite.",
                 ),
                 Param::opt("entry", "string", "Relative entry file (e.g. run.sh); required unless kind=doc."),
                 Param::opt("capture", "boolean", "Record stdout/stderr of app_run into state/last-run.log and replay it from /apps. Sets stdout to a pipe (not a tty): use for text apps, not full-screen TUIs."),
+                Param::opt("default_args", "string", "Arguments used when the user launches the app from /apps (max 200 chars); app_run args override them."),
             ],
             concurrency_safe: false,
             timeout_ms: 10_000,
@@ -2084,6 +2113,7 @@ mod tests {
             last_run: None,
             last_test: None,
             capture: false,
+            default_args: String::new(),
         }
     }
 

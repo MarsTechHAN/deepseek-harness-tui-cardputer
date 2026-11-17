@@ -56,6 +56,19 @@
    "wait_ms": 450
   },
   {
+   "key": "Right"
+  },
+  {
+   "wait_ms": 500,
+   "snap": "quick_panel"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 250
+  },
+  {
    "wait_ms": 200,
    "snap": "recent"
   },
