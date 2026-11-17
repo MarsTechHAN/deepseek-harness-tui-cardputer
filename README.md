@@ -156,7 +156,9 @@ repository.
 - `/apps` is the user's side: a menu with the app count, `/` search mode that
   filters by name/title/category, `→` opens the full annotation panel (metadata +
   APP.md), Enter runs (doc apps open their panel; prompt apps are previewed
-  first and Enter sends), `x` deletes after `y/n`.
+  first and Enter sends), `x` deletes after `y/n`. Rows are ordered by most
+  recent use and show that time (`system · sh · 18:20`); failing apps carry a
+  `!` and the creator idle hint counts them (`creator · 2 apps · 1! · …`).
   Running from the menu comes back to the menu; leaving it prints the run notice.
 - Consensus the platform enforces, not the apps: **long-press Esc always leaves
   an app** and gives the screen back to the chat (the runner watches keyboard

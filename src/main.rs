@@ -102,6 +102,8 @@ pub struct Scr {
     /// Installed-app count, refreshed at mode/app lifecycle points so the idle
     /// hint can show it without a directory walk on every draw.
     apps_count: usize,
+    /// Apps whose last run/test failed, shown as a warning suffix in the hint.
+    broken_apps: usize,
     /// Set by the artifact viewer when Enter submits (`1`) rather than closing.
     artifact_action: u8,
     /// Display override for the next request when a prompt app was launched:
@@ -219,6 +221,7 @@ impl Scr {
             approval: None,
             creator: false,
             apps_count: 0,
+            broken_apps: 0,
             prompt_label: None,
             artifact_action: 0,
             turn_tools: Vec::new(),
@@ -340,7 +343,9 @@ impl Scr {
 
     /// Re-read the installed-app count for the creator idle hint.
     pub fn refresh_apps_count(&mut self) {
-        self.apps_count = crate::apps::load().len();
+        let apps = crate::apps::load();
+        self.apps_count = apps.len();
+        self.broken_apps = apps.iter().filter(|a| crate::apps::is_broken(a)).count();
     }
 
     /// Draw the first frame of the animated splash plus the hint line. Used at
@@ -569,7 +574,14 @@ impl Scr {
         // Idle status line doubles as a key-hint area.
         if live_line.is_empty() && !self.busy && self.input.is_empty() && self.scroll == 0 {
             live_line = if self.creator {
-                i18n::tf("creator_hint", &[&self.apps_count.to_string()])
+                if self.broken_apps > 0 {
+                    i18n::tf(
+                        "creator_hint_broken",
+                        &[&self.apps_count.to_string(), &self.broken_apps.to_string()],
+                    )
+                } else {
+                    i18n::tf("creator_hint", &[&self.apps_count.to_string()])
+                }
             } else {
                 i18n::t("idle_hint").to_string()
             };
@@ -4641,7 +4653,7 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
             break;
         }
         let needle = filter.trim().to_lowercase();
-        let filtered: Vec<&crate::apps::App> = apps
+        let mut filtered: Vec<&crate::apps::App> = apps
             .iter()
             .filter(|a| {
                 needle.is_empty()
@@ -4650,6 +4662,14 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
                     || a.category.to_lowercase().contains(&needle)
             })
             .collect();
+        // Launcher order: most recently run/tested first, then alphabetical.
+        filtered.sort_by(|a, b| {
+            let la = crate::apps::last_activity(a);
+            let lb = crate::apps::last_activity(b);
+            lb.cmp(&la)
+                .then_with(|| a.category.cmp(&b.category))
+                .then_with(|| a.name.cmp(&b.name))
+        });
         if sel >= filtered.len() {
             sel = filtered.len().saturating_sub(1);
         }
@@ -4667,13 +4687,17 @@ fn apps_menu(scr: &mut Scr, _config_rc: &ConfigRc) -> Option<(String, String)> {
                         })
                         .unwrap_or(false)
                 });
+                let used = crate::apps::last_used_hhmm(a)
+                    .map(|t| format!(" · {t}"))
+                    .unwrap_or_default();
                 MenuItem {
                     label: if a.title.is_empty() { a.name.clone() } else { a.title.clone() },
                     value: format!(
-                        "{} · {}{}",
+                        "{} · {}{}{}",
                         a.category,
                         a.kind,
-                        if bad { " !" } else { "" }
+                        if bad { " !" } else { "" },
+                        used
                     ),
                 }
             })

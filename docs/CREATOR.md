@@ -317,8 +317,9 @@ model → app_run{name, timeout_s?, args?}
   `creator mode on · apps: ~/.dst/apps (2)` / `creator mode off · 2 apps stay
   installed`, and the idle hint switches immediately.
 - `/apps` is a full-width menu with the app count in the title
-  (`Apps · 3`), rows `Battery viewer   system · sh` (a `!` after the kind means
-  its last run/test failed), footer
+  (`Apps · 3`), rows `Battery viewer   system · sh · 18:20` — most recently
+  used apps first, with the last-run/test time in the value column (a `!`
+  after the kind means its last run/test failed) — footer
   `↑↓ · Enter run · → read · / search · x delete · Esc`. Enter runs (doc apps
   open their APP.md panel instead); `→` opens the full annotation panel
   (metadata: path/kind/entry/updated/files, then APP.md) for any app; `/`
@@ -328,7 +329,9 @@ model → app_run{name, timeout_s?, args?}
   app from the menu returns to the menu; leaving it prints the run notice in
   the transcript.
 - The idle hint in creator mode is `creator_hint`, which shows the installed
-  count, `/apps` and the long-Esc rule (`creator · 2 apps · /apps · hold Esc`),
+  count, a failing-app counter (`creator · 2 apps · 1! · /apps · hold Esc`
+  when an app's last run/test failed), `/apps` and the long-Esc rule, e.g.
+  `creator · 2 apps · /apps · hold Esc`,
   so the mode is visible without a second status glyph. The count is cached and
   refreshed when the mode changes, a turn ends or `/apps` closes.
 - A saved app is announced in the transcript on one line: `saved app
@@ -380,8 +383,8 @@ model → app_run{name, timeout_s?, args?}
     (only the selected one; the catalog drops it next turn).
   - `creator_app_test` — two apps tested headlessly: stdout/argv/stdin capture,
     a 0 exit and a 3 exit, stderr capture, the full log file on disk, and
-    `last test: exit 3` recorded in the broken app's panel and a `!` flag on
-    its `/apps` row.
+    `last test: exit 3` recorded in the broken app's panel, a `!` flag and a
+    last-use time on its `/apps` row, and the idle hint counts it (`· 1!`).
   - `creator_kinds` — a binary-kind app runs on the panel, a prompt app launched
     from `/apps` is first previewed (Enter sends, Esc cancels), then submitted as
     the next request and the model follows it.
@@ -399,8 +402,8 @@ model → app_run{name, timeout_s?, args?}
     the app; its HOME is `state/home`.
   - `creator_run` — seeded app, model calls `app_run`; the panel shows the app's
     output mid-run, then returns to the TUI with a timeout result; the tool
-    card shows the run, and the `/apps` annotation panel records
-    `last run: timeout 2s`.
+    card shows the run, the `/apps` annotation panel records
+    `last run: timeout 2s`, and the launcher row shows the use time and `!`.
   - `creator_run_esc` — long-press Esc kills a long-running app and returns.
   - `creator_apps_zh` — `/apps` menu, empty state and creator hint in Chinese.
 - `run_all.py --quick` (demo + all scenarios), then the full suite; the visual

@@ -286,6 +286,35 @@ pub fn stamp_hhmm(at: &str) -> String {
     at[idx..].chars().take(5).collect()
 }
 
+/// A failed last run/test is the health flag shown in the UI and the catalog.
+pub fn is_broken(app: &App) -> bool {
+    [&app.last_run, &app.last_test].iter().any(|st| {
+        st.as_ref()
+            .map(|r| {
+                !(r.outcome.is_empty() || r.outcome == "exit 0" || r.outcome == "esc")
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// Newest run/test timestamp (ISO strings with the same local offset sort
+/// chronologically, so no date parsing is needed for "most recently used").
+pub fn last_activity(app: &App) -> Option<&str> {
+    let run = app.last_run.as_ref().map(|r| r.at.as_str()).filter(|s| !s.is_empty());
+    let test = app.last_test.as_ref().map(|r| r.at.as_str()).filter(|s| !s.is_empty());
+    match (run, test) {
+        (Some(a), Some(b)) => Some(if a >= b { a } else { b }),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+/// "HH:MM" of the last use, for the /apps value column.
+pub fn last_used_hhmm(app: &App) -> Option<String> {
+    last_activity(app).map(stamp_hhmm)
+}
+
 /// The request body of a prompt app (never the generated APP.md header).
 pub fn prompt_body(app: &App) -> String {
     let body = std::fs::read_to_string(app.dir.join("PROMPT.md"))

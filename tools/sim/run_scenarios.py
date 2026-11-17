@@ -1348,6 +1348,8 @@ def check_creator_run(screens, reqs, work):
     checks.append(("It ran on the panel" in after, "the turn finishes after the app returns"))
     checks.append(("last run: timeout 2s" in panel,
                    "/apps records the last run (timeout 2s) in the panel"))
+    checks.append(("system \u00b7 sh ! \u00b7" in screens.get("list", ""),
+                   "the launcher shows when the app was last used"))
     checks.append((len(reqs) == 2, "one request before and one after the app run"))
     return checks
 
@@ -1443,6 +1445,11 @@ def check_creator_apps_run(screens, reqs, work):
     checks.append(("Apps \u00b7 1/2" in filtered and "Notes" in filtered
                    and "Quick app" not in filtered,
                    "typing filters the app list"))
+    recent = screens.get("recent", "")
+    rows = [l for l in recent.splitlines() if "Quick app" in l or "Notes" in l]
+    checks.append((len(rows) >= 2 and "Quick app" in rows[0]
+                   and "Quick app" in "".join(rows) and "\u00b7" in rows[0],
+                   "the launcher lists the recently run app first with its time"))
     checks.append(("Notes" in doc and "Checklist item one" in doc,
                    "a doc app opens its annotation in the panel"))
     checks.append(("Apps \u00b7 1/2" in back,
@@ -1549,8 +1556,10 @@ def check_creator_app_test(screens, reqs, work):
     checks.append(("last test: exit 3" in panel and "last run:" not in panel,
                    "the panel records the headless test (and no screen run)"))
     lst = screens.get("list", "")
-    checks.append(("tools \u00b7 sh !" in lst,
-                   "the app list flags the failing app with !"))
+    checks.append(("tools \u00b7 sh !" in lst and "tools \u00b7 sh ! \u00b7" in lst,
+                   "the app list flags the failing app and shows its last-use time"))
+    checks.append((" \u00b7 1!" in screens.get("tested", ""),
+                   "the creator idle hint counts the failing app"))
     checks.append((len(reqs) == 2, "exactly the scripted requests were made"))
     return checks
 

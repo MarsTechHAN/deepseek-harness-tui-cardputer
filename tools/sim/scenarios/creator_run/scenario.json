@@ -47,6 +47,10 @@
    "wait_ms": 450
   },
   {
+   "wait_ms": 200,
+   "snap": "list"
+  },
+  {
    "key": "Right"
   },
   {
