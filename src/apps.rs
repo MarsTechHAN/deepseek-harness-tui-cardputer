@@ -799,9 +799,11 @@ while it runs and dst is paused; it may not change system configuration, install
 start services, or write outside its package/state/tmp; it must exit (0 = success) and leave \
 the screen recoverable (the platform repaints). Never build an app that blocks the keyboard \
 or ignores the Esc/timeout backstop.\n\
-- Verify before you show it: call app_test (headless pipes, captured stdout/stderr/exit, log \
-file under ~/.dst/tmp) and fix failures; test the happy path plus bad input. app_run is for \
-the user to see the real full-screen behaviour.\n\
+- Verify before you show it: call app_test (captured stdout/stderr/exit, log file under \
+~/.dst/tmp) and fix failures; test the happy path plus bad input. app_test is headless by \
+default; with tty=true it runs under a pseudo-terminal like app_run, which is how you test \
+[ -t ] branches and ANSI/TUI output (the pty has no window size, so COLUMNS/LINES stand in \
+for the real size). app_run is for the user to see the real full-screen behaviour.\n\
 - app_export / app_import move a package as a .tar.gz under ~/.dst/tmp (backup, copy off the \
 device, restore later); an imported archive must contain exactly one <category>/<name>/ tree \
 and is validated before it is installed (replace=true to overwrite).\n\
@@ -996,12 +998,58 @@ fn read_capped(mut r: impl std::io::Read + Send + 'static) -> std::thread::JoinH
     })
 }
 
-fn run_headless(app: &App, args: &str, stdin_text: &str, timeout_s: u64) -> Result<HeadlessRun, String> {
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Run an app under a pseudo-terminal (headless testing of TUI-ish apps):
+/// `script(1)` allocates the pty and we capture its output. The pty window size
+/// is 0x0 (script cannot set it), so apps that honour COLUMNS/LINES still see
+/// the panel grid; apps that query the size via ioctl see zeros.
+fn tty_command(prog: &str, argv: &[String]) -> Command {
+    let caps = "ulimit -c 0 2>/dev/null; ulimit -t 120 2>/dev/null; \
+                ulimit -f 2048 2>/dev/null; ";
+    let mut cmd = Command::new("script");
+    if cfg!(target_os = "macos") {
+        let wrapper = format!("{caps}exec \"$0\" \"$@\"");
+        cmd.arg("-q")
+            .arg("/dev/null")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(wrapper)
+            .arg(prog)
+            .args(argv);
+    } else {
+        let mut line = format!("{}", shell_quote(prog));
+        for a in argv {
+            line.push(' ');
+            line.push_str(&shell_quote(a));
+        }
+        cmd.arg("-q")
+            .arg("-e")
+            .arg("-c")
+            .arg(format!("{caps}exec {line}"))
+            .arg("/dev/null");
+    }
+    cmd
+}
+
+fn run_headless(
+    app: &App,
+    args: &str,
+    stdin_text: &str,
+    timeout_s: u64,
+    tty: bool,
+) -> Result<HeadlessRun, String> {
     let (prog, argv) = run_plan_args(app, args)?;
     let state_dir = app.dir.join("state");
     let _ = std::fs::create_dir_all(&state_dir);
     let started = std::time::Instant::now();
-    let mut cmd = app_command(&prog, &argv);
+    let mut cmd = if tty {
+        tty_command(&prog, &argv)
+    } else {
+        app_command(&prog, &argv)
+    };
     cmd.current_dir(&app.dir);
     app_env(&mut cmd, app, &state_dir);
     cmd.stdin(Stdio::piped())
@@ -1011,8 +1059,19 @@ fn run_headless(app: &App, args: &str, stdin_text: &str, timeout_s: u64) -> Resu
         .spawn()
         .map_err(|e| format!("could not start app '{}' ({prog}): {e}", app.label()))?;
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(stdin_text.as_bytes());
+        // A pty is in canonical mode: without a newline the app's `read` blocks.
+        let text = if tty && !stdin_text.is_empty() && !stdin_text.ends_with('\n') {
+            format!("{stdin_text}\n")
+        } else {
+            stdin_text.to_string()
+        };
+        let _ = stdin.write_all(text.as_bytes());
         let _ = stdin.flush();
+        if tty && !stdin_text.is_empty() {
+            // The pty needs a moment to deliver the input before we close the
+            // pipe; otherwise script(1) can drop the bytes on startup.
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
         // Dropping closes the pipe: apps that read until EOF terminate.
     }
     let out_thread = child.stdout.take().map(read_capped);
@@ -1046,7 +1105,12 @@ fn run_headless(app: &App, args: &str, stdin_text: &str, timeout_s: u64) -> Resu
     let secs = started.elapsed().as_secs_f32();
     let code = status.and_then(|s| s.code());
     let mut log = String::new();
-    log.push_str(&format!("# app_test {} {}\n", app.label(), args));
+    log.push_str(&format!(
+        "# app_test {} {}{}\n",
+        app.label(),
+        args,
+        if tty { " (pty)" } else { "" }
+    ));
     log.push_str(&format!(
         "# exit={:?} timed_out={} secs={secs:.2} stdout={stdout_bytes}B stderr={stderr_bytes}B\n",
         code, timed_out
@@ -1104,7 +1168,8 @@ fn test_exec(args: &J) -> Result<J, Fail> {
         .clamp(1.0, 120.0) as u64;
     let extra = str_arg(args, "args").unwrap_or_default();
     let stdin_text = str_arg(args, "stdin").unwrap_or_default();
-    let run = run_headless(&app, &extra, &stdin_text, timeout).map_err(Fail::new)?;
+    let tty = args.get("tty").map(|b| matches!(b, J::Bool(true))).unwrap_or(false);
+    let run = run_headless(&app, &extra, &stdin_text, timeout, tty).map_err(Fail::new)?;
     Ok(obj(vec![
         ("name", J::s(&app.label())),
         ("exit", J::Num(run.code.map(|c| c as f64).unwrap_or(-1.0))),
@@ -1115,6 +1180,7 @@ fn test_exec(args: &J) -> Result<J, Fail> {
         ("stdout_bytes", J::Num(run.stdout_bytes as f64)),
         ("stderr_bytes", J::Num(run.stderr_bytes as f64)),
         ("log", J::s(&run.log_path)),
+        ("tty", J::Bool(tty)),
     ]))
 }
 
@@ -1129,9 +1195,11 @@ fn test_render(_a: &J, v: &J) -> String {
     let log = v.get("log").and_then(|x| x.as_str()).unwrap_or("");
     let out = v.get("stdout").and_then(|x| x.as_str()).unwrap_or("");
     let err = v.get("stderr").and_then(|x| x.as_str()).unwrap_or("");
+    let on_tty = v.get("tty").map(|b| matches!(b, J::Bool(true))).unwrap_or(false);
     let mut s = format!(
-        "app_test {name}: exit={exit}{} in {secs:.2}s (headless, no screen)",
-        if timed { " TIMEOUT" } else { "" }
+        "app_test {name}: exit={exit}{} in {secs:.2}s ({})",
+        if timed { " TIMEOUT" } else { "" },
+        if on_tty { "pty, no screen" } else { "headless, no screen" }
     );
     if !out.trim().is_empty() {
         s.push_str(&format!("\n--- stdout ---\n{}", short(out.trim_end(), 1200)));
@@ -1459,6 +1527,7 @@ read_file. This is the model's version of the simulator the developers use.",
                 Param::opt("args", "string", "Space-separated argv for the app."),
                 Param::opt("stdin", "string", "Text piped to the app's stdin (closed afterwards)."),
                 Param::opt("timeout_s", "integer", "Seconds before the app is killed (default 10, max 120)."),
+                Param::opt("tty", "boolean", "Run under a pseudo-terminal (like app_run) so [ -t ] branches and TUI output can be tested; the pty has no window size (COLUMNS/LINES env still say 53x12)."),
             ],
             concurrency_safe: false,
             timeout_ms: 130_000,
@@ -1706,7 +1775,9 @@ fn app_env(cmd: &mut Command, app: &App, state_dir: &Path) {
         .env("DST_APP_DIR", &app.dir)
         .env("DST_APP_STATE", state_dir)
         .env("DST_COLS", "53")
-        .env("DST_ROWS", "12");
+        .env("DST_ROWS", "12")
+        .env("COLUMNS", "53")
+        .env("LINES", "12");
     for key in ["LANG", "LC_ALL", "TZ"] {
         if let Ok(v) = std::env::var(key) {
             cmd.env(key, v);

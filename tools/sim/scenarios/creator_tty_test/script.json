@@ -1,0 +1,31 @@
+{
+ "responses": [
+  {
+   "reasoning": "Test both headless and pty modes.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "t1",
+     "name": "app_test",
+     "arguments": {
+      "name": "ttycheck",
+      "stdin": "hello-pipe"
+     }
+    },
+    {
+     "id": "t2",
+     "name": "app_test",
+     "arguments": {
+      "name": "ttycheck",
+      "stdin": "hello-tty",
+      "tty": true
+     }
+    }
+   ]
+  },
+  {
+   "reasoning": "Both tested.",
+   "content": "Headless run sees pipes; the tty run sees a real pty for stdin/stdout."
+  }
+ ]
+}

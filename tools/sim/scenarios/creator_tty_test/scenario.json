@@ -1,0 +1,23 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "test the tty app in both modes"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 1200,
+    "timeout_ms": 30000
+   },
+   "snap": "tested"
+  }
+ ]
+}

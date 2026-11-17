@@ -136,7 +136,8 @@ repository.
   runtime data (`$DST_APP_STATE`). Kinds: `sh`, `python`, `binary` (executable
   entry), `prompt` (a reusable request the model follows; PROMPT.md) and `doc`.
   The model creates them with `app_save` / `app_file`, verifies them headlessly
-  with `app_test` (piped stdio, captured exit/stdout/stderr, full log under
+  with `app_test` (piped stdio by default, `tty=true` for a real pty;
+  captured exit/stdout/stderr, full log under
   `~/.dst/tmp`), and runs them with `app_run` (`args` + `timeout_s`), which
   takes over the panel full-screen and hands it back when the app exits.
   Launches are bounded by the platform: long-Esc/timeout backstop, cwd + state
@@ -458,8 +459,9 @@ searchable resume, push-to-talk with mocked speech, `speak`, the nine-step
 WeChat login chain, provider auth/rate-limit failures and their recovery, long
 input scrolling/editing (including CJK), the multi-entry tool-output viewer,
 the scrolling artifact panel, and creator mode `creator_mode`, `creator_build`,
-`creator_run`, `creator_run_esc`, `creator_run_args`, `creator_apps_run`,
-`creator_apps_zh`, `creator_home`, `creator_skill`, `creator_app_test`, `creator_kinds`,
+`creator_run`, `creator_run_esc`, `creator_run_args`, `creator_tty_test`,
+`creator_apps_run`,
+`creator_apps_zh`, `creator_home`, `creator_skill`, `creator_app_test`, `creator_tty_test`, `creator_kinds`,
 `creator_nudge`; app run/test history and skill management are asserted there)
 and
 asserts on captured screens *and* on the request log

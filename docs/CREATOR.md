@@ -272,6 +272,11 @@ environment through pipes (no screen), feeds optional `stdin`, captures
 stdout/stderr up to 64 KB each, reports exit code/timeout/duration, and writes
 the full log to `~/.dst/tmp/app-test-<category>-<name>.log`; the model can read
 that file with `read_file`. Prompt/doc apps cannot be tested (nothing runs).
+With `tty=true` it runs under a pseudo-terminal via `script(1)` — the same kind
+of transport as `app_run` — so `[ -t ]` branches and ANSI/TUI output can be
+tested headlessly. That pty has no window size; `COLUMNS=53`/`LINES=12` are
+exported for apps that honour the env, stdin is line-normalised, and pty echo
+appears in the captured output.
 
 
 ```text
@@ -388,6 +393,9 @@ model → app_run{name, timeout_s?, args?}
   - `creator_home` — creator mode with no apps: `/apps` opens the launcher
     (`Apps · 0 · skills 1`), `+ new app` pre-fills `Build an app:`, typing the
     description and Enter sends it to the model.
+  - `creator_tty_test` — `app_test` in pipe mode vs `tty=true`: `[ -t 0/1 ]`,
+    `COLUMNS/LINES`, fed stdin and the result transport line all differ as
+    expected.
   - `creator_capture` — a capture app prints ANSI lines and a CR progress line;
     the panel echoes them, `state/last-run.log` holds cleaned text, the tool
     result names it, and `/apps` `l` replays it.

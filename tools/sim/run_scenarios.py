@@ -1690,7 +1690,28 @@ def check_creator_home(screens, reqs, work):
     return checks
 
 
+
+def check_creator_tty_test(screens, reqs, work):
+    results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
+    tested = screens.get("tested", "")
+    checks = []
+    checks.append(("* app_test" in tested, "both app_test calls are shown"))
+    checks.append(("MODE: pipe" in results and "MODE: tty" in results,
+                   "tty=true runs under a pseudo-terminal while the default is piped"))
+    checks.append(("STDIN: pipe" in results and "STDIN: tty" in results,
+                   "stdin is a pipe by default and a pty in tty mode"))
+    checks.append(("SIZE: 53x12" in results,
+                   "COLUMNS/LINES expose the device grid in both modes"))
+    checks.append(("LINE: hello-pipe" in results and "LINE: hello-tty" in results,
+                   "the stdin argument reaches the app in both modes"))
+    checks.append(("pty, no screen" in results and "headless, no screen" in results,
+                   "the result says which transport was used"))
+    checks.append((len(reqs) == 2, "exactly the scripted requests were made"))
+    return checks
+
+
 CHECKS = {
+    "creator_tty_test": check_creator_tty_test,
     "creator_home": check_creator_home,
     "creator_capture": check_creator_capture,
     "creator_skill_rollback": check_creator_skill_rollback,
