@@ -1,0 +1,70 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "Choose how to connect",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Base URL",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "http://127.0.0.1:1/v1"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "API key",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "bad-key"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Model name",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "key rejected",
+    "timeout_ms": 25000
+   }
+  },
+  {
+   "wait_for": {
+    "text": "No API configured",
+    "timeout_ms": 15000
+   }
+  },
+  {
+   "snap": "rejected"
+  },
+  {
+   "wait_ms": 300
+  }
+ ]
+}

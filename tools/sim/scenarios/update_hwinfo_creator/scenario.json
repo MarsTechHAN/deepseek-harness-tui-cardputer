@@ -1,0 +1,28 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "creator",
+    "timeout_ms": 15000
+   }
+  },
+  {
+   "send": "/update-hwinfo"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Hardware skill reviewed.",
+    "timeout_ms": 30000
+   }
+  },
+  {
+   "snap": "refined"
+  },
+  {
+   "wait_ms": 300
+  }
+ ]
+}

@@ -170,6 +170,17 @@ def run_scenario(name, binary, timeout=120):
 
     proc, url, _state = start_mock(0, script, log_path, env)
     try:
+        # A scenario may reference the ephemeral mock endpoint as `{{MOCK_URL}}`
+        # (first-run setup now verifies credentials, so it needs a live local
+        # endpoint). Substitute it in a private copy so scenarios stay
+        # port-independent.
+        for _i, (_path, _out, _cwd) in enumerate(scenario_paths):
+            _text = open(_path, encoding="utf-8").read()
+            if "{{MOCK_URL}}" in _text:
+                _text = _text.replace("{{MOCK_URL}}", url)
+                _copy = os.path.join(work, f"scenario-mock-url-{_i}.json")
+                open(_copy, "w", encoding="utf-8").write(_text)
+                scenario_paths[_i] = (_copy, _out, _cwd)
         # `no_config` scenarios deliberately start unconfigured (onboarding).
         if not os.path.exists(os.path.join(base, "no_config")):
             # url is like http://127.0.0.1:PORT/v1
@@ -1240,7 +1251,9 @@ def check_commands(screens, reqs, work):
                    "palette footer shows the match position"))
     checks.append(("/compact" in help_ or "/clear" in help_,
                    "/help lists commands"))
-    checks.append(("/16" in help_, "help shows the command count position"))
+    count_pos = __import__("re").search(r"1/(\d+)", help_)
+    checks.append((count_pos is not None and int(count_pos.group(1)) >= 16,
+                   "help shows the command count position"))
     checks.append(("clear the transcript" in help_ and "Enter run" in help_,
                    "/help shows a description preview and run hint"))
     checks.append(("requests" in usage.lower() or "cache" in usage.lower(),
@@ -1944,6 +1957,81 @@ def check_voice_interrupt_send(screens, reqs, work):
     return checks
 
 
+def check_onboarding_hw(screens, reqs, work):
+    asked = screens.get("asked", "")
+    scanned = screens.get("scanned", "")
+    home = os.path.join(work, "home")
+    cfg = read_file(os.path.join(home, ".dst", "config.yml"))
+    skill = read_file(os.path.join(home, ".dst", "skills", "hardware-info", "SKILL.md"))
+    checks = []
+    checks.append(("Hardware notebook" in asked and "Scan this device's hardware" in asked,
+                   "first-run setup offers the hardware scan"))
+    checks.append(("hardware-info updated" in scanned,
+                   "answering Y runs the scan and reports the refreshed skill"))
+    checks.append(("hw_survey_done: true" in cfg,
+                   "the survey question is recorded as asked (once)"))
+    checks.append(("## Current state (measured)" in skill,
+                   "the scan section is written into the hardware-info skill"))
+    checks.append(("key: test-key" in cfg,
+                   "the verified credential is the one that was saved"))
+    return checks
+
+
+def check_onboarding_reject(screens, reqs, work):
+    rejected = screens.get("rejected", "")
+    home = os.path.join(work, "home")
+    cfg = read_file(os.path.join(home, ".dst", "config.yml"))
+    skill = read_file(os.path.join(home, ".dst", "skills", "hardware-info", "SKILL.md"))
+    checks = []
+    checks.append(("key rejected" in rejected,
+                   "an unusable credential is rejected during first-run setup"))
+    checks.append(("No API configured" in rejected,
+                   "the device stays unconfigured instead of looking ready"))
+    checks.append(("key:" not in cfg or "key: bad-key" not in cfg,
+                   "the rejected key is not kept"))
+    checks.append(("## Current state (measured)" not in skill,
+                   "no hardware scan runs when setup is rejected"))
+    return checks
+
+
+def check_update_hwinfo(screens, reqs, work):
+    updated = screens.get("updated", "")
+    home = os.path.join(work, "home")
+    skill = read_file(os.path.join(home, ".dst", "skills", "hardware-info", "SKILL.md"))
+    checks = []
+    checks.append(("/update-hwinfo" in updated, "the command is echoed in the transcript"))
+    checks.append(("hardware-info updated" in updated,
+                   "the scan runs and reports the refreshed skill"))
+    checks.append(("## Current state (measured)" in skill,
+                   "the scan section is written into the skill"))
+    checks.append(("version: 2" in skill, "the skill version is bumped by the first scan"))
+    checks.append(("creator mode lets the model refine" in updated,
+                   "normal mode explains how to get the model refinement"))
+    checks.append((len(reqs) == 0, "normal mode does not spend a model turn"))
+    return checks
+
+
+def check_update_hwinfo_creator(screens, reqs, work):
+    refined = screens.get("refined", "")
+    home = os.path.join(work, "home")
+    skill = read_file(os.path.join(home, ".dst", "skills", "hardware-info", "SKILL.md"))
+    texts = "\n".join(message_texts(reqs))
+    checks = []
+    checks.append(("## Current state (measured)" in skill and "version: 2" in skill,
+                   "the scan still runs locally in creator mode"))
+    checks.append(("scan saved; asking the model" in refined
+                   or "scan saved" in refined,
+                   "the transcript labels the internal refine request"))
+    checks.append(("Hardware skill reviewed." in refined,
+                   "the model's refinement reply is rendered"))
+    checks.append((len(reqs) == 1, "exactly one model turn was triggered"))
+    checks.append(("hardware-info skill was just refreshed" in texts,
+                   "the refine request names the refreshed hardware skill"))
+    checks.append(("## Current state (measured)" in skill,
+                   "the scan section is present before the model reads it"))
+    return checks
+
+
 CHECKS = {
     "creator_app_flow": check_creator_app_flow,
     "esc_queue": check_esc_queue,
@@ -1987,6 +2075,10 @@ CHECKS = {
     "tips": check_tips,
     "ux": check_ux,
     "progress": check_progress,
+    "onboarding_hw": check_onboarding_hw,
+    "onboarding_reject": check_onboarding_reject,
+    "update_hwinfo": check_update_hwinfo,
+    "update_hwinfo_creator": check_update_hwinfo_creator,
     "paging": check_paging,
     "ux2": check_ux2,
     "new_tools": check_new_tools,

@@ -264,6 +264,11 @@ const STATE_ICON: &str = "\u{00bb}";
 /// keeps scrolling-into-the-past bounded but still useful.
 const MAX_TRANSCRIPT_LINES: usize = 400;
 
+/// Bounds for user-driven buffers that would otherwise be unbounded: a pasted
+/// megabyte and a turn with thousands of tool calls must not grow them forever.
+const MAX_INPUT: usize = 4096;
+const MAX_QUEUE: usize = 16;
+
 #[derive(Clone)]
 struct MenuItem {
     label: String,
@@ -2077,9 +2082,11 @@ impl Scr {
                     }
                 }
                 0x20..=0x7e => {
-                    self.input.insert(self.cursor, b as char);
-                    self.cursor += 1;
-                    self.palette_sel = 0;
+                    if self.input.len() < MAX_INPUT {
+                        self.input.insert(self.cursor, b as char);
+                        self.cursor += 1;
+                        self.palette_sel = 0;
+                    }
                 }
                 0x80..=0xff => self.utf8_push(b),
                 _ => {}
@@ -2753,7 +2760,9 @@ impl<'a> harness::Ui for TermUi<'a> {
             Ev::ToolCall { id, name, title, args } => {
                 self.reset_think();
                 self.scr.live = None;
-                self.scr.turn_tools.push(name.clone());
+                if self.scr.turn_tools.len() < 200 {
+                    self.scr.turn_tools.push(name.clone());
+                }
                 if name == "state_report" {
                     // The pinned progress row is the whole presentation.
                     self.tools.insert(id, (name, title, std::time::Instant::now(), args));
@@ -2997,15 +3006,20 @@ impl<'a> harness::Ui for TermUi<'a> {
                     if !line.trim().is_empty() {
                         self.scr.input.clear();
                         self.scr.cursor = 0;
-                        self.scr.queue.push(line.clone());
-                        let n = self.scr.queue.len();
-                        self.scr.push(
-                            &format!(
-                                "\u{23ce} {}",
-                                i18n::tf("ui_queued", &[&n.to_string(), &line])
-                            ),
-                            K_DIM,
-                        );
+                        if self.scr.queue.len() >= MAX_QUEUE {
+                            let n = self.scr.queue.len().to_string();
+                            self.scr.push(&i18n::tf("ui_queue_full", &[&n]), K_ERR);
+                        } else {
+                            self.scr.queue.push(line.clone());
+                            let n = self.scr.queue.len();
+                            self.scr.push(
+                                &format!(
+                                    "\u{23ce} {}",
+                                    i18n::tf("ui_queued", &[&n.to_string(), &line])
+                                ),
+                                K_DIM,
+                            );
+                        }
                     }
                     changed = true;
                 }
@@ -3083,9 +3097,11 @@ impl<'a> harness::Ui for TermUi<'a> {
                     changed = true;
                 }
                 KeyEvent::Char(k) if (0x20..=0x7e).contains(&k) => {
-                    self.scr.input.insert(self.scr.cursor, k as char);
-                    self.scr.cursor += 1;
-                    changed = true;
+                    if self.scr.input.len() < MAX_INPUT {
+                        self.scr.input.insert(self.scr.cursor, k as char);
+                        self.scr.cursor += 1;
+                        changed = true;
+                    }
                 }
                 KeyEvent::Char(k) if k >= 0x80 => {
                     self.scr.utf8_push(k);
@@ -3643,6 +3659,23 @@ fn login_type(scr: &mut Scr) -> Option<LoginResult> {
     }
 }
 
+/// One-line notice queued during onboarding; the first-run tips screen replaces
+/// the transcript, so it is pushed again after that screen is drawn.
+static ONBOARD_NOTICE: std::sync::Mutex<Option<(String, u8)>> = std::sync::Mutex::new(None);
+
+fn queue_onboard_notice(text: String, kind: u8) {
+    if let Ok(mut g) = ONBOARD_NOTICE.lock() {
+        *g = Some((text, kind));
+    }
+}
+
+fn flush_onboard_notice(scr: &mut Scr) {
+    let note = ONBOARD_NOTICE.lock().ok().and_then(|mut g| g.take());
+    if let Some((text, kind)) = note {
+        scr.push(&text, kind);
+    }
+}
+
 /// Credentials that worked before a login attempt. A rejected key test puts
 /// them back, so `/login` can never leave the device unable to chat.
 #[derive(Clone)]
@@ -3829,18 +3862,23 @@ fn onboarding_hardware(scr: &mut Scr, config_rc: &ConfigRc) {
     scr.push(i18n::t("hw_scanning"), K_DIM);
     scr.draw();
     match hwinfo::update() {
-        Ok(s) => scr.push(
-            &i18n::tf(
+        Ok(s) => {
+            let line = i18n::tf(
                 "hw_scanned",
                 &[
                     &s.sections.to_string(),
                     &(s.bytes / 1024).max(1).to_string(),
                     &s.version.to_string(),
                 ],
-            ),
-            K_NORM,
-        ),
-        Err(e) => scr.push(&i18n::tf("hw_scan_failed", &[&e]), K_ERR),
+            );
+            scr.push(&line, K_NORM);
+            queue_onboard_notice(line, K_NORM);
+        }
+        Err(e) => {
+            let line = i18n::tf("hw_scan_failed", &[&e]);
+            scr.push(&line, K_ERR);
+            queue_onboard_notice(line, K_ERR);
+        }
     }
 }
 
@@ -6027,6 +6065,7 @@ fn main() {
     scr.seed_splash(&cfg.model);
     onboarding(&mut scr, &config_rc);
     maybe_show_tips(&mut scr, &config_rc);
+    flush_onboard_notice(&mut scr);
     cfg = api_cfg(&config_rc.borrow());
     *shared_cfg.borrow_mut() = cfg.clone();
     tools::set_cfg(cfg.clone());

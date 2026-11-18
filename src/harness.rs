@@ -474,6 +474,61 @@ fn stream_once(
     }
 }
 
+/// Absolute history ceiling, independent of token accounting. Compaction is
+/// the normal bound, but it can be disabled, fail, or compute an unbounded
+/// budget when the endpoint reports no context window; without this a long
+/// session grows until the device runs out of memory.
+const MAX_HISTORY_BYTES: usize = 16 * 1024 * 1024;
+
+/// Cheap size estimate of one JSON value, without serializing it.
+fn j_len(v: &J) -> usize {
+    match v {
+        J::Null => 4,
+        J::Bool(_) => 5,
+        J::Num(_) => 8,
+        J::Str(s) => s.len() + 2,
+        J::Arr(a) => 2 + a.iter().map(j_len).sum::<usize>(),
+        J::Obj(kv) => 2 + kv.iter().map(|(k, v)| k.len() + 4 + j_len(v)).sum::<usize>(),
+    }
+}
+
+fn approx_bytes(msgs: &[J]) -> usize {
+    msgs.iter().map(j_len).sum()
+}
+
+/// Drop the oldest messages until the history fits in half the hard cap (so it
+/// does not retrigger on every step). The system prompt stays, and the tail
+/// never starts with an orphan tool result.
+fn hard_trim(msgs: &mut Vec<J>) -> bool {
+    if msgs.len() <= 3 || approx_bytes(msgs) <= MAX_HISTORY_BYTES {
+        return false;
+    }
+    let target = MAX_HISTORY_BYTES / 2;
+    let mut start = msgs.len();
+    let mut tail = 0usize;
+    while start > 1 {
+        let add = j_len(&msgs[start - 1]);
+        if tail + add > target {
+            break;
+        }
+        tail += add;
+        start -= 1;
+    }
+    while start < msgs.len() {
+        let role = msgs[start].get("role").and_then(|r| r.as_str());
+        if role == Some("tool") {
+            start += 1;
+        } else {
+            break;
+        }
+    }
+    if start <= 1 {
+        return false;
+    }
+    msgs.drain(1..start);
+    true
+}
+
 /// Run one turn: `input` is the claimed user message.
 pub fn run_turn(
     cfg: &Cfg,
@@ -511,6 +566,12 @@ pub fn run_turn(
             report.cancelled = true;
             ui.on(Ev::StepEnd(steps));
             break;
+        }
+
+        // Hard ceiling before compaction runs: even with compaction disabled
+        // or failing, the process must stay bounded on a 446 MB device.
+        if hard_trim(msgs) {
+            ui.on(Ev::Info(crate::i18n::t("ui_history_trimmed").to_string()));
         }
 
         // agent/pre-step: keep the request it is about to send inside the

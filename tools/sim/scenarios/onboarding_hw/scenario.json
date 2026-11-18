@@ -1,0 +1,88 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "Choose how to connect",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "key": "Down"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Base URL",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "{{MOCK_URL}}"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "API key",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "test-key"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Model name",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Sandbox mode",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Hardware notebook",
+    "timeout_ms": 12000
+   }
+  },
+  {
+   "snap": "asked"
+  },
+  {
+   "send": "y"
+  },
+  {
+   "wait_for": {
+    "text": "hardware-info updated",
+    "timeout_ms": 30000
+   }
+  },
+  {
+   "snap": "scanned"
+  },
+  {
+   "wait_ms": 300
+  }
+ ]
+}

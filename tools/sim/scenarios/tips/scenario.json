@@ -16,7 +16,7 @@
    "wait_ms": 400
   },
   {
-   "send": "http://127.0.0.1:1/v1"
+   "send": "{{MOCK_URL}}"
   },
   {
    "key": "Enter"
@@ -40,6 +40,9 @@
    "key": "Enter"
   },
   {
+   "wait_ms": 400
+  },
+  {
    "wait_for": {
     "text": "Sandbox mode for tool calls",
     "timeout_ms": 10000
@@ -54,6 +57,18 @@
   },
   {
    "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Scan this device's hardware",
+    "timeout_ms": 10000
+   }
+  },
+  {
+   "send": "n"
+  },
+  {
+   "wait_ms": 400
   },
   {
    "wait_ms": 600,
