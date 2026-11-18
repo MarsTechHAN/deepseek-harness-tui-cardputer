@@ -2036,6 +2036,87 @@ def check_update_hwinfo_creator(screens, reqs, work):
     return checks
 
 
+def check_image_input(screens, reqs, work):
+    attached = screens.get("attached", "")
+    reply = screens.get("reply", "")
+    checks = []
+    checks.append(("image attached:" in attached and "png" in attached,
+                   "/image attaches a local file and reports its type"))
+    checks.append(("blue picture" in reply,
+                   "the model's answer to the image question is rendered"))
+    # The first agent request must carry the DeepSeek vision block: an array
+    # content with an image_url data URL.
+    user_lists = []
+    for body in reqs:
+        for m in body.get("messages") or []:
+            if m.get("role") == "user" and isinstance(m.get("content"), list):
+                user_lists.append(m["content"])
+    ok_block = False
+    for content in user_lists:
+        kinds = [p.get("type") for p in content if isinstance(p, dict)]
+        urls = [
+            p.get("image_url", {}).get("url", "")
+            for p in content
+            if isinstance(p, dict) and p.get("type") == "image_url"
+        ]
+        if "text" in kinds and "image_url" in kinds and any(
+            u.startswith("data:image/png;base64,") for u in urls
+        ):
+            ok_block = True
+    checks.append((ok_block, "the request sends a DeepSeek image_url content block"))
+    # After the turn, the history must keep only the placeholder: no re-sending
+    # megabytes of base64 on every later request.
+    leaked = []
+    for body in reqs[1:]:
+        for m in body.get("messages") or []:
+            if m.get("role") == "user" and isinstance(m.get("content"), str):
+                if "[image attached:" not in m["content"] and "what is in this image?" in m["content"]:
+                    leaked.append(m["content"][:60])
+    checks.append((not leaked,
+                   "the image is replaced by a text placeholder in later requests"))
+    return checks
+
+
+def check_read_image_tool(screens, reqs, work):
+    reply = screens.get("reply", "")
+    checks = []
+    checks.append(("blue picture" in reply,
+                   "the model opened the local file with read_image and described it"))
+    # Request 2 is the step after the tool call: the tool message must carry the
+    # DeepSeek image block (content array with an image_url data URL).
+    ok_block = False
+    for body in reqs[1:]:
+        for m in body.get("messages") or []:
+            if m.get("role") == "tool" and isinstance(m.get("content"), list):
+                parts = [p for p in m["content"] if isinstance(p, dict)]
+                urls = [
+                    p.get("image_url", {}).get("url", "")
+                    for p in parts
+                    if p.get("type") == "image_url"
+                ]
+                if any(u.startswith("data:image/png;base64,") for u in urls):
+                    ok_block = True
+    checks.append((ok_block,
+                   "the read_image tool result returns the image to the model"))
+    # After the step, the tool message is rewritten to text: later requests must
+    # not re-send the payload.
+    later = reqs[2:]
+    clean = True
+    placeholder = False
+    for body in later:
+        for m in body.get("messages") or []:
+            if m.get("role") != "tool":
+                continue
+            c = m.get("content")
+            if isinstance(c, list):
+                clean = False
+            elif isinstance(c, str) and "[image read:" in c:
+                placeholder = True
+    checks.append((clean and placeholder,
+                   "the tool result is replaced by a placeholder after the step"))
+    return checks
+
+
 CHECKS = {
     "creator_app_flow": check_creator_app_flow,
     "esc_queue": check_esc_queue,
@@ -2079,6 +2160,8 @@ CHECKS = {
     "tips": check_tips,
     "ux": check_ux,
     "progress": check_progress,
+    "image_input": check_image_input,
+    "read_image_tool": check_read_image_tool,
     "onboarding_hw": check_onboarding_hw,
     "onboarding_reject": check_onboarding_reject,
     "update_hwinfo": check_update_hwinfo,

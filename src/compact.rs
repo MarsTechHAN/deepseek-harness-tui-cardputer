@@ -127,16 +127,31 @@ pub fn human_tokens(n: u64) -> String {
 /// per token plus a small per-block/per-role overhead; CJK is priced at one
 /// token per character because DeepSeek's tokenizer is roughly glyph-based for
 /// Chinese.
+fn count_text(s: &str, latin: &mut u64, cjk: &mut u64) {
+    for ch in s.chars() {
+        let u = ch as u32;
+        if matches!(u, 0x2E80..=0x9FFF | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFF00..=0xFFEF) {
+            *cjk += 1;
+        } else {
+            *latin += 1;
+        }
+    }
+}
+
 pub fn estimate_msg(m: &J) -> u64 {
     let mut latin = 0u64;
     let mut cjk = 0u64;
     if let Some(c) = m.get("content").and_then(|c| c.as_str()) {
-        for ch in c.chars() {
-            let u = ch as u32;
-            if matches!(u, 0x2E80..=0x9FFF | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFF00..=0xFFEF) {
-                cjk += 1;
-            } else {
-                latin += 1;
+        count_text(c, &mut latin, &mut cjk);
+    }
+    // Multimodal content: text blocks count normally, an image block costs the
+    // documented ~1024 tokens (never the base64 payload length).
+    if let Some(crate::json::J::Arr(parts)) = m.get("content") {
+        for part in parts {
+            if part.get("type").and_then(|t| t.as_str()) == Some("image_url") {
+                latin += 4096; // ~1024 tokens * 4 latin chars
+            } else if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
+                count_text(t, &mut latin, &mut cjk);
             }
         }
     }
@@ -200,6 +215,35 @@ fn prune_tool_results(msgs: &mut [J], from: usize, to: usize) -> usize {
         pruned += 1;
     }
     pruned
+}
+
+/// A message with image content blocks flattened to a text marker, for the
+/// summariser (which never needs the picture bytes).
+fn text_only(m: &J) -> J {
+    let mut out = m.clone();
+    if let J::Obj(kv) = &mut out {
+        if let Some(slot) = kv.iter_mut().find(|(k, _)| k == "content") {
+            if let J::Arr(parts) = &slot.1 {
+                let mut text = String::new();
+                for p in parts {
+                    match p.get("type").and_then(|t| t.as_str()) {
+                        Some("text") => {
+                            if let Some(t) = p.get("text").and_then(|x| x.as_str()) {
+                                if !text.is_empty() {
+                                    text.push('\n');
+                                }
+                                text.push_str(t);
+                            }
+                        }
+                        Some("image_url") => text.push_str("\n[image attached]"),
+                        _ => {}
+                    }
+                }
+                slot.1 = J::s(text.trim());
+            }
+        }
+    }
+    out
 }
 
 /// Render one message the way the summariser replays it. This is only used to
@@ -427,9 +471,11 @@ pub fn compact(
 
         // Replay the conversation's own head + shadowed messages, then append
         // the instruction as the final user message (DSH's cache-friendly call).
+        // Image blocks (read_image / attachments) become text placeholders: the
+        // summariser needs the facts, not megabytes of base64.
         let mut req: Vec<J> = Vec::with_capacity(shadowed.len() + 2);
-        req.push(msgs[0].clone());
-        req.extend(shadowed.iter().cloned());
+        req.push(text_only(&msgs[0]));
+        req.extend(shadowed.iter().map(text_only));
         req.push(harness::msg("user", COMPACTION_INSTRUCTION));
         let messages = J::Arr(req);
 
@@ -606,5 +652,31 @@ mod tests {
         assert_eq!(human_tokens(9_999), "9.9K");
         assert_eq!(human_tokens(10_000), "10K");
         assert_eq!(human_tokens(900), "900");
+    }
+
+    #[test]
+    fn image_blocks_cost_a_fixed_estimate_not_the_base64() {
+        let text = J::o(vec![
+            ("role", J::s("user")),
+            ("content", J::Arr(vec![J::o(vec![
+                ("type", J::s("text")),
+                ("text", J::s("look")),
+            ])])),
+        ]);
+        let with_image = J::o(vec![
+            ("role", J::s("tool")),
+            ("content", J::Arr(vec![
+                J::o(vec![("type", J::s("text")), ("text", J::s("look"))]),
+                J::o(vec![
+                    ("type", J::s("image_url")),
+                    ("image_url", J::o(vec![("url", J::s(&format!("data:image/png;base64,{}", "A".repeat(200_000))))])),
+                ]),
+            ])),
+        ]);
+        let t = estimate_msg(&text);
+        let i = estimate_msg(&with_image);
+        assert!(t < 20, "text msg estimate {t}");
+        assert!(i > 900 && i < 1200, "image msg estimate {i} should be ~1024 tokens");
+        assert!(i < 200_000 / 4, "payload length must not be counted");
     }
 }

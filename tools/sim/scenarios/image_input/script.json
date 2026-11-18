@@ -1,0 +1,4 @@
+{"responses": [
+ {"reasoning": "the user attached a local image", "content": "I can see a blue picture with a yellow band on top.", "finish_reason": "stop"},
+ {"reasoning": "short ack", "content": "You're welcome.", "finish_reason": "stop"}
+]}

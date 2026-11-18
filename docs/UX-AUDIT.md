@@ -5,7 +5,7 @@ Method: every screen is exercised through the pty simulator, captured as text
 animated `docs/demo.webp`) are device-fidelity simulator renders of the real
 `dst` binary with scripted model replies, rebuilt by
 `python3 tools/sim/make_demo_webp.py`; `run_scenarios.py` supplies the
-deterministic assertions (92 checked scenarios). An optional real-endpoint pass
+deterministic assertions (94 checked scenarios). An optional real-endpoint pass
 (`run_live.py`, `live_creator_check.py`) can be re-run when an endpoint is
 available. See `docs/UX-LIVE.md`. All rows were inspected visually, not only
 asserted in code.
@@ -21,6 +21,7 @@ asserted in code.
 | Compaction | automatic + manual compact, notices | fixed: `compacted: 1.3K -> 1.2K tokens` keeps one decimal for four-digit counts (instead of a meaningless `1K -> 1K`); a stale `compacting N messages` live row no longer stays on screen after the compaction finishes |
 | Artifact | full-screen panel, scrolled body, save | fixed: the saved-path notice no longer gets cut mid-word (short, whole-word `~/.dst/tmp/<name>.txt` name and the notice replaces the key hints); `artifact_scroll` scenario covers PgDn/search/save |
 | Tools | expanded call card, result row, CtrlO list (also during a turn), artifact viewer | fixed: a call card now expands the call's arguments while it runs — indented, folded to the panel width, capped at five rows with `… more: CtrlO` — and the settled row is a one-line `└ N.Ns ok`/`x` plus an ellipsised `↳` preview; the full args and result stay in CtrlO, which opens over the live transcript during a turn. Failed calls carry an ASCII `x` marker in the CtrlO list because rows cannot be coloured individually (`tool_log_multi` scenario) |
+| Images | `read_image` tool, `/image` attach, DeepSeek vision block, history placeholder | ok: the agent can open a picture itself with the `read_image` tool (`{"file_path": …}`, same name/parameter/behaviour as DeepSeek Harness): the card shows `* read_image` + the path, the result preview reads `↳ read image ~/photo.png (png · 64x48 · 1 KB)` and the model receives the image as a `tool` message content block; `/image ~/photo.png` lets the human attach one instead (resolves the user home, not `~/.dst`, one line per attachment, live `1 image(s) attached · /image clear`). Both send the documented `content` array (`text` + `image_url` data URL) and both are rewritten to a text placeholder after the model has seen them, so later requests never re-send the base64; unsupported/oversized files fail clearly, at most 2 attached images per message. Covered by `read_image_tool` and `image_input` |
 | Progress row | `state_report` pinned top line | ok: one short line in bright magenta with a `»` icon owns the top row while a turn runs; a newer report replaces it, the line joins the transcript when the next row appears, and a report over 50 display cells (CJK counts as 2) is rejected, so the 53-cell row can never wrap |
 | Paging & interrupts | transcript/list paging, Esc and Tab during a turn | ok: `PgUp`/`PgDn` move the transcript by a screenful with the scroll clamped at both ends, and are replayed as a screenful of arrows in list menus; `Up`/`Down` recall history on an empty prompt; `Esc` stops the whole turn at once and typed text becomes the next message; `Tab` during a turn interrupts, starts the microphone immediately, then sends the transcript when `auto_send_voice` is on (or leaves it in the prompt when off) |
 | Hardware notebook | first-run survey prompt, `/update-hwinfo`, shipped `hardware-info` skill | ok: after a verified first-run configuration dst asks once whether to scan the device (`tui.hw_survey_done` records the answer either way); Y runs a bounded read-only scan (<=20 s, per-probe timeout) and rewrites the measured section of the shipped `~/.dst/skills/hardware-info/SKILL.md` between `<!-- hw-scan:begin/end -->`, keeping the reference sections and any user notes, bumping the version only when the measured hardware changes, and storing the raw capture in `state/scan-latest.txt`; the summary survives the first-run tips screen. `/update-hwinfo` re-runs it any time (normal mode: local scan only; creator mode: also asks the model to read the refreshed skill and refine it with `skill_save`). The scan reports subsystems, size and version (`hardware-info updated: 13 subsystems, 23 KB, v2`) and is covered by `onboarding_hw`, `onboarding_reject`, `update_hwinfo` and `update_hwinfo_creator` |
@@ -142,7 +143,7 @@ asserted in code.
   `creator_*` ones), login page i18n, login cancel, QR scanability,
   six-language login layout, long memory session.
 - `python3 tools/sim/make_demo_webp.py` — rebuilds the committed images from
-  the simulator: `docs/demo.webp` (43 s animated tour), the 12-panel
+  the simulator: `docs/demo.webp` (49 s animated tour), the 12-panel
   `docs/live-walkthrough.png`, the creator sheet `docs/live-creator.png` and the
   six-language login sheet.
 - `python3 tools/sim/run_live.py` (optional, needs an endpoint) — common-usage

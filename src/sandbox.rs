@@ -321,7 +321,8 @@ pub fn classify_command(cmd: &str) -> Class {
 /// Classify one tool call.
 pub fn classify(name: &str, args: &J) -> Class {
     match name {
-        "read_file" | "list_dir" | "glob" | "grep" | "search" | "fetch" | "ocr" | "skill" | "speak"
+        "read_file" | "read_image" | "list_dir" | "glob" | "grep" | "search" | "fetch" | "ocr"
+        | "skill" | "speak"
         | "memory_read" | "memory_search" | "todo_read" | "todo_write"
         | "artifact" | "state_report" | "rename" | "get_goal" | "create_goal" | "update_goal"
         | "job_list" | "job_output" | "job_wait" | "job_kill"
@@ -550,6 +551,8 @@ mod tests {
         // app_run is the explicit creator-mode action; none should trigger an
         // extra judge request.
         let args = crate::json::parse(r#"{"name":"x","path":"run.sh","content":"y"}"#).unwrap();
+        let img = crate::json::parse(r#"{"file_path":"/tmp/x.png"}"#).unwrap();
+        assert_eq!(classify("read_image", &img), Class::Safe);
         assert_eq!(classify("skill_save", &args), Class::Safe);
         assert_eq!(classify("skill_file", &args), Class::Safe);
         assert_eq!(classify("app_run", &args), Class::Safe);

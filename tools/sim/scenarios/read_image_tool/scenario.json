@@ -1,0 +1,43 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 15000
+   }
+  },
+  {
+   "send": "read ~/photo.png and describe it"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "blue picture",
+    "timeout_ms": 25000
+   }
+  },
+  {
+   "snap": "reply"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "send": "thanks"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 800,
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "snap": "second"
+  }
+ ]
+}

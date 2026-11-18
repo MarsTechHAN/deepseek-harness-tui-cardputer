@@ -165,6 +165,41 @@ its own conventions the way CLAUDE.md / AGENTS.md users expect.
 `/resume` groups sessions by directory and previews the last exchange;
 `/rewind` restores a checkpoint from an earlier turn.
 
+## Images (vision input)
+
+`deepseek-flash` accepts images in Chat Completions when `content` is an array of
+blocks. dst has two entry points that produce the same block — the agent-facing
+**`read_image` tool** (same name/parameter as DeepSeek Harness:
+`{"file_path": "..."}`, result `{path, image}`) and the human `/image <path>`
+shortcut (`src/vision.rs`):
+
+1. **Load** — the path is resolved (`~`, relative, absolute), the file is capped
+   at 8 MB, and the format is sniffed from the magic bytes (JPEG / PNG / GIF /
+   WebP, exactly like the API which ignores the file name). Header parsing keeps
+   the pixel size for the one-line label.
+2. **Encode** — `vision::b64` (RFC 4648, std only) builds the documented
+   `data:image/<type>;base64,<payload>` URL.
+3. **Send** — for `/image`, `harness::user_msg_with_images` turns the user
+   message into `content: [{type:text},{type:image_url,image_url:{url:data:…}}]`.
+   For `read_image`, the tool's canonical value keeps the data URL aside from
+   the rendered text, and the harness builds the same array for the **tool
+   message** (`role: "tool"`; DeepSeek accepts images in user/system/tool
+   messages). The API resizes images to about 1300×1300 (~1024 tokens each), so
+   the payload is the expensive part, not the question.
+4. **Forget** — as soon as the next response arrives, the message is rewritten
+   to a text placeholder (`[image attached: …]` / `[image read: …]`). Follow-up
+   steps, session files, checkpoints and compaction therefore never carry the
+   base64 again, and the 446 MB device never holds a multi-MB history. The
+   compactor additionally flattens any image blocks to `[image attached]` before
+   replaying history to the summariser.
+
+Limits are local caps on top of the API's (32 MiB per inline image, 48 MiB body,
+600 images): at most 2 images per message and 8 MB per file. A text-only
+endpoint/model rejects the block with a 400; the error path maps it to an
+actionable hint (`/ocr` for text in images, or a vision model). Images are never
+persisted: after the turn the history is text again, so `/resume`, `/rewind` and
+the transcript stay small.
+
 ## Skill packages (and runnable apps)
 
 Creator mode has one unit: a directory with a manifest and a body, discovered on

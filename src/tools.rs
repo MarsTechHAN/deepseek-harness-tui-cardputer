@@ -133,6 +133,27 @@ so a later edit can address them.",
             post: Some(read_post),
         },
         ToolDef {
+            name: "read_image",
+            description: "Read a PNG/JPEG/WebP/GIF file and return the image itself, so you can \
+look at pictures, screenshots, diagrams and photos. Large images are downscaled by the \
+endpoint automatically; do not install image libraries or create thumbnails to inspect an \
+image. Use it when the user points at an image file or when a screenshot/diagram in the \
+workspace would answer the question. Requires an image-capable model.",
+            params: vec![Param::req(
+                "file_path",
+                "string",
+                "Path to the image file, resolved by the filesystem backend.",
+            )],
+            concurrency_safe: true,
+            timeout_ms: 10_000,
+            execute: read_image_exec,
+            schema_override: None,
+            dynamic: None,
+            render: read_image_render,
+            present: read_image_present,
+            post: None,
+        },
+        ToolDef {
             name: "write_file",
             description: "Create or overwrite a text file with the given content. \
 Parent directories are created as needed. Read a file before overwriting it.",
@@ -1227,6 +1248,53 @@ fn ocr_render(_args: &J, v: &J) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------
+// read_image (same contract and name as DeepSeek Harness)
+// ---------------------------------------------------------------------------
+
+fn read_image_exec(args: &J) -> Result<J, Fail> {
+    let path = str_arg(args, "file_path")
+        .filter(|p| !p.trim().is_empty())
+        .or_else(|| str_arg(args, "path"))
+        .ok_or_else(|| Fail::new("missing 'file_path'"))?;
+    let a = crate::vision::Attachment::load(&path).map_err(Fail::new)?;
+    Ok(obj(vec![
+        ("path", J::s(&a.path)),
+        ("mime", J::s(a.mime)),
+        ("bytes", J::Num(a.bytes.len() as f64)),
+        ("width", J::Num(a.width as f64)),
+        ("height", J::Num(a.height as f64)),
+        // `data_url` is consumed by the harness to build the image block; it is
+        // deliberately not rendered (the model gets the picture itself).
+        ("data_url", J::s(&a.data_url())),
+    ]))
+}
+
+fn read_image_render(_args: &J, v: &J) -> String {
+    let path = v.get("path").and_then(|x| x.as_str()).unwrap_or("");
+    let path = crate::config::home_shorten(path);
+    let mime = v.get("mime").and_then(|x| x.as_str()).unwrap_or("image");
+    let w = v.get("width").and_then(|x| x.as_num()).unwrap_or(0.0) as u64;
+    let h = v.get("height").and_then(|x| x.as_num()).unwrap_or(0.0) as u64;
+    let kb = (v.get("bytes").and_then(|x| x.as_num()).unwrap_or(0.0) as u64 / 1024).max(1);
+    let dims = if w > 0 && h > 0 {
+        format!("{w}x{h}")
+    } else {
+        "size unknown".to_string()
+    };
+    format!(
+        "read image {path} ({mime}, {dims}, {kb} KB). The image is attached to this tool result; \
+describe or answer from what you can see."
+    )
+}
+
+fn read_image_present(a: &J) -> String {
+    format!(
+        "read_image {}",
+        short(&str_arg(a, "file_path").or_else(|| str_arg(a, "path")).unwrap_or_default(), 34)
+    )
+}
+
 fn artifact_exec(args: &J) -> Result<J, Fail> {
     let title = str_arg(args, "title").ok_or_else(|| Fail::new("missing 'title'"))?;
     let body = str_arg(args, "body").ok_or_else(|| Fail::new("missing 'body'"))?;
@@ -1250,4 +1318,77 @@ fn artifact_exec(args: &J) -> Result<J, Fail> {
 fn artifact_render(_args: &J, v: &J) -> String {
     let lines = v.get("lines").and_then(|x| x.as_num()).unwrap_or(0.0);
     format!("panel shown full-screen ({lines:.0} rows); user dismisses it with Esc")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tiny_png(name: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "dst-tools-{}-{name}",
+            std::process::id()
+        ));
+        let mut png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+        png.extend_from_slice(&4u32.to_be_bytes());
+        png.extend_from_slice(&3u32.to_be_bytes());
+        png.extend_from_slice(&[8, 6, 0, 0, 0]);
+        std::fs::write(&p, png).unwrap();
+        p
+    }
+
+    #[test]
+    fn read_image_returns_the_picture_as_a_data_url() {
+        let p = tiny_png("read_image.png");
+        let args = crate::json::parse(&format!(
+            r#"{{"file_path":"{}"}}"#,
+            p.to_str().unwrap()
+        ))
+        .unwrap();
+        let v = match read_image_exec(&args) {
+            Ok(v) => v,
+            Err(e) => panic!("image should load: {}", e.message),
+        };
+        assert_eq!(v.get("mime").and_then(|m| m.as_str()), Some("image/png"));
+        assert_eq!(v.get("width").and_then(|w| w.as_num()), Some(4.0));
+        let url = v.get("data_url").and_then(|u| u.as_str()).expect("data url");
+        assert!(url.starts_with("data:image/png;base64,"), "{url}");
+        let text = read_image_render(&args, &v);
+        assert!(text.contains("read image"), "{text}");
+        assert!(text.contains("4x3"), "{text}");
+        let title = read_image_present(&args);
+        assert!(title.starts_with("read_image "));
+        let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
+    fn read_image_rejects_missing_and_non_image_files() {
+        let missing = crate::json::parse(r#"{"file_path":"/nonexistent/x.png"}"#).unwrap();
+        assert!(read_image_exec(&missing).is_err());
+        let p = std::env::temp_dir().join(format!("dst-tools-{}-text.png", std::process::id()));
+        std::fs::write(&p, b"not an image").unwrap();
+        let args = crate::json::parse(&format!(
+            r#"{{"file_path":"{}"}}"#,
+            p.to_str().unwrap()
+        ))
+        .unwrap();
+        let err = read_image_exec(&args).unwrap_err();
+        assert!(err.message.contains("JPEG"), "{}", err.message);
+        let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
+    fn read_image_is_registered_and_concurrency_safe() {
+        let caps = crate::config::Capabilities {
+            web_tools: true,
+            speech: true,
+        };
+        let reg = registry(caps);
+        let def = reg
+            .iter()
+            .find(|t| t.name == "read_image")
+            .expect("read_image registered");
+        assert!(def.concurrency_safe);
+        assert!(def.params.iter().any(|p| p.name == "file_path" && p.required));
+    }
 }

@@ -1,0 +1,10 @@
+{"responses": [
+ {"reasoning": "The user points at an image file; open it with read_image.",
+  "content": "",
+  "tool_calls": [
+   {"id": "img1", "name": "read_image", "arguments": {"file_path": "~/photo.png"}}
+  ],
+  "finish_reason": "tool_calls"},
+ {"reasoning": "Now I can see it.", "content": "I can see a blue picture with a yellow band on top.", "finish_reason": "stop"},
+ {"reasoning": "ack", "content": "You're welcome.", "finish_reason": "stop"}
+]}

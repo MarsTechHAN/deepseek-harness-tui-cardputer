@@ -256,6 +256,81 @@ pub fn msg(role: &str, content: &str) -> J {
     J::o(vec![("role", J::s(role)), ("content", J::s(content))])
 }
 
+/// A user message that carries local images as OpenAI/DeepSeek vision blocks:
+/// `content` becomes an array of `text` + `image_url` (data URL) parts. Plain
+/// text messages keep the cheap string form.
+pub fn user_msg_with_images(input: &str, images: &[crate::vision::Attachment]) -> J {
+    if images.is_empty() {
+        return msg("user", input);
+    }
+    let mut parts: Vec<J> = Vec::new();
+    let text = if input.trim().is_empty() {
+        "What is in this image?".to_string()
+    } else {
+        input.to_string()
+    };
+    parts.push(J::o(vec![
+        ("type", J::s("text")),
+        ("text", J::s(&text)),
+    ]));
+    for a in images {
+        parts.push(J::o(vec![
+            ("type", J::s("image_url")),
+            (
+                "image_url",
+                J::o(vec![("url", J::s(&a.data_url()))]),
+            ),
+        ]));
+    }
+    J::o(vec![("role", J::s("user")), ("content", J::Arr(parts))])
+}
+
+/// Replace a `read_image` tool result's image block with its text form once the
+/// model has consumed it: keeps later steps and the saved history small, and
+/// never re-bills the image.
+fn strip_tool_images(msgs: &mut [J], pending: &mut Vec<(usize, String)>) {
+    for (idx, text) in pending.drain(..) {
+        if let Some(m) = msgs.get_mut(idx) {
+            if let J::Obj(kv) = m {
+                if let Some(slot) = kv.iter_mut().find(|(k, _)| k == "content") {
+                    slot.1 = J::s(&text);
+                }
+            }
+        }
+    }
+}
+
+/// Replace the raw image blocks of the just-sent user message with a text
+/// placeholder. The model already has the pictures; the history, session files
+/// and every later request only need to know an image was there (the deepseek
+/// API resizes to ~1300x1300 / <=1024 tokens per image anyway, and the encoded
+/// payload would dominate every following step).
+fn strip_attachments(
+    msgs: &mut [J],
+    idx: usize,
+    input: &str,
+    images: &[crate::vision::Attachment],
+) {
+    if images.is_empty() {
+        return;
+    }
+    let Some(m) = msgs.get_mut(idx) else {
+        return;
+    };
+    let mut text = input.trim().to_string();
+    for a in images {
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&a.placeholder());
+    }
+    if let J::Obj(kv) = m {
+        if let Some(slot) = kv.iter_mut().find(|(k, _)| k == "content") {
+            slot.1 = J::s(&text);
+        }
+    }
+}
+
 fn assistant_with_tools(text: &str, calls: &[ToolCall]) -> J {
     let mut arr = Vec::new();
     for c in calls {
@@ -279,6 +354,11 @@ fn assistant_with_tools(text: &str, calls: &[ToolCall]) -> J {
 /// i18n key of the recovery hint for a provider error, if one is known.
 fn actionable_hint(message: &str) -> Option<&'static str> {
     let m = message.to_ascii_lowercase();
+    // A text-only endpoint or model rejects image blocks with a 400; point at
+    // the two ways forward (vision model, or /ocr for text in images).
+    if m.contains("image") {
+        return Some("err_hint_image");
+    }
     if m.contains("401") || m.contains("403") || m.contains("unauthorized")
         || m.contains("invalid api key") || m.contains("authentication")
     {
@@ -492,8 +572,38 @@ fn j_len(v: &J) -> usize {
     }
 }
 
+/// Byte weight of one message for the hard cap. Image content blocks count as
+/// a fixed ~8 KB (the API caps them at ~1024 tokens) instead of their base64
+/// payload, so one attached picture cannot force an unrelated history trim.
+fn msg_weight(m: &J) -> usize {
+    let content = match m.get("content") {
+        Some(J::Str(s)) => s.len() + 2,
+        Some(J::Arr(parts)) => parts
+            .iter()
+            .map(|p| {
+                if p.get("type").and_then(|t| t.as_str()) == Some("image_url") {
+                    8 * 1024
+                } else {
+                    p.get("text")
+                        .and_then(|t| t.as_str())
+                        .map(|s| s.len() + 8)
+                        .unwrap_or(8)
+                }
+            })
+            .sum(),
+        _ => 8,
+    };
+    let has_image = matches!(m.get("content"), Some(J::Arr(parts))
+        if parts.iter().any(|p| p.get("type").and_then(|t| t.as_str()) == Some("image_url")));
+    if has_image {
+        content + 128
+    } else {
+        j_len(m)
+    }
+}
+
 fn approx_bytes(msgs: &[J]) -> usize {
-    msgs.iter().map(j_len).sum()
+    msgs.iter().map(msg_weight).sum()
 }
 
 /// Drop the oldest messages until the history fits in half the hard cap (so it
@@ -507,7 +617,7 @@ fn hard_trim(msgs: &mut Vec<J>) -> bool {
     let mut start = msgs.len();
     let mut tail = 0usize;
     while start > 1 {
-        let add = j_len(&msgs[start - 1]);
+        let add = msg_weight(&msgs[start - 1]);
         if tail + add > target {
             break;
         }
@@ -536,10 +646,17 @@ pub fn run_turn(
     msgs: &mut Vec<J>,
     reg: &[ToolDef],
     input: &str,
+    images: &[crate::vision::Attachment],
     ui: &mut dyn Ui,
 ) -> TurnReport {
     ui.on(Ev::TurnStart);
-    msgs.push(msg("user", input));
+    // Only the first request of the turn carries the image payload; the
+    // message is rewritten to a placeholder as soon as a response arrives.
+    let user_idx = msgs.len();
+    msgs.push(user_msg_with_images(input, images));
+    // Tool results from read_image keep their image block for exactly one
+    // request (the one that lets the model look at it), then become text.
+    let mut pending_tool_images: Vec<(usize, String)> = Vec::new();
 
     let defs = tool::definitions(reg);
     let mut steps = 0u32;
@@ -657,6 +774,8 @@ pub fn run_turn(
                     ui.on(Ev::Assistant(text.clone()));
                     msgs.push(msg("assistant", &text));
                 }
+                strip_attachments(msgs, user_idx, input, images);
+                strip_tool_images(msgs, &mut pending_tool_images);
                 report.cancelled = was_cancelled;
                 report.failed = !was_cancelled;
                 if !was_cancelled {
@@ -672,6 +791,9 @@ pub fn run_turn(
                 break;
             }
         };
+
+        strip_attachments(msgs, user_idx, input, images);
+        strip_tool_images(msgs, &mut pending_tool_images);
 
         let text = out.text.trim().to_string();
         if !text.is_empty() {
@@ -710,11 +832,42 @@ pub fn run_turn(
 
         let mut contexts: Vec<String> = Vec::new();
         for o in &outcomes {
+            let idx = msgs.len();
+            let mut content = J::s(&o.content);
+            let mut shown_image: Option<String> = None;
+            if o.name == "read_image" && !o.is_error {
+                if let Some(v) = &o.value {
+                    let url = v
+                        .get("data_url")
+                        .and_then(|x| x.as_str())
+                        .filter(|u| u.starts_with("data:image/"));
+                    let path = v.get("path").and_then(|x| x.as_str()).unwrap_or("");
+                    if let Some(url) = url {
+                        shown_image = Some(format!("[image read: {path}]\n{}", o.content));
+                        content = J::Arr(vec![
+                            J::o(vec![
+                                ("type", J::s("text")),
+                                ("text", J::s(&o.content)),
+                            ]),
+                            J::o(vec![
+                                ("type", J::s("image_url")),
+                                (
+                                    "image_url",
+                                    J::o(vec![("url", J::s(url))]),
+                                ),
+                            ]),
+                        ]);
+                    }
+                }
+            }
             msgs.push(J::o(vec![
                 ("role", J::s("tool")),
                 ("tool_call_id", J::s(&o.call_id)),
-                ("content", J::s(&o.content)),
+                ("content", content),
             ]));
+            if let Some(placeholder) = shown_image {
+                pending_tool_images.push((idx, placeholder));
+            }
             if let Some(c) = &o.context {
                 contexts.push(c.clone());
             }
@@ -781,6 +934,56 @@ pub fn run_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn image_fixture() -> crate::vision::Attachment {
+        crate::vision::Attachment {
+            path: "/tmp/photo.png".to_string(),
+            mime: "image/png",
+            bytes: vec![0x89, b'P', b'N', b'G'],
+            width: 2,
+            height: 2,
+        }
+    }
+
+    #[test]
+    fn an_image_message_uses_content_blocks() {
+        let a = image_fixture();
+        let m = user_msg_with_images("what is this?", &[a.clone()]);
+        let content = m.get("content").and_then(|c| c.as_arr()).expect("content array");
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0].get("type").and_then(|t| t.as_str()), Some("text"));
+        assert_eq!(
+            content[0].get("text").and_then(|t| t.as_str()),
+            Some("what is this?")
+        );
+        assert_eq!(
+            content[1].get("type").and_then(|t| t.as_str()),
+            Some("image_url")
+        );
+        let url = content[1]
+            .get("image_url")
+            .and_then(|i| i.get("url"))
+            .and_then(|u| u.as_str())
+            .expect("image url");
+        assert!(url.starts_with("data:image/png;base64,"), "{url}");
+        // No images: the cheap plain-string form stays.
+        let plain = user_msg_with_images("hello", &[]);
+        assert!(plain.get("content").and_then(|c| c.as_str()).is_some());
+    }
+
+    #[test]
+    fn attachments_are_replaced_by_a_placeholder_after_the_request() {
+        let a = image_fixture();
+        let mut msgs = vec![msg("system", "sys"), user_msg_with_images("look", &[a])];
+        strip_attachments(&mut msgs, 1, "look", &[image_fixture()]);
+        let content = msgs[1]
+            .get("content")
+            .and_then(|c| c.as_str())
+            .expect("content is text again");
+        assert!(content.starts_with("look"));
+        assert!(content.contains("[image attached: /tmp/photo.png"), "{content}");
+        assert!(!content.contains("base64"), "payload must not stay in history");
+    }
+
     #[test]
     fn actionable_hints_cover_common_failures() {
         assert_eq!(actionable_hint("API error: 401 unauthorized"), Some("err_hint_auth"));

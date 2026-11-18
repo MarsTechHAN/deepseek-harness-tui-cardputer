@@ -72,6 +72,12 @@ pub const COMMANDS: &[Command] = &[
         input_hint: None,
     },
     Command {
+        name: "image",
+        category: "cat_input",
+        description: "attach a local image (JPEG/PNG/GIF/WebP) to the next message",
+        input_hint: Some("[<path>|clear]"),
+    },
+    Command {
         name: "update-hwinfo",
         category: "cat_info",
         description: "rescan this device's hardware and refresh the hardware-info skill",
@@ -218,6 +224,10 @@ pub struct Outcome {
     /// Seed the next model turn with this request (a command that hands work
     /// to the model, e.g. /update-hwinfo refining the hardware skill).
     pub model_prompt: Option<String>,
+    /// Attach this local image file to the next message (/image <path>).
+    pub image: Option<String>,
+    /// Drop every pending image attachment (/image clear).
+    pub image_clear: bool,
 }
 
 impl Outcome {
@@ -236,6 +246,8 @@ impl Outcome {
             apps_menu: false,
             run_app: None,
             model_prompt: None,
+            image: None,
+            image_clear: false,
             compact: false,
         }
     }
@@ -254,6 +266,8 @@ impl Outcome {
             apps_menu: false,
             run_app: None,
             model_prompt: None,
+            image: None,
+            image_clear: false,
             compact: false,
         }
     }
@@ -299,6 +313,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             apps_menu: false,
             run_app: None,
             model_prompt: None,
+            image: None,
+            image_clear: false,
         },
         "model" => {
             if arg.is_empty() {
@@ -316,6 +332,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             apps_menu: false,
             run_app: None,
             model_prompt: None,
+            image: None,
+            image_clear: false,
                     compact: false,
                 }
             } else if arg.len() > 120 {
@@ -391,6 +409,25 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 Outcome::many(lines)
             }
         }
+        "image" | "img" | "photo" => {
+            let arg = arg.trim();
+            if arg.eq_ignore_ascii_case("clear") {
+                let mut out = Outcome::text("", KIND_DIM);
+                out.lines.clear();
+                out.image_clear = true;
+                out
+            } else if arg.is_empty() {
+                Outcome::many(vec![(
+                    crate::i18n::t("cmd_image_usage").to_string(),
+                    KIND_DIM,
+                )])
+            } else {
+                let mut out = Outcome::text("", KIND_DIM);
+                out.lines.clear();
+                out.image = Some(arg.trim_matches(|c| c == '"' || c == '\'').to_string());
+                out
+            }
+        }
         "update-hwinfo" | "update_hwinfo" | "hwinfo" => {
             // The scan is local and deterministic: it works in any mode. In
             // creator mode the model then reads the refreshed skill and refines
@@ -454,6 +491,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             apps_menu: false,
             run_app: None,
             model_prompt: None,
+            image: None,
+            image_clear: false,
                     compact: false,
                 }
             }
@@ -466,6 +505,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             apps_menu: false,
             run_app: None,
             model_prompt: None,
+            image: None,
+            image_clear: false,
         },
         "extensions" => Outcome {
             lines: Vec::new(), quit: false, clear: false, login: false,
@@ -474,6 +515,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             apps_menu: false,
             run_app: None,
             model_prompt: None,
+            image: None,
+            image_clear: false,
         },
         "rename" => {
             if arg.is_empty() {
@@ -499,6 +542,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             apps_menu: false,
             run_app: None,
             model_prompt: None,
+            image: None,
+            image_clear: false,
             compact: true,
         },
         "goal" => {
@@ -577,6 +622,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                             apps_menu: false,
                             run_app: Some(app.label()),
                             model_prompt: None,
+                            image: None,
+                            image_clear: false,
                             compact: false,
                         },
                     }
@@ -601,6 +648,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                     apps_menu: true,
             run_app: None,
             model_prompt: None,
+            image: None,
+            image_clear: false,
                     compact: false,
                 }
             }
@@ -619,6 +668,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             apps_menu: false,
             run_app: None,
             model_prompt: None,
+            image: None,
+            image_clear: false,
             compact: false,
         },
         "quit" | "exit" | "q" => Outcome {
@@ -635,6 +686,8 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             apps_menu: false,
             run_app: None,
             model_prompt: None,
+            image: None,
+            image_clear: false,
             compact: false,
         },
         "" => usage("/"),

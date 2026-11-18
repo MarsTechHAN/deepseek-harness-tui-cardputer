@@ -15,7 +15,7 @@ zero-dependency Rust binary, on a 320×170 handheld.**
 <img src="https://img.shields.io/badge/binary-1.0%20MB-2ea043?style=flat-square" alt="1 MB binary">
 <img src="https://img.shields.io/badge/panel-320%C3%97170%20%C2%B7%2053%C3%9712%20cells-22d3ee?style=flat-square" alt="320x170 panel, 53x12 cells">
 <img src="https://img.shields.io/badge/UI%20languages-6-8b5cf6?style=flat-square" alt="6 UI languages">
-<img src="https://img.shields.io/badge/tests-76%20passing-2ea043?style=flat-square" alt="76 unit tests">
+<img src="https://img.shields.io/badge/tests-88%20passing-2ea043?style=flat-square" alt="88 unit tests">
 <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs welcome"></a>
 
 <a href="#quick-start">Quick start</a> ·
@@ -96,7 +96,7 @@ intelligence, and `curl` for the wire.
 
 <table>
 <tr>
-<td colspan="2"><a href="docs/demo.webp"><img src="docs/demo.webp" alt="Animated tour: first run, progress row, expanded tool calls, CtrlO, paging, queued message, Esc interrupt, voice interrupt, creator mode, hardware scan, six languages, help, config"></a><br><sub><b>Animated tour (43 s)</b> — the whole flow and the features that matter on a 12-row screen: the pinned progress row, expanded tool calls, CtrlO during a turn, transcript paging, queued messages, Esc/voice interrupts, creator mode building and running a skill package, the first-run hardware scan, and six UI languages. Click to open the full animation.</sub></td>
+<td colspan="2"><a href="docs/demo.webp"><img src="docs/demo.webp" alt="Animated tour: first run, progress row, expanded tool calls, CtrlO, paging, queued message, Esc interrupt, voice interrupt, creator mode, hardware scan, six languages, help, config"></a><br><sub><b>Animated tour (~49 s)</b> — the whole flow and the features that matter on a 12-row screen: the pinned progress row, expanded tool calls, CtrlO during a turn, a locally attached image the model can see, transcript paging, queued messages, Esc/voice interrupts, creator mode building and running a skill package, the first-run hardware scan, and six UI languages. Click to open the full animation.</sub></td>
 </tr>
 <tr>
 <td colspan="2"><a href="docs/live-walkthrough.png"><img src="docs/live-walkthrough.png" alt="Twelve-screen walkthrough: startup, progress row, expanded tool call, tool result, scrollback, queued message, recording, help, config, hardware scan, Chinese login, an app running"></a><br><sub><b>Walkthrough</b> — 12 device-fidelity panels: startup, the pinned progress row, an expanded tool call, tool results, scrollback, a queued message, push-to-talk, <code>/help</code>, <code>/config</code>, the hardware scan, the Chinese login screen and an app owning the panel. Click for full size.</sub></td>
@@ -143,14 +143,14 @@ and are documented in [`docs/UX-LIVE.md`](docs/UX-LIVE.md).
 
 ### Tools
 
-The model sees 32 tools in normal mode (list yours with `dst --tools`);
+The model sees 34 tools in normal mode (list yours with `dst --tools`);
 creator mode adds the execution and skill-writing tools at the bottom of the
 table:
 
 | group | tools |
 | --- | --- |
 | shell & files | `bash`, `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep` |
-| web + vision | `search`, `fetch`, `ocr` |
+| web + vision | `search`, `fetch`, `ocr`, `read_image` |
 | orchestration | `artifact`, `speak`, `rename`, `todo_read`, `todo_write`, `skill`, `state_report` |
 | background | `job_start`, `job_output`, `job_wait`, `job_kill`, `job_list`, `watcher_start`, `watcher_list`, `watcher_stop` |
 | goals | `get_goal`, `create_goal`, `update_goal` |
@@ -159,6 +159,33 @@ table:
 | creator mode | `app_run`, `app_test`, `skill_save`, `skill_file`, `skill_rollback` |
 
 Any MCP server in `~/.dst/mcp.json` adds its tools as `mcp__<server>__<tool>`.
+
+### Vision input
+
+`deepseek-flash` accepts images. There are two entry points, both producing the
+same DeepSeek vision block:
+
+```text
+read_image {"file_path": "~/screenshot.png"}   the model opens an image itself
+/image ~/photo.jpg                             the user attaches one to the next message
+```
+
+`read_image` is the agent-facing tool and keeps the same name, parameter
+(`file_path`) and behaviour as DeepSeek Harness: it returns the picture itself,
+so the model can look at screenshots, photos, diagrams and UI captures. The
+`/image` command is the human shortcut for the same thing (also: `/image clear`).
+
+The file is sniffed from its magic bytes (the name does not matter), capped at
+8 MB, and embedded exactly the way DeepSeek documents it — a `content` array
+with a text block plus `{"type":"image_url","image_url":{"url":"data:…"}}`,
+either in the user message (`/image`) or in the `read_image` tool result. The TUI
+shows one line per attachment (`* read_image` + `↳ read image ~/photo.png (png ·
+64x48 · 1 KB)`), the model sees the picture, so "what is in this screenshot?"
+just works. After the model has seen it, the payload is rewritten to a small
+`[image attached: …]` / `[image read: …]` placeholder, so later steps, session
+files and context compaction never re-send (or re-bill) the base64. If the
+endpoint or model rejects images with a 400, dst shows the reason and points at
+`/ocr` for text-in-image extraction or a vision-capable model.
 
 ### Permissions and sandbox
 
@@ -365,6 +392,7 @@ Commands run locally and are never sent to the model.
 | `/config [wizard]` | interactive configuration (options first) |
 | `/login` | DeepSeek sign-in: WeChat QR, phone page, or typed credential |
 | `/key <api-key>` | set the API key directly |
+| `/image <path>` / `/image clear` | attach a local image (JPEG/PNG/GIF/WebP) to the next message |
 | `/usage` | cache hit rate, tokens in/out, context pressure |
 | `/compact` | summarise older history now |
 | `/goal [show, <objective>, edit, pause, resume, clear]` | long-running objective |
@@ -462,6 +490,7 @@ values interactively; `/config path` prints the file location.
 | `src/hwinfo.rs` | the shipped `hardware-info` skill: bounded read-only hardware scan, scan-section renderer, seed install |
 | `src/mcp.rs` | MCP stdio client |
 | `src/voice.rs` | TTS/ASR, resampling, WAV framing, recorder |
+| `src/vision.rs` | local image attachments: format sniffing, base64 `data:` URLs, labels/placeholders |
 | `src/config.rs` | `~/.dst` home and the DSH-dialect YAML config |
 | `src/cmd.rs` | human commands |
 | `src/i18n.rs` | six-language UI catalog |
@@ -486,7 +515,7 @@ cargo build                       # host binary
 
 cd tools/sim
 python3 run_demo.py               # splash → thinking → tool call → reply + contact sheet
-python3 run_scenarios.py          # feature scenarios, asserts on screens *and* request logs
+python3 run_scenarios.py          # 94 feature scenarios, asserts on screens *and* request logs
 python3 run_live.py               # optional: visual pass against a real endpoint
 python3 check_memory.py           # samples RSS over 20 turns
 ```
@@ -498,10 +527,10 @@ artifacts, sessions across a restart, onboarding, sandbox modes, jobs, watchers,
 searchable resume, push-to-talk with mocked speech, the nine-step WeChat login
 chain, provider failures and recovery, CJK input and the creator-mode scenarios.
 
-Unit tests (host, no network): `cargo test` — 76 tests over the harness, tool
+Unit tests (host, no network): `cargo test` — 88 tests over the harness, tool
 pipeline, compaction budgets, goal state machine, context formatting, config
-round-trip, skill packages, runnable apps, the hardware-info scan/renderer and
-the i18n catalogue.
+round-trip, skill packages, runnable apps, the hardware-info scan/renderer,
+image attachment/base64 handling and the i18n catalogue.
 
 The committed screenshots and the animated tour are rebuilt from the simulator
 with one command (real `dst` binary, device-fidelity renderer, scripted model):

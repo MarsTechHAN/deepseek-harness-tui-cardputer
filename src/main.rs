@@ -36,6 +36,7 @@ mod usage;
 mod json;
 mod tool;
 mod tools;
+mod vision;
 mod voice;
 
 use api::Cfg;
@@ -54,6 +55,9 @@ pub struct Scr {
     note: Option<String>,
     /// Messages typed while a turn was running, oldest first.
     queue: Vec<String>,
+    /// Local images attached to the next human message (sent once, then
+    /// rewritten to a text placeholder in the history).
+    attachments: Vec<crate::vision::Attachment>,
     /// Ctrl-C/Ctrl-D asked the app to exit.
     quit: bool,
     /// A turn is running (drives the busy hint).
@@ -329,6 +333,7 @@ impl Scr {
             artifact: None,
             splash_done: false,
             queue: Vec::new(),
+            attachments: Vec::new(),
             live: None,
             state_line: None,
             approval: None,
@@ -503,6 +508,7 @@ impl Scr {
         // panel or the live line behind is what made `/clear` look half-done.
         self.think_lines.clear();
         self.think_active = false;
+        self.attachments.clear();
         self.live = None;
         self.state_line = None;
         self.note = None;
@@ -706,6 +712,12 @@ impl Scr {
                 live_line.push(' ');
             }
             live_line.push_str(t);
+        }
+        if live_line.is_empty() && !self.attachments.is_empty() {
+            live_line = i18n::tf(
+                "ui_image_ready",
+                &[&self.attachments.len().to_string()],
+            );
         }
         if live_line.is_empty() && !self.queue.is_empty() {
             live_line = format!(
@@ -2515,6 +2527,20 @@ VOICE
 - The user talks to you by long-pressing Tab; the transcript is submitted
   automatically, so treat messages as spoken and reply conversationally.
 
+IMAGES
+- The user can attach local image files with /image <path> (JPEG, PNG, GIF or
+  WebP). They arrive as image blocks in that message and you can see them:
+  answer about what is visible, read text out of screenshots directly, and do
+  not ask for a text description when the picture is right there.
+- You can also open a picture yourself with read_image {\"file_path\": \"...\"}:
+  use it when the user names an image file, a screenshot is the evidence they
+  mean, or a diagram in the workspace would answer the question. It needs an
+  image-capable model (deepseek-flash is). Do not read a picture just to repeat
+  what its filename already says.
+- An image costs up to ~1000 tokens, so do not ask the user to attach pictures
+  that do not help. If the endpoint or model rejects image input (400), say so
+  plainly and offer /ocr for text-in-image extraction or a vision-capable model.
+
 STYLE
 - Be concise. Answer in the fewest lines that fully answer: no preamble, no
   restating the question, no narration of steps. Aim for <= 4 short lines
@@ -2613,7 +2639,7 @@ impl harness::Ui for OnceUi {
 fn run_once(cfg: &Cfg, reg: &[tool::ToolDef], prompt: &str) {
     let mut msgs = vec![harness::msg("system", SYSTEM_PROMPT)];
     let mut ui = OnceUi;
-    harness::run_turn(cfg, &harness::RunOpts::default(), &mut msgs, reg, prompt, &mut ui);
+    harness::run_turn(cfg, &harness::RunOpts::default(), &mut msgs, reg, prompt, &[], &mut ui);
 }
 
 // ---------------------------------------------------------------- interactive
@@ -6337,6 +6363,32 @@ fn main() {
                 }
                 // A command may hand work to the model (/update-hwinfo in
                 // creator mode): dispatch it as the next turn's request.
+                if out.image_clear {
+                    scr.attachments.clear();
+                    scr.push(i18n::t("ui_image_cleared"), K_DIM);
+                }
+                if let Some(arg) = out.image {
+                    let max = crate::vision::MAX_PER_MESSAGE;
+                    if scr.attachments.len() >= max {
+                        scr.push(
+                            &i18n::tf("ui_image_too_many", &[&max.to_string()]),
+                            K_ERR,
+                        );
+                    } else {
+                        match crate::vision::Attachment::load(&arg) {
+                            Ok(a) => {
+                                scr.push(
+                                    &i18n::tf("ui_image_added", &[&a.label()]),
+                                    K_NORM,
+                                );
+                                scr.attachments.push(a);
+                            }
+                            Err(e) => {
+                                scr.push(&i18n::tf("ui_image_failed", &[&e]), K_ERR)
+                            }
+                        }
+                    }
+                }
                 if let Some(p) = out.model_prompt {
                     // The request is internal: show a short label in the
                     // transcript instead of the whole prompt body.
@@ -6387,6 +6439,15 @@ fn main() {
                         None => scr.push(&format!("> {submit}"), K_USER),
                     },
                 },
+            }
+            // Human turns may carry local images; goal/auto rounds never do.
+            let images = if label.is_none() {
+                std::mem::take(&mut scr.attachments)
+            } else {
+                Vec::new()
+            };
+            for a in &images {
+                scr.push(&format!("  {}", a.placeholder()), K_DIM);
             }
             turn_no += 1;
             scr.turn_tools.clear();
@@ -6441,7 +6502,9 @@ fn main() {
                     spin: 0,
                     interrupted: false,
                 };
-                last_report = Some(harness::run_turn(&cfg, &opts, &mut m, &reg, &submit, &mut ui));
+                last_report = Some(harness::run_turn(
+                    &cfg, &opts, &mut m, &reg, &submit, &images, &mut ui,
+                ));
             }
             goal::set_in_round(false);
             poll_mode(false);

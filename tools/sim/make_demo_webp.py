@@ -41,6 +41,8 @@ FRAMES = [
     ("progress", "running", "Tool calls expand their arguments as they run", 2000),
     ("progress", "ctrlo", "CtrlO opens the tool log during a turn", 2000),
     ("ux", "done", "Results land in the transcript as tool cards", 2000),
+    ("read_image_tool", "reply", "The agent opens an image itself with read_image", 2200),
+    ("image_input", "reply", "Or you attach one with /image: the model sees it", 2200),
     ("paging", "page2", "PgUp/PgDn page the transcript without blanking", 2000),
     ("esc_queue", "queued", "Typing during a turn queues the next message", 2000),
     ("progress", "interrupted", "Esc stops the whole turn, not just one tool", 2000),

@@ -448,6 +448,15 @@ const EN: &[(&str, &str)] = &[
     ("apps_deleted", "deleted app {}"),
     ("apps_delete_failed", "could not delete {}: {}"),
     ("apps_exited", "app {} returned to dst"),
+    ("cat_input", "input"),
+    ("cmd_image", "attach a local image (JPEG/PNG/GIF/WebP) to the next message"),
+    ("cmd_image_usage", "usage: /image <path> · /image clear"),
+    ("ui_image_added", "image attached: {}"),
+    ("ui_image_failed", "cannot attach image: {}"),
+    ("ui_image_cleared", "pending images cleared"),
+    ("ui_image_ready", "{} image(s) attached · /image clear"),
+    ("ui_image_too_many", "at most {} images per message"),
+    ("err_hint_image", "the endpoint/model rejected the image — use a vision model, or /ocr for text in images"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -809,6 +818,15 @@ const ZH: &[(&str, &str)] = &[
     ("apps_deleted", "已删除应用 {}"),
     ("apps_delete_failed", "删除 {} 失败: {}"),
     ("apps_exited", "应用 {} 已返回 dst"),
+    ("cat_input", "输入"),
+    ("cmd_image", "把本地图片（JPEG/PNG/GIF/WebP）附加到下一条消息"),
+    ("cmd_image_usage", "用法: /image <路径> · /image clear"),
+    ("ui_image_added", "已附加图片: {}"),
+    ("ui_image_failed", "无法附加图片: {}"),
+    ("ui_image_cleared", "已清除待发送的图片"),
+    ("ui_image_ready", "已附加 {} 张图片 · /image clear"),
+    ("ui_image_too_many", "每条消息最多 {} 张图片"),
+    ("err_hint_image", "接口/模型拒绝了图片 — 请用支持视觉的模型，或用 /ocr 识别图中文字"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -1169,6 +1187,15 @@ const ES: &[(&str, &str)] = &[
     ("apps_deleted", "app {} borrada"),
     ("apps_delete_failed", "no se pudo borrar {}: {}"),
     ("apps_exited", "app {} ha vuelto a dst"),
+    ("cat_input", "entrada"),
+    ("cmd_image", "adjunta una imagen local (JPEG/PNG/GIF/WebP) al siguiente mensaje"),
+    ("cmd_image_usage", "uso: /image <ruta> · /image clear"),
+    ("ui_image_added", "imagen adjunta: {}"),
+    ("ui_image_failed", "no se pudo adjuntar la imagen: {}"),
+    ("ui_image_cleared", "imágenes pendientes eliminadas"),
+    ("ui_image_ready", "{} imagen(es) adjunta(s) · /image clear"),
+    ("ui_image_too_many", "como máximo {} imágenes por mensaje"),
+    ("err_hint_image", "el endpoint/modelo rechazó la imagen — usa un modelo con visión o /ocr"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -1530,6 +1557,15 @@ const JA: &[(&str, &str)] = &[
     ("apps_deleted", "アプリ {} を削除"),
     ("apps_delete_failed", "{} を削除できません: {}"),
     ("apps_exited", "アプリ {} が dst に戻りました"),
+    ("cat_input", "入力"),
+    ("cmd_image", "ローカル画像（JPEG/PNG/GIF/WebP）を次のメッセージに添付"),
+    ("cmd_image_usage", "使い方: /image <パス> · /image clear"),
+    ("ui_image_added", "画像を添付: {}"),
+    ("ui_image_failed", "画像を添付できません: {}"),
+    ("ui_image_cleared", "添付待ちの画像を消去しました"),
+    ("ui_image_ready", "画像 {} 枚を添付中 · /image clear"),
+    ("ui_image_too_many", "1 メッセージにつき最大 {} 枚"),
+    ("err_hint_image", "エンドポイント/モデルが画像を拒否 — 視覚対応モデルか /ocr を使って"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -1891,6 +1927,15 @@ const DE: &[(&str, &str)] = &[
     ("apps_deleted", "App {} gelöscht"),
     ("apps_delete_failed", "{} nicht gelöscht: {}"),
     ("apps_exited", "App {} ist zurück in dst"),
+    ("cat_input", "Eingabe"),
+    ("cmd_image", "ein lokales Bild (JPEG/PNG/GIF/WebP) an die nächste Nachricht anhängen"),
+    ("cmd_image_usage", "Nutzung: /image <pfad> · /image clear"),
+    ("ui_image_added", "Bild angehängt: {}"),
+    ("ui_image_failed", "Bild kann nicht angehängt werden: {}"),
+    ("ui_image_cleared", "ausstehende Bilder entfernt"),
+    ("ui_image_ready", "{} Bild(er) angehängt · /image clear"),
+    ("ui_image_too_many", "höchstens {} Bilder pro Nachricht"),
+    ("err_hint_image", "Endpunkt/Modell lehnt das Bild ab — Vision-Modell oder /ocr verwenden"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -2252,6 +2297,15 @@ const IT: &[(&str, &str)] = &[
     ("apps_deleted", "app {} eliminata"),
     ("apps_delete_failed", "impossibile eliminare {}: {}"),
     ("apps_exited", "app {} è tornata a dst"),
+    ("cat_input", "input"),
+    ("cmd_image", "allega un'immagine locale (JPEG/PNG/GIF/WebP) al messaggio successivo"),
+    ("cmd_image_usage", "uso: /image <percorso> · /image clear"),
+    ("ui_image_added", "immagine allegata: {}"),
+    ("ui_image_failed", "impossibile allegare l'immagine: {}"),
+    ("ui_image_cleared", "immagini in attesa rimosse"),
+    ("ui_image_ready", "{} immagine(i) allegata(e) · /image clear"),
+    ("ui_image_too_many", "massimo {} immagini per messaggio"),
+    ("err_hint_image", "l'endpoint/modello ha rifiutato l'immagine — usa un modello vision o /ocr"),
 ];
 
 
