@@ -25,15 +25,15 @@ the device.
 | # | Step | What is checked | Result |
 | --- | --- | --- | --- |
 | 01 | `01_startup` | first-run tips: tagline, three action tips, `/help` footer | fixed: tips now open with the `dst · a DeepSeek harness on a Cardputer Zero` tagline and disappear on the first prompt |
-| 02 | `02_streaming` | live status while the first request runs | ok: `| working 0.0s`, no layout jump |
+| 02 | `02_streaming` | live status while the first request runs | ok: `\| working 0.0s`, no layout jump |
 | 03 | `03_reply` | settled answer, folded reasoning line, wrapping, status bar | ok: three-sentence answer wraps at word boundaries; `▸ thinking … (collapsed)` line |
-| 04 | `04_tool_running` | tool card while the tool runs | ok: `* bash > sleep 2; printf …` card and `bash running 0.3s` live line |
-| 05 | `05_tool_done` | settled tool card, result preview, answer | ok: `* bash | 2.2s ok`, `└ alpha`, final text |
+| 04 | `04_tool_running` | tool card while the tool runs | ok: `* bash` card with the expanded `command: sleep 2; printf …` argument rows and the `bash running 0.3s` live line |
+| 05 | `05_tool_done` | settled tool card, result preview, answer | ok: `* bash` + expanded args, then `└ 2.2s ok`, the `↳ alpha` result preview and the final text |
 | 06 | `06_recording` | push-to-talk hold: REC indicator with elapsed time | ok: red `● REC 1.0s` above the prompt |
-| 07 | `07_voice_stream` | voice prompt auto-sent, thinking panel streaming | ok: magenta reasoning panel + `| thinking 0.3s` |
+| 07 | `07_voice_stream` | voice prompt auto-sent, thinking panel streaming | ok: magenta reasoning panel + `\| thinking 0.3s` |
 | 08 | `08_voice_reply` | settled voice answer, user transcript visible | ok: prompt and answer fit the panel |
 | 09 | `09_help` | `/help` menu: title, counter, rows, preview, hint | fixed: the redundant "Enter runs it" footer row is gone; 8 commands visible instead of 7 and the hint never cuts a word |
-| 10 | `10_config` | `/config` wizard: 15 rows, right-aligned values, help footer | fixed: third-party capability hint shortened to 53 cells (was cut mid-word) |
+| 10 | `10_config` | `/config` wizard: 16 rows, right-aligned values, help footer | fixed: third-party capability hint shortened to 53 cells (was cut mid-word) |
 | 11 | `11_resume` | `/resume` picker: search hint, relative time, title, cwd value | fixed: two-cell gap between the ellipsised title and the right-hand value |
 | 12 | `12_login` | `/login` entry menu | fixed: footer says `select · Enter choose · Esc back` (was `Enter change`) |
 
@@ -67,28 +67,39 @@ the device.
 ## Creator mode live check (real local vLLM)
 
 `tools/sim/live_creator_check.py` is the creator-mode counterpart of the
-walkthrough above: it asks the real model to build a battery app, then opens
-`/apps` and verifies the package on disk. It is a *directed* prompt (it names
-`app_save`/`app_file` and says not to run the app) because the simulator host is
-a Mac without `/sys/class/power_supply` and the point of the pass is the
-save-and-inspect path; the model, streaming, tool arguments and rendering are
-all real. Sandbox `full` keeps the pass fast (no judge request per probe).
+walkthrough above: it asks the real model to build a battery readout, then opens
+`/apps` and verifies the package on disk. It is a *directed* prompt (the
+simulator host is a Mac without `/sys/class/power_supply`, and the point of the
+pass is the save-and-inspect path), while the model, streaming, tool arguments
+and rendering are all real. Sandbox `full` keeps the pass fast (no judge request
+per probe).
 
 ```sh
 cd tools/sim
 python3 live_creator_check.py     # ~2-4 min; screenshots + contact sheet
 ```
 
+The creator contract is now skill-centric: the package lives under
+`~/.dst/skills/<name>/` and is made runnable by `meta.json`. The live check
+therefore drives `skill_save` + `skill_file` (writing `meta.json` last) and
+verifies `~/.dst/skills/<name>/{SKILL.md,meta.json,run.sh}` plus the `/apps` row.
+The committed `docs/live-creator.png` was captured before the refactor (it shows
+the old `~/.dst/apps` + `app.json`/`APP.md` package), so use it as layout
+evidence only and regenerate it in the next live pass.
+
+Expected screens:
+
 | # | Step | What is checked | Result |
 | --- | --- | --- | --- |
-| 01 | `01_startup` | creator mode is on: `创作者 · /apps · 长按 Esc 退出应用` idle hint | ok |
-| 02 | `02_built` | real model calls `app_save` + `app_file`; transcript shows the answer and the one-line `已保存应用 system/battery` notice | ok: the model wrote `app.json`, `APP.md` and a sysfs-reading `run.sh`, and warned that the host has no battery node |
-| 03 | `03_apps` | `/apps` menu lists the new app (`Battery   system · sh`) with the localized footer | ok |
-| 04 | `04_preview` | Right expands the annotation preview: `路径/类型/入口/更新` + APP.md body | ok |
+| 01 | `01_startup` | creator mode is on: `creator · N apps · /apps · hold Esc` idle hint | pending capture |
+| 02 | `02_built` | real model calls `skill_save` + `skill_file`; transcript shows the answer plus `saved skill <name> vN` and `saved app <name> (runnable skill)` | pending capture: `SKILL.md` (frontmatter + body), a sysfs-reading `run.sh` and a `meta.json` in the package, with the model warning that the host has no battery node |
+| 03 | `03_apps` | `/apps` menu lists the package (`Battery viewer   sh · 12:30`) with the localized footer | pending capture |
+| 04 | `04_preview` | Right expands the package panel: `path/kind/entry/version/updated` + the `SKILL.md` body | pending capture |
 
-Hard checks: the transcript shows a saved app, a package exists under
-`~/.dst/apps` with `app.json`, `APP.md` and `run.sh`, and the preview shows the
-package path. Contact sheet: `docs/live-creator.png`.
+Hard checks after the port: the transcript announces a saved skill and a saved
+app, a package exists under `~/.dst/skills/<name>/` with `SKILL.md`, `meta.json`
+and `run.sh`, and the preview shows the package path. Contact sheet:
+`docs/live-creator.png` (regenerate it with the ported check).
 
 Evidence and limits: the live model is free to choose a different name,
 structure or description than `creator_build`'s mock script; the check accepts

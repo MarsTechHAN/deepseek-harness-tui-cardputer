@@ -7,7 +7,7 @@
 | API key / DSH token | `~/.dst/config.yml` | file mode `600` |
 | saved sessions | `~/.dst/sessions/` | plain JSON, user-owned |
 | input history | `~/.dst/history` | mode `600`, `/key` never recorded |
-| app and skill packages | `~/.dst/apps`, `~/.dst/skills` | user-owned |
+| skill and app packages (one format) | `~/.dst/skills/` | user-owned; only `skill_save`/`skill_file` write them, path-validated |
 
 Nothing is sent anywhere except the endpoint you configure. There is no
 telemetry, no crash upload and no remote logging. HTTPS is enforced: a plain
@@ -17,9 +17,10 @@ telemetry, no crash upload and no remote logging. HTTPS is enforced: a plain
 
 Every tool call passes the permission gate described in
 `docs/ARCHITECTURE.md`. In the default `auto` mode, system changes are refused
-outright and ambiguous calls are judged by a short model call. Creator-mode app
-launches get ulimits, a timeout, a scrubbed environment and a working directory
-inside the package.
+outright and ambiguous calls are judged by a short model call. Creator-mode
+package writing stays inside `~/.dst/skills/<name>/` (the tools validate every
+path), and app launches get ulimits, a timeout, a scrubbed environment and a
+working directory inside the package.
 
 ## Reporting a vulnerability
 

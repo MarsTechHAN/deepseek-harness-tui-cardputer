@@ -18,11 +18,13 @@ asserted in code.
 | Chat | live thinking, streaming tail, steer marker, injected context | fixed: reasoning wraps at word boundaries; model-facing context (repeat reminders, goal wrap-up) is a one-line marker instead of a dumped paragraph, so the answer stays on screen |
 | Compaction | automatic + manual compact, notices | fixed: `compacted: 1.3K -> 1.2K tokens` keeps one decimal for four-digit counts (instead of a meaningless `1K -> 1K`); a stale `compacting N messages` live row no longer stays on screen after the compaction finishes |
 | Artifact | full-screen panel, scrolled body, save | fixed: the saved-path notice no longer gets cut mid-word (short, whole-word `~/.dst/tmp/<name>.txt` name and the notice replaces the key hints); `artifact_scroll` scenario covers PgDn/search/save |
-| Tools | pending card, result row, CtrlO list, artifact viewer | fixed: the result preview is one ellipsised row (long errors used to be cut mid-word); full text stays in CtrlO. Failed calls carry an ASCII `x` marker in the CtrlO list because rows cannot be coloured individually (`tool_log_multi` scenario) |
+| Tools | expanded call card, result row, CtrlO list (also during a turn), artifact viewer | fixed: a call card now expands the call's arguments while it runs — indented, folded to the panel width, capped at five rows with `… more: CtrlO` — and the settled row is a one-line `└ N.Ns ok`/`x` plus an ellipsised `↳` preview; the full args and result stay in CtrlO, which opens over the live transcript during a turn. Failed calls carry an ASCII `x` marker in the CtrlO list because rows cannot be coloured individually (`tool_log_multi` scenario) |
+| Progress row | `state_report` pinned top line | ok: one short line in bright magenta with a `»` icon owns the top row while a turn runs; a newer report replaces it, the line joins the transcript when the next row appears, and a report over 50 display cells (CJK counts as 2) is rejected, so the 53-cell row can never wrap |
+| Paging & interrupts | transcript/list paging, Esc and Tab during a turn | ok: `PgUp`/`PgDn` move the transcript by a screenful with the scroll clamped at both ends, and are replayed as a screenful of arrows in list menus; `Up`/`Down` recall history on an empty prompt; `Esc` stops the whole turn at once and typed text becomes the next message; `Tab` during a turn interrupts, starts the microphone immediately, then sends the transcript when `auto_send_voice` is on (or leaves it in the prompt when off) |
 | Permissions | strict approval (bash + edit diff) | fixed: `-`/`+` diff lines are coloured red/green; human summary, keys |
 | Usage | `/usage` report | fixed: the report heading was duplicated (one extra row, now one `usage · N requests` header with a localized request count); labels localize in all six languages (`usage_zh` scenario) |
 | Commands | palette, help menu, previews, 1/N position | fixed: `/help` dropped a redundant footer row (8 commands visible, was 7) and its hint now reads `Enter run/complete`. Palette name matches rank above description matches, and an exactly typed command wins over the highlighted row: in Chinese `/resume` also fuzzy-matched `/rename` (whose description mentions `/resume`) and Enter used to complete `/rename` instead of running `/resume` |
-| Config | all 15 rows, numeric prompts, model/judge/edit, extensions | fixed: the third-party capability footer fits 53 cells in all six languages instead of being cut mid-word; menu values keep a 2-cell gap |
+| Config | all 16 rows, numeric prompts, model/judge/edit, extensions | fixed: the third-party capability footer fits 53 cells in all six languages instead of being cut mid-word; menu values keep a 2-cell gap |
 | Sessions | resume list/search/expanded/resumed, rewind list/preview | fixed: resume hint shortened so it no longer truncates. Chinese preview labels verified (`resume_preview_zh`): `标题/模型/轮次/最近`, counts and colon spacing |
 | Background | task list (all/running/watchers), save, full output | fixed: the footer hint fits 53 cells in all six languages (it was cut to `f…`); long commands are ellipsised instead of bare-cut; filter titles and full-width rows |
 | Queue | CtrlQ editor, delete, pull back into prompt | fixed: long queued messages are ellipsised instead of cut mid-word (`queue_edit` now queues a 110-char message) |
@@ -30,16 +32,13 @@ asserted in code.
 | Login | `/login` menu, direct typing prompts, WeChat QR screen | fixed: choice menus say `select · Enter choose · Esc back` instead of the config-editor wording; three paths, numbered guide left + QR right, live scanned/finishing status, QR validity countdown, `r retry` after repeated failures |
 | Login QA | phone page states, i18n, QR scanability | ok: six-language page, countdown/expired/retry/cancel, QR decodes with jsQR (`https://open.weixin.qq.com/connect/confirm?...`), cancel aborts the flow |
 | Empty states | `/goal` with no goal, CtrlO with no output, `/resume` with no sessions | ok: each shows a localized one-liner and the app stays usable (`empty_states_zh`) |
-| Creator mode | `/config` Mode row, idle hint (count + failing apps), saved-app/skill notice, unsaved-work nudge | ok: the mode is switched in `/config` (never silently) and announced in the transcript; it is visible while idle (`creator · /apps · hold Esc`), the config row shows `normal/creator`, a saved app is announced as `saved app system/battery_viewer`, and a turn that wrote files without an app gets a localized one-line nudge (`creator_mode`, `creator_build`, `creator_skill`, `creator_nudge`) |
-| Apps | `/apps` launcher (counts, + new app), search, annotation panel, run, delete, doc/prompt/binary apps | ok: full-width menu with the app count (`Apps · 2`), `/` search mode filters live (`Apps · 1/2`), Right opens a scrollable annotation panel (metadata: path/kind/entry/updated/files + APP.md), Enter runs full-screen for `sh`/`python`/`binary` (doc opens the panel; prompt apps are previewed in the panel first — Enter sends, Esc cancels — then submitted as the next turn marked `> prompt app <name>`) and the menu returns afterwards, `x` asks `delete <name>? y/n`; the last delete returns the localized empty state (`creator_apps_run`, `creator_apps_zh`, `creator_kinds`) |
-| Bounded runtime | app launch environment and limits | ok: `/bin/sh` wrapper enforces ulimit (no core dumps, CPU/file caps), cwd and `$DST_APP_STATE` are inside the package, HOME/TMPDIR are `state/home`/`state/tmp`, and dst's credentials are not inherited (a probe env var does not leak); the prompt contract states the same rules (`creator_run_args`) |
-| App self-test | model `app_test` headless/tty runs, run history | ok: captured stdout/stderr/argv/stdin and exit codes (0 and 3), `tty=true` gives the app a real pty (`[ -t ]`, COLUMNS/LINES, streamed stdin, transport named in the result), tool cards stay one row, the chat screen is untouched, full log written under `~/.dst/tmp` and readable by the model; the annotation panel shows `last test: exit 3` / `last run: timeout 2s`, history survives manifest updates, and a failed run is flagged in the model's app catalog (`creator_app_test`, `creator_run`); the launcher title counts apps, failing apps and skills, rows are ordered by
-most recent use with the time in the value column (version, default args and declared requirements shown in the panel), `i`
-pre-fills an improvement request, apps with missing requirements are refused
-before they run, failing apps counted in the idle hint, and `l` replays an app's recorded output (`capture: true`); `app_export` packs the package, `app_import` validates and restores an archive (refusing paths outside `~/.dst/tmp`, keeping file modes), and the list row carries a `!` health flag for failing apps (`creator_build`, `creator_app_test`, `creator_tty_test`, `creator_import`, `creator_capture`) |
-| Model-written skills | `skill_save` / `skill_file`, catalog refresh, `/extensions` badge + delete | ok: SKILL.md with frontmatter + body (`origin: model`) written under `~/.dst/skills/<name>/`, announced as `saved skill …`, present in the next turn's SKILLS catalog (loaded with the `skill` tool); `/extensions` marks it `[model]`, `→` opens the full SKILL.md body in the viewer, the `skill` tool loads it in the same turn it was written (disk fallback), updates bump the version and keep `.history/vN.md`, `skill_rollback` restores an earlier body as a new version, and `d` deletes only the selected user-owned package after y/n, dropping it from the next catalog (`creator_skill`) |
-| Screen takeover | model `app_run`, app drawing, time limit, long-press Esc | ok: the panel belongs to the app while it runs (`charge 87%`), the TUI repaints when it returns, tool card reports ran/exited/stopped; long-press Esc is platform-enforced and trailing key repeats are swallowed so the turn is not cancelled (`creator_run`, `creator_run_esc`) |
-| Prompt/catalog | creator system prompt and installed-app catalog | ok: the prompt gains the CREATOR block and a skills-style `INSTALLED APPS` list each turn; after `app_save` the next turn's system message contains the new app, and the post-tool context tells the model to write the program (`creator_build` asserts on the captured requests) |
+| Creator mode | `/config` Mode row, idle hint (count + broken packages), saved-package notices, unsaved-work nudge | ok: the mode is switched in `/config` (never silently) and announced in the transcript (`creator mode on · apps: ~/.dst/skills (N installed)`); it is visible while idle (`creator · /apps · hold Esc`), the config row shows `normal/creator`, a save is announced as `saved skill <name> vN` and/or `saved app <name> (runnable skill)`, and a turn that wrote files without saving a package gets a localized one-line nudge (`creator_mode`, `creator_build`, `creator_skill`, `creator_nudge`) |
+| Apps | `/apps` launcher (counts, `+ new app`, `i fix`), search, detail panel, run, log replay, delete, prompt/doc/binary kinds | ok: full-width menu with the runnable-package count and the skill-catalog count (`Apps · 2 · skills 3`), rows ordered by last use with the title left and `kind`/`!`/`HH:MM` right, `/` search filters live (`Apps · 1/2`), `→` opens a scrollable panel (path/kind/entry/version/updated/args/requires/last run/test/files + the `SKILL.md` body), Enter runs `sh`/`python`/`binary` full-screen (doc opens the panel; a prompt app is previewed first — Enter sends, Esc cancels — then submitted as the next turn marked `> prompt app <name>`), `l` replays `state/last-run.log`, `x` asks `delete <name>? y/n`, `+ new app` pre-fills `Build an app: ` and `i` pre-fills `Improve the app <name>: `; the menu returns after a run (`creator_apps_run`, `creator_apps_zh`, `creator_kinds`) |
+| Bounded runtime | app launch environment and limits | ok: `/bin/sh` wrapper enforces ulimit (no core dumps, CPU/file caps), cwd and `$DST_APP_STATE` are inside the skill package, HOME/TMPDIR are `state/home`/`state/tmp`, and dst's credentials are not inherited (a probe env var does not leak); the prompt contract states the same rules (`creator_run_args`) |
+| App self-test | model `app_test` headless/tty runs, run history in `meta.json` | ok: captured stdout/stderr/argv/stdin and exit codes (0 and 3), `tty=true` gives the app a real pty (`[ -t ]`, COLUMNS/LINES, line-normalised stdin, transport named in the result), the chat screen is untouched, the full log is written under `~/.dst/tmp/app-test-<name>.log` and readable by the model; `last_test` lands in the package's `meta.json`, the `/apps` panel shows `last test: exit 3 · HH:MM`, and the failure becomes ` (!last test: exit 3)` on the catalog line and `!` on the launcher row (`creator_app_test`, `creator_tty_test`); `requires` is preflighted before every run/test, and `l` replays an app's recorded output when `capture: true` (`creator_requires`, `creator_capture`) |
+| Skill packages | `skill_save` / `skill_file` / `skill_rollback`, catalog refresh, `/extensions` tags | ok: `SKILL.md` with frontmatter + body (`origin: model`) under `~/.dst/skills/<name>/`, announced as `saved skill <name> vN`, present in the next turn's shared `SKILLS` catalog and loadable with the `skill` tool (disk fallback in the same turn); updates bump the version and keep `.history/vN.md`, `skill_rollback` restores an earlier body as a new version, and writing `meta.json` through `skill_file` turns the package into a runnable app announced as `saved app <name> (runnable skill)`; `/extensions` tags model-written packages `[model]` and runnable ones `[app]`, `→` opens the full `SKILL.md` body, the `skill` tool loads it in the same turn it was written, and `d` deletes only the selected user-owned package after y/n, dropping it from the next catalog (`creator_skill`) |
+| Screen takeover | model `app_run`, app drawing, time limit, long-press Esc | ok: the panel belongs to the app while it runs (`charge 87%`), the TUI repaints when it returns, the tool card reports ran/exited/stopped and the run stamp lands in `meta.json`; long-press Esc is platform-enforced and trailing key repeats are swallowed so the turn is not cancelled (`creator_run`, `creator_run_esc`) |
+| Prompt/catalog | creator system prompt, shared skill catalog, default answer language | ok: creator mode appends the `CREATOR MODE` block (one unit, `meta.json`, tools, contract); the prompt's `SKILLS` catalog is the single list of packages, with runnable lines carrying `[kind:entry]`, `(vN)` from v2 and a health suffix — there is no second `INSTALLED APPS` list; after `skill_save`/`skill_file` the next turn's system message contains the new package (asserted on the captured request log). Every prompt now carries a `LANGUAGE` block that pins the UI language as the default answer language, with the user's request overriding |
 | Errors | provider 401 (bad key), 429 (rate limit) + automatic retry | fixed: one red `request failed: …` line, a highlighted yellow `→` recovery hint (`/key`, `/login`, `/model`), localized in all six languages; textual rate limits are retried like HTTP 429; the next prompt works normally |
 | Goal status | `/goal` report, badge, commands | fixed: report rows and the bottom-right badge are localized; the command list sits on its own row instead of wrapping its last command |
 | Sessions | resume preview metadata | fixed: title/model/turns/recent labels are localized |
@@ -94,13 +93,30 @@ before they run, failing apps counted in the idle hint, and `l` replays an app's
 - long queue entries (and job commands) are ellipsised instead of hard-cut
 - localized empty states for `/goal`, CtrlO and `/resume` covered by
   `empty_states_zh`
-- creator mode: persistent app packages (`app.json` + `APP.md` + program) under
-  `~/.dst/apps`, a skills-style catalog injected into the prompt each turn, and
-  `/apps` to browse/preview/run/delete them; a saved-app notice and an
-  unsaved-work nudge keep the "work is persisted" promise visible
-- screen takeover: `app_run` spawns the app on the panel, forwards the keyboard
-  over a pipe, enforces long-press Esc (trailing repeats swallowed) and time
-  limits, then repaints the TUI; the app never traps the user
+- creator mode: one skill package under `~/.dst/skills/<name>/` (`SKILL.md` +
+  support files); a package that also has `meta.json` is a runnable app. The
+  shared `SKILLS` catalog marks `[kind:entry]`, `(vN)` and the last failed
+  run/test; `skill_save`/`skill_file` write and version the package, and
+  `/apps` lists/reads/runs/deletes runnable packages. Saved-skill/saved-app
+  notices and the unsaved-work nudge keep the "work is persisted" promise
+  visible. The old `~/.dst/apps` + `app.json`/`APP.md` model and its `app_*`
+  tools are gone; there is no auto-migration (there were no packages on the
+  shipped device)
+- screen takeover: `app_run` spawns the package entry on the panel, forwards the
+  keyboard over a pipe, enforces long-press Esc (trailing repeats swallowed) and
+  time limits, then repaints the TUI; the app never traps the user
+- progress row: `state_report` pins one short line to the top row in bright
+  magenta (`»`) while the turn runs, replaces it on a newer report, commits it to
+  the transcript when the next line appears, and rejects anything over 50
+  display cells so it cannot wrap the 53-cell panel
+- tool cards: the call card expands the call's arguments while it runs (folded,
+  five-row cap, `… more: CtrlO`); CtrlO opens during a turn and keeps the full
+  args + result, with failed entries marked `x`
+- turn-time keys: `PgUp`/`PgDn` page the transcript and list menus with the
+  scroll clamped; `Esc` stops the whole turn at once (typed text becomes the
+  next message); `Tab` during a turn interrupts, starts recording immediately,
+  then sends the transcript or leaves it in the prompt; the prompt pins the UI
+  language as the default answer language
 - the mode is visible everywhere it matters: `/config` Mode row, creator idle
   hint, transcript notice on switch; there is deliberately no `/creator`
   command (too easy to hit by accident for a whole-contract switch)
@@ -118,12 +134,14 @@ before they run, failing apps counted in the idle hint, and `l` replays an app's
 ## Verification entry points
 
 - `python3 tools/sim/run_all.py` — demo, all simulator scenarios (including the
-  six `creator_*` ones), login page i18n, login cancel, QR scanability,
+  `creator_*` ones), login page i18n, login cancel, QR scanability,
   six-language login layout, long memory session.
 - `python3 tools/sim/run_live.py` — common-usage walkthrough against the real
   local vLLM endpoint (only TTS/ASR mocked) with a 12-screen contact sheet.
 - `python3 tools/sim/live_creator_check.py` — creator mode with the real model:
-  it must save a package and `/apps` must show it (`docs/live-creator.png`).
+  it must save a runnable skill package (`SKILL.md` + `meta.json` + entry) and
+  `/apps` must show it (`docs/live-creator.png`; the committed contact sheet was
+  captured before the skill-package refactor — regenerate it in the next pass).
 - `dst --dsh-login-test` — runs the real nine-step login against
   `tools/sim/mock_login.py` (or the live platform with no mock env).
 - `dst --qr-ppm <jpeg> <out.ppm>` + `node tools/sim/qr_scan.js` — decodes the
@@ -147,11 +165,18 @@ before they run, failing apps counted in the idle hint, and `l` replays an app's
   styled: the transcript stores one colour per row, so bold/inline-code would
   need embedded SGR handling in the wrapper. Headings, lists and fenced code
   blocks are styled by row kind and verified against a real vLLM answer.
-- Creator-mode limits by design: apps are shell/python scripts or documents
-  (no on-device compilation, no services, no GUI toolkit), `app_run` captures no
-  output (the screen belongs to the app while it runs) and only works in the
-  interactive TUI; app packages live under `~/.dst/apps` and are not sandboxed
-  beyond the tool's own path validation.
+- Creator-mode limits by design: runnable packages are shell/python/binary
+  programs, prompt apps or documents (no on-device compilation, no services, no
+  GUI toolkit); `app_run` captures no output unless the package sets
+  `capture: true` (the screen belongs to the app while it runs) and only works in
+  the interactive TUI. Packages are skill directories under `~/.dst/skills/`;
+  `skill_save`/`skill_file` validate paths and cap sizes, but a running app is
+  bounded by the launch contract (ulimits, scrubbed environment, cwd/state in the
+  package), not by a filesystem sandbox.
+- The committed creator-mode live screenshot predates the skill-package
+  refactor; regenerate it in the next live pass. The screens the refactor
+  touched (pinned progress row, expanded tool cards, `/apps` rows and detail
+  panel) need a fresh visual pass with that run.
 - Hardware-only checks (physical keyboard/audio/reset double-press, boot time,
   TTS playback interruption, long-press Esc key repeat rate) remain for the
   device regression run.

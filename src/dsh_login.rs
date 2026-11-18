@@ -684,7 +684,17 @@ pub fn run(
 
 /// Verify a DSH token with one tiny completion call.
 pub fn verify_token(token: &str) -> Result<String, String> {
-    let body = "{\"model\":\"deepseek-flash\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with OK.\"}],\"max_tokens\":8}";
+    verify_token_for(token, "deepseek-flash")
+}
+
+/// Verify a token with a real (tiny) completion against the login platform's
+/// chat endpoint, using the model the user configured: a credential is only
+/// usable together with a model the endpoint accepts.
+pub fn verify_token_for(token: &str, model: &str) -> Result<String, String> {
+    let body = format!(
+        "{{\"model\":\"{}\",\"messages\":[{{\"role\":\"user\",\"content\":\"Reply with OK.\"}}],\"max_tokens\":8}}",
+        model.replace('"', "")
+    );
     let r = http(
         "POST",
         &format!("{}/chat/completions", api_base()),
@@ -693,7 +703,7 @@ pub fn verify_token(token: &str) -> Result<String, String> {
             ("user-agent", "dst/0.1"),
             ("x-dsh-auth-token", token),
         ],
-        Some(body),
+        Some(&body),
     )?;
     if r.status >= 400 {
         return Err(format!("verify failed: {}", r.describe()));

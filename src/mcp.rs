@@ -18,7 +18,7 @@
 
 use crate::json::{parse, J};
 use std::io::{BufRead, BufReader, Write};
-use std::process::{ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -34,6 +34,9 @@ struct Server {
     stdin: ChildStdin,
     rx: Receiver<String>,
     next_id: u64,
+    /// Kept so dst can kill and reap the server on exit: a dropped `Child` is
+    /// not waited for, and MCP servers (npx/node) would outlive dst otherwise.
+    child: Option<Child>,
 }
 
 pub struct Manager {
@@ -45,10 +48,16 @@ const PROTOCOL: &str = "2024-11-05";
 
 fn log(line: &str) {
     use std::io::Write as _;
+    let path = crate::config::log_dir().join("mcp.log");
+    if let Ok(m) = std::fs::metadata(&path) {
+        if m.len() > 256 * 1024 {
+            let _ = std::fs::rename(&path, path.with_extension("log.1"));
+        }
+    }
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(crate::config::log_dir().join("mcp.log"))
+        .open(&path)
     {
         let _ = writeln!(f, "{line}");
     }
@@ -129,6 +138,14 @@ fn spawn_server(name: &str, cfg: &J) -> Result<Server, String> {
         for line in r.lines() {
             match line {
                 Ok(l) => {
+                    // A server can print a single huge JSON line; keep the
+                    // reader channel bounded instead of buffering it whole.
+                    let l = if l.len() > 512 * 1024 {
+                        let cut: String = l.chars().take(512 * 1024).collect();
+                        format!("{cut} [truncated]")
+                    } else {
+                        l
+                    };
                     if tx.send(l).is_err() {
                         break;
                     }
@@ -143,6 +160,7 @@ fn spawn_server(name: &str, cfg: &J) -> Result<Server, String> {
         stdin,
         rx,
         next_id: 1,
+        child: Some(child),
     };
 
     // initialize
@@ -245,6 +263,16 @@ pub fn start_all() -> Manager {
 }
 
 impl Manager {
+    fn shutdown(&mut self) {
+        for srv in &mut self.servers {
+            if let Some(mut child) = srv.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+        self.servers.clear();
+    }
+
     /// Call `mcp__<server>__<tool>` with a JSON argument object.
     pub fn call(&mut self, full_name: &str, args: &J) -> Result<J, String> {
         let rest = full_name.strip_prefix("mcp__").ok_or("not an mcp tool")?;
@@ -298,6 +326,26 @@ impl Manager {
 }
 
 static MANAGER: Mutex<Option<Manager>> = Mutex::new(None);
+
+/// Kill and reap every MCP server. Called on exit (and through the drop guard
+/// below, so a diagnostics run such as `--tools` cannot orphan them either).
+pub fn shutdown() {
+    let mut mgr = match MANAGER.lock() {
+        Ok(mut g) => g.take(),
+        Err(_) => return,
+    };
+    if let Some(m) = mgr.as_mut() {
+        m.shutdown();
+    }
+}
+
+/// Drops with `main`, so every return path kills the servers it started.
+pub struct ShutdownOnDrop;
+impl Drop for ShutdownOnDrop {
+    fn drop(&mut self) {
+        shutdown();
+    }
+}
 
 /// Install the started manager (called once from `main`).
 pub fn install(mgr: Manager) {

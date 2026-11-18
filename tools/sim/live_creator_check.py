@@ -3,8 +3,8 @@
 
 The scripted scenarios (`run_scenarios.py creator_*`) prove the mechanics with a
 mock model; this pass proves that a **real model** can actually use creator mode:
-it asks for a battery app, waits for the model to call `app_save`/`app_file`,
-then opens `/apps`, shows the annotation preview and checks the package on disk.
+it asks for a battery app, waits for the model to call `skill_save`/`skill_file`,
+then opens `/apps`, shows the package preview and checks the skill package on disk.
 
 It is a *directed* live check: the prompt names the creator tools and says not to
 run the app, because the host is a Mac (no /sys battery) and because the point
@@ -40,7 +40,8 @@ DEFAULT_DOC = os.path.join(rl.ROOT, "docs", "live-creator.png")
 
 PROMPT = ("在设备上做一个查看电池电量的 app：读取 "
           "/sys/class/power_supply/BAT0/capacity 显示电量和充电状态。"
-          "用 app_save 和 app_file 把它保存成 app，告诉我 app 名字，不要运行它。")
+          "用 skill_save 和 skill_file 把它做成一个可运行的 skill 包"
+          "（写入 meta.json 让它成为 app），告诉我 app 名字，不要运行它。")
 
 
 def write_home(home, base, model, effort, language="zh"):
@@ -152,29 +153,36 @@ def main(argv):
     built = texts.get("02_built", "")
     apps = texts.get("03_apps", "")
     preview = texts.get("04_preview", "")
-    apps_dir = os.path.join(home, ".dst", "apps")
+    skills_dir = os.path.join(home, ".dst", "skills")
     packages = []
-    for root, _dirs, files in os.walk(apps_dir):
-        if "app.json" in files:
+    for root, _dirs, files in os.walk(skills_dir):
+        if "meta.json" in files:
             packages.append(root)
     hard = []
     if "saved app" not in built and "已保存应用" not in built:
         hard.append("the transcript never showed a saved app (saved-app notice)")
     if not packages:
-        hard.append("no app package under ~/.dst/apps")
+        hard.append("no runnable package (skill folder with meta.json) under ~/.dst/skills")
     for pkg in packages:
-        for name in ("app.json", "APP.md", "run.sh"):
+        for name in ("SKILL.md", "meta.json"):
             if not os.path.exists(os.path.join(pkg, name)):
                 hard.append(f"{pkg.replace(home, '~')} is missing {name}")
+        try:
+            meta = json.load(open(os.path.join(pkg, "meta.json"), encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            meta = {}
+        entry = meta.get("entry") or ""
+        if entry and not os.path.exists(os.path.join(pkg, entry)):
+            hard.append(f"{pkg.replace(home, '~')} is missing its entry file {entry}")
     if "应用" not in apps and "Apps" not in apps:
         hard.append("/apps did not render its title")
-    if not re.search(r"(路径|path):\s*~/\.dst/apps/", preview):
+    if not re.search(r"(路径|path):\s*~/\.dst/skills/", preview):
         hard.append("/apps preview did not show the package path")
 
     if packages:
         rl.log(f"app package: {packages[0].replace(home, '~')}")
     for pkg in packages:
-        manifest = os.path.join(pkg, "app.json")
+        manifest = os.path.join(pkg, "meta.json")
         if os.path.exists(manifest):
             rl.log("manifest: " + open(manifest, encoding="utf-8").read().strip()[:200])
     if args.doc:

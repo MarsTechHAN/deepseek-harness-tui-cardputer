@@ -7,7 +7,7 @@
 //! A job's prompt is run as a normal harness turn (same tool-call loop), while
 //! the TUI is idle.  `last` is the last minute stamp (cron) or mtime (watch).
 
-use crate::api::{chat_stream, Cfg};
+use crate::api::Cfg;
 use crate::json::{parse, J};
 use crate::tools;
 use std::cell::RefCell;
@@ -180,16 +180,81 @@ pub fn tool_exec(action: &str, kind: &str, spec: &str, prompt: &str) -> String {
 
 // ------------------------------------------------------------- scheduler
 
-fn run_prompt(cfg: &Cfg, tdefs: &J, msgs: &Msgs, scr: &mut crate::Scr, prompt: &str, tag: &str) {
+/// Compact settings for scheduler turns, installed by main from the live
+/// config. Cron/watcher turns write into the shared history unattended, so
+/// they must respect the same compaction limit as a human turn or the history
+/// grows with wall-clock time.
+static COMPACT: std::sync::Mutex<Option<crate::compact::Settings>> = std::sync::Mutex::new(None);
+
+pub fn set_compact_settings(s: crate::compact::Settings) {
+    if let Ok(mut g) = COMPACT.lock() {
+        *g = Some(s);
+    }
+}
+
+/// Minimal `Ui` for compaction/messages started outside the TUI pump.
+struct CronUi;
+impl crate::harness::Ui for CronUi {
+    fn on(&mut self, _ev: crate::harness::Ev) {}
+    fn pump(&mut self) -> crate::harness::Action {
+        crate::harness::Action::Continue
+    }
+    fn confirm(&mut self, _request: &crate::sandbox::Approval) -> bool {
+        false
+    }
+}
+
+/// Hard ceiling independent of token accounting: if compaction is disabled or
+/// cannot shrink the history, dropping the oldest tail keeps the process
+/// bounded instead of growing until the device OOMs.
+const MAX_CRON_MESSAGES: usize = 600;
+
+fn trim_history(msgs: &mut Vec<J>) {
+    if msgs.len() <= MAX_CRON_MESSAGES {
+        return;
+    }
+    let drop = msgs.len() - MAX_CRON_MESSAGES;
+    // Keep the system prompt; never start the tail with an orphan tool result.
+    let mut cut = 1 + drop;
+    while cut < msgs.len()
+        && msgs
+            .get(cut)
+            .and_then(|m| m.get("role"))
+            .and_then(|r| r.as_str())
+            == Some("tool")
+    {
+        cut += 1;
+    }
+    msgs.drain(1..cut.min(msgs.len()));
+}
+
+fn run_prompt(
+    cfg: &Cfg,
+    tdefs: &J,
+    msgs: &Msgs,
+    scr: &mut crate::Scr,
+    prompt: &str,
+    tag: &str,
+    window: u64,
+) {
     scr.push(&format!("⟳ {tag}: {prompt}"), crate::K_TOOL);
     msgs.borrow_mut().push(J::o(vec![
         ("role", J::s("user")),
         ("content", J::s(prompt)),
     ]));
+    let compact = COMPACT.lock().ok().and_then(|g| g.clone());
     for _ in 0..6 {
-        let snapshot = J::Arr(msgs.borrow().clone());
+        {
+            let mut m = msgs.borrow_mut();
+            if let Some(set) = &compact {
+                let mut ui = CronUi;
+                let _ = crate::compact::maybe_compact(cfg, set, &mut m, window, tdefs, &mut ui);
+            }
+            trim_history(&mut m);
+        }
+        let snapshot = crate::harness::serialize_msgs(&msgs.borrow());
         let mut acc = String::new();
-        let r = chat_stream(cfg, &snapshot, tdefs, |d| acc.push_str(d));
+        let r = crate::api::chat_stream_json(cfg, &snapshot, tdefs, |d| acc.push_str(d));
         match r {
             Ok(out) => {
                 if !acc.trim().is_empty() {
@@ -249,6 +314,7 @@ fn short(s: &str, n: usize) -> String {
 
 /// Called from the TUI idle loop. Fires at most one due job per call.
 pub fn poll(cfg: &Cfg, tdefs: &J, msgs: &Msgs, scr: &mut crate::Scr) {
+    let window = scr.ctx_window;
     let mut jobs = load();
     if jobs.is_empty() {
         return;
@@ -286,5 +352,5 @@ pub fn poll(cfg: &Cfg, tdefs: &J, msgs: &Msgs, scr: &mut crate::Scr) {
     }
     save(&jobs);
     let tag = if kind == "cron" { "cron" } else { "watch" };
-    run_prompt(cfg, tdefs, msgs, scr, &prompt, &format!("{tag} {spec}"));
+    run_prompt(cfg, tdefs, msgs, scr, &prompt, &format!("{tag} {spec}"), window);
 }

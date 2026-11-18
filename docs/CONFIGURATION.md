@@ -34,6 +34,7 @@ voice:
 tui:
   queued_default: true        # typing during a turn queues instead of interrupting
   auto_send_voice: true       # send the ASR transcript when the key is released
+  hw_survey_done: false       # first run offered the hardware-info scan
   language: en                # en | zh | es | ja | de | it
   mode: normal                # normal | creator
 
@@ -108,6 +109,7 @@ Setting `key` clears `dsh_token`, so the newer credential is never shadowed.
 | `tui.language` | `en` | UI language: `en`, `zh`, `es`, `ja`, `de`, `it` |
 | `tui.mode` | `normal` | `normal` or `creator` (see `docs/CREATOR.md`) |
 | `tui.tips_shown` | `false` | one-time first-run tips already shown |
+| `tui.hw_survey_done` | `false` | first run offered to scan the hardware into the `hardware-info` skill (set once, either answer) |
 | `voice.tts_voice` | `stella` | `stella` or `tide` |
 
 ### Budgets
@@ -163,15 +165,14 @@ insert:
   config.yml     settings + credential (mode 600)
   sessions/      resumable conversation logs (<timestamp>.json, title inside)
   checkpoints/   turn checkpoints for /rewind
-  skills/        skill packages (<name>/SKILL.md and .history/vN.md)
-  apps/          creator-mode packages (<category>/<name>/{app.json,APP.md,...})
+  skills/        skill packages: <name>/SKILL.md, optional meta.json, .history/vN.md
   mcp.json       MCP server definitions
   jobs.json      cron and file-watch jobs
   usage.json     cumulative token totals for /usage
   history        input history (mode 600)
   cache/         transient audio and scratch files
   logs/          voice.log, mcp.log
-  tmp/           per-run temporary files and exported app archives
+  tmp/           per-run temporary files, app_test logs, saved tool output
 ```
 
 ## Endpoint capabilities
@@ -203,4 +204,23 @@ device:
 | `DST_MOCK_TTS_MS` | fake TTS playback duration |
 | `DST_BIN` | binary under test for `tools/sim` |
 | `DST_LIVE_BASE`, `DST_LIVE_MODEL` | endpoint for `tools/sim/run_live.py` |
-| `DST_SSH_KEY`, `DST_SSH_PASSWORD` | auth for `tools/deploy/deploy.sh` |
+
+## Deployment variables (host side)
+
+`tools/deploy/deploy.sh` cross-compiles on the host and pushes the binary over
+SSH; nothing is built on the device (a release build on the 446 MB box gets
+OOM-killed).
+
+| variable | default | meaning |
+| --- | --- | --- |
+| `DST_SSH_KEY` | empty | SSH private key (`IdentitiesOnly`) |
+| `DST_SSH_PASSWORD` | empty | password auth via `sshpass`; also piped to remote `sudo -S` |
+| `DST_BUILD_ONLY=1` | `0` | cross-compile + verify the ELF, never SSH (same as `--build-only`) |
+| `DST_NO_RESTART=1` | `0` | install the binary but leave `cpzterm.service` running (same as `--no-restart`) |
+| `DST_CARGO_TARGET_DIR` | `/tmp/aarch64-zbuild` | cargo target dir for the cross build |
+| `DST_ZIG_CC` | `/tmp/zigcc/zig-cc` | zig linker wrapper for `aarch64-unknown-linux-gnu` |
+| `DST_JOBS` | `1` | cargo jobs (LTO + one codegen unit is serial anyway) |
+| `DST_REMOTE_TMP` | `/tmp/dst.new` | upload path on the device |
+| `DST_REMOTE_BIN` | `/usr/local/bin/dst` | install path on the device |
+| `DST_SERVICE` | `cpzterm.service` | systemd unit restarted after install |
+| `DST_RESTART_WAIT` | `10` | seconds to wait for the unit to become active |

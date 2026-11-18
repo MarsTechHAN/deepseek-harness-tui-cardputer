@@ -15,7 +15,7 @@ zero-dependency Rust binary, on a 320×170 handheld.**
 <img src="https://img.shields.io/badge/binary-1.0%20MB-2ea043?style=flat-square" alt="1 MB binary">
 <img src="https://img.shields.io/badge/panel-320%C3%97170%20%C2%B7%2053%C3%9712%20cells-22d3ee?style=flat-square" alt="320x170 panel, 53x12 cells">
 <img src="https://img.shields.io/badge/UI%20languages-6-8b5cf6?style=flat-square" alt="6 UI languages">
-<img src="https://img.shields.io/badge/tests-73%20passing-2ea043?style=flat-square" alt="73 unit tests">
+<img src="https://img.shields.io/badge/tests-70%20passing-2ea043?style=flat-square" alt="70 unit tests">
 <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs welcome"></a>
 
 <a href="#quick-start">Quick start</a> ·
@@ -99,7 +99,7 @@ intelligence, and `curl` for the wire.
 <td colspan="2"><a href="docs/live-walkthrough.png"><img src="docs/live-walkthrough.png" alt="Twelve-screen live walkthrough: startup, streaming, reply, tool call, push-to-talk, help, config, resume, login"></a><br><sub><b>Live walkthrough</b> — 12 real screens against a local model: streaming, a folded reasoning line, a tool card, push-to-talk, <code>/help</code>, <code>/config</code>, <code>/resume</code>, <code>/login</code>. Click for full size.</sub></td>
 </tr>
 <tr>
-<td width="50%"><a href="docs/live-creator.png"><img src="docs/live-creator.png" alt="Creator mode: the model writes, saves and runs a battery app"></a><br><sub><b>Creator mode</b> — the model writes an app (<code>battery</code>), saves the package and <code>/apps</code> runs it full-screen.</sub></td>
+<td width="50%"><a href="docs/live-creator.png"><img src="docs/live-creator.png" alt="Creator mode: the model builds a battery readout as a skill package and /apps lists it"></a><br><sub><b>Creator mode</b> — the model builds a battery readout as a skill package (<code>SKILL.md</code> + <code>run.sh</code> + <code>meta.json</code>); <code>/apps</code> lists it and runs it full-screen.</sub></td>
 <td width="50%"><img src="docs/splash.gif" alt="Animated splash: the DeepSeek whale breaches out of a night sea on the device pixel grid"><br><sub><b>Splash</b> — a 14-frame whale breach on the device pixel grid, deterministic so snapshots reproduce.</sub></td>
 </tr>
 <tr>
@@ -133,18 +133,19 @@ intelligence, and `curl` for the wire.
 ### Tools
 
 The model sees 32 tools in normal mode (list yours with `dst --tools`);
-creator mode adds the app and skill tools at the bottom of the table:
+creator mode adds the execution and skill-writing tools at the bottom of the
+table:
 
 | group | tools |
 | --- | --- |
 | shell & files | `bash`, `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep` |
 | web + vision | `search`, `fetch`, `ocr` |
-| orchestration | `artifact`, `speak`, `rename`, `todo_read`, `todo_write`, `skill` |
+| orchestration | `artifact`, `speak`, `rename`, `todo_read`, `todo_write`, `skill`, `state_report` |
 | background | `job_start`, `job_output`, `job_wait`, `job_kill`, `job_list`, `watcher_start`, `watcher_list`, `watcher_stop` |
 | goals | `get_goal`, `create_goal`, `update_goal` |
 | memory | `memory_write`, `memory_read`, `memory_search` |
 | scheduling | `cron`, `watch` |
-| creator mode | `app_save`, `app_file`, `app_run`, `app_test`, `app_export`, `app_import`, `skill_save`, `skill_file`, `skill_rollback` |
+| creator mode | `app_run`, `app_test`, `skill_save`, `skill_file`, `skill_rollback` |
 
 Any MCP server in `~/.dst/mcp.json` adds its tools as `mcp__<server>__<tool>`.
 
@@ -192,15 +193,26 @@ refused.
   argument hint; menus are menuconfig-style with right-aligned values.
 - **Full-screen artifacts** — the model can take over the panel with tables,
   code or checklists; `Esc` dismisses, `PgUp`/`PgDn` scroll.
+- **Pinned progress row** — `state_report` pins one short line to the top row
+  (bright magenta `»`) while a turn runs; a newer report replaces it and the
+  line joins the transcript as history. Reports over 50 display cells are
+  rejected, so the row can never wrap on the 53-cell panel.
+- **Paging** — `PgUp`/`PgDn` page the transcript and list menus by a screenful,
+  with the scroll clamped at the buffer edges; `Up`/`Down` recall input history
+  on an empty prompt.
 - **Sessions** — every turn is saved with a title the model keeps current via
   the `rename` tool; `/resume` previews sessions grouped by directory, `/rewind`
   restores a checkpoint.
 - **Background tasks** — jobs and watchers with a manager (Down on an empty
   prompt), live progress on the status line, and coalesced watcher messages.
-- **Tool output viewer** (`CtrlO`) — recent tool results in a scrollable panel,
-  `s` saves the text under `~/.dst/tmp/`.
-- **Queueing** — typing during a turn queues by default; `Shift+Enter`
-  interrupts and sends; `CtrlQ` edits the queue.
+- **Tool output viewer** (`CtrlO`) — recent tool calls with their expanded
+  arguments and full results in a scrollable panel; it also opens during a turn,
+  Enter shows one call + result, `s` saves the text under `~/.dst/tmp/`.
+- **Queueing and interrupts** — typing during a turn queues by default;
+  `Shift+Enter` steers at the next step; `Esc` stops the whole turn at once and
+  text already typed becomes the next message; `Tab` during a turn interrupts,
+  starts recording immediately and sends the transcript (`auto_send_voice` on)
+  or leaves it in the prompt (off).
 - **Animated splash** — a deterministic whale breach, frame-scheduled rather
   than constant-rate; typing pauses it, the first message ends it, `/clear`
   brings it back.
@@ -208,22 +220,36 @@ refused.
 ### Creator mode
 
 An opt-in mode where `dst` is the device's only program: everything you use is
-something it built and saved.
+something it built and saved. It is skill-centric — one kind of package, and a
+package becomes runnable by adding a manifest.
 
-- Each build becomes a package under `~/.dst/apps/<category>/<name>/` —
-  `app.json` manifest, `APP.md` annotation, entry program, `state/` dir.
-  Kinds: `sh`, `python`, `binary`, `prompt`, `doc`.
-- The model writes apps with `app_save`/`app_file`, verifies them headlessly with
-  `app_test` (piped stdio or a real pty), runs them with `app_run` (full-screen
-  takeover, args, timeout) and packs them with `app_export`/`app_import`.
+- Every build is a **skill package** under `~/.dst/skills/<name>/`: `SKILL.md`
+  (YAML frontmatter `name`/`description` plus instructions) and optional support
+  files. The model writes it with `skill_save`/`skill_file`; `skill_save` is
+  versioned (`.history/vN.md`) and `skill_rollback` restores an earlier body.
+- A package is a **runnable app** when it also has `meta.json`
+  (`title`, `kind` = `sh`|`python`|`binary`|`prompt`|`doc`, `entry`, `requires`,
+  `default_args`, `capture`). The folder is the only registry: the `SKILLS`
+  catalog marks it `[sh:run.sh]` (and ` (!last test: exit 3)` when a run failed),
+  and `dst` writes `last_run`/`last_test` back into the same file.
+- There is no `~/.dst/apps`, no `app.json`/`APP.md`, no separate app catalog and
+  no `app_*` writer. `app_test` (headless, or a real pty with `tty=true`) and
+  `app_run` (full-screen takeover, args, timeout) only execute what the package
+  declares.
 - Launches are bounded: long-press `Esc` always leaves an app, a timeout
-  backstop, ulimits, a scrubbed environment, and cwd/state inside the package.
-- Run and test history lands back in `app.json`, is shown in `/apps` (a `!`
-  marks a failing app) and is surfaced to the model so it fixes what it broke.
-- **Skills** are the other half: `skill_save`/`skill_file` write a versioned
-  `SKILL.md` package with `.history/vN.md` and `skill_rollback`.
+  backstop, ulimits, a scrubbed environment, and cwd/`$DST_APP_STATE` inside the
+  package.
+- `/apps` lists the runnable packages with title, kind, last use and a `!` when
+  broken: Enter runs, `→` reads `SKILL.md`, `l` replays captured output, `i`
+  asks the model to improve it, `x` deletes, `+ new app` seeds a build request,
+  `/` finds. Prompt apps are previewed before they are sent; doc apps open their
+  panel.
+- A turn that saved a package is announced (`saved skill <name>` /
+  `saved app <name> (runnable skill)`); a turn that wrote files without saving
+  one is nudged to persist it.
 
-> Full design: [`docs/CREATOR.md`](docs/CREATOR.md).
+> Full reference — manifest fields, prompt contract, safety and the verification
+> matrix: [`docs/CREATOR.md`](docs/CREATOR.md).
 
 ### Voice
 
@@ -238,8 +264,9 @@ registry and the model is told so.
 `language: en | zh | es | ja | de | it` in the config (switchable in `/config`).
 Every user-visible string is translated — menus, palette previews, approval
 dialogs, onboarding, login pages, job and watcher states. A unit test fails the
-build if any language misses a key. Tool descriptions and the system prompt stay
-English so model behaviour does not change with the UI language.
+build if any language misses a key. Tool descriptions stay English; the system
+prompt adds a short `LANGUAGE` block that pins the UI language as the model's
+default answer language (a user request for another language wins).
 
 ---
 
@@ -250,25 +277,27 @@ English so model behaviour does not change with the UI language.
 | need | why |
 | --- | --- |
 | Linux (Debian 13 on the device) | `fbterm`, `alsa-utils` for the panel and audio |
-| Rust 2021 (dev machine for the simulator) | building `dst` |
+| Rust 2021 on the host | building `dst` and running the simulator (a release build on the 446 MB device OOM-kills it) |
+| `zig` on the host | aarch64 cross-linker for the deploy build (`brew install zig`) |
 | `curl` | every HTTP request (model, web tools, login) |
 | `arecord`/`aplay` (`alsa-utils`) | optional: ASR capture, TTS playback |
 | `qrencode`, `python3` + Pillow | optional: phone-page QR, WeChat QR on the panel |
 
 ### 2. Build
 
-Zero crates, so the build needs no network at all:
+Zero crates, so the build needs no network at all. Build on the host; the device
+never compiles:
 
 ```sh
 git clone git@github.com:MarsTechHAN/deepseek-harness-tui-cardputer.git
 cd deepseek-harness-tui-cardputer
 
-# On the device the 512 MB of RAM cannot survive parallel LTO:
-CARGO_BUILD_JOBS=1 cargo build --release
-install -m755 target/release/dst /usr/local/bin/dst
+cargo build --release        # host build for the simulator and `cargo test`
 ```
 
-Release profile: `opt-level="z"`, LTO, `panic=abort`, `strip` → a ~1 MB binary.
+Release profile: `opt-level="z"`, LTO, `panic=abort`, `strip` → a ~1 MB host
+binary. The device gets a cross-compiled aarch64 build — see
+[Deploying to the device](#deploying-to-the-device).
 
 ### 3. First run
 
@@ -289,12 +318,24 @@ properly, use `/login`:
 Credentials live in `~/.dst/config.yml` (mode `600`). A DSH token is sent as
 `x-dsh-auth-token`; an API key as `Authorization: Bearer`.
 
+A credential is **tested before it is accepted**: a DSH token is checked with one
+tiny completion on the login platform, an API key with `GET /v1/models`. A key
+that cannot answer is rejected and any previous credentials are restored, so a
+half-configured device never looks ready while being unable to chat.
+
+The last first-run step offers to scan the device's hardware into the shipped
+`hardware-info` skill (display, audio, keyboard, battery, network, buses) and
+write the measured state into it. That skill is what later hardware work reads
+first; `/update-hwinfo` re-runs the same scan at any time (and, in creator mode,
+has the model refine the skill afterwards).
+
 ### 4. Talk to it
 
 ```sh
 dst                      # interactive TUI
 dst --once "summarise this repo"        # one turn, prints events
 dst --tools                             # effective tool set + capability decision
+dst --hwinfo-scan                       # run the hardware scan, print the skill summary
 dst --call bash '{"command":"uname -a"}'  # run one tool exactly as the model would
 dst --voice-selftest 3                  # record, report RMS and transcript
 ```
@@ -316,8 +357,9 @@ Commands run locally and are never sent to the model.
 | `/usage` | cache hit rate, tokens in/out, context pressure |
 | `/compact` | summarise older history now |
 | `/goal [show, <objective>, edit, pause, resume, clear]` | long-running objective |
-| `/apps [run <name>]` | browse, run or delete apps the model built |
-| `/extensions` | inspect skills and MCP servers |
+| `/apps [run <name>]` | browse, run or delete the runnable skill packages dst built (menu) |
+| `/update-hwinfo` | rescan this device's hardware and refresh the shipped `hardware-info` skill |
+| `/extensions` | inspect skill packages (runnable ones tagged `[app]`) and MCP servers |
 | `/resume` | pick a previous session (preview on `→`) |
 | `/rewind` | restore a checkpoint from an earlier turn |
 | `/rename <title>` | name the current session |
@@ -326,16 +368,22 @@ Commands run locally and are never sent to the model.
 
 ## Key bindings
 
+The Cardputer Zero has no dedicated arrow or PageUp/PageDown keys: hold the
+sticky `fn` modifier and press `fn`+`F`/`X`/`Z`/`C` for up/down/left/right, and
+`fn`+`L`/`M` for PageUp/PageDown (the terminal receives the standard
+`ESC[5~`/`ESC[6~`, which dst decodes).
+
 | key | action |
 | --- | --- |
 | `Enter` | send |
-| `Shift+Enter` | interrupt the running turn and send immediately |
-| `Esc` | abort the turn (and any playing speech); long-press leaves an app |
-| `Tab` | push-to-talk while held |
+| `Shift+Enter` | steer the running turn at its next step (does not cancel it) |
+| `Esc` | stop the whole turn at once (and any playing speech); typed text becomes the next message; long-press leaves an app |
+| `Tab` | hold to talk; during a turn it interrupts and starts recording immediately |
+| `fn`+`F`/`X`/`Z`/`C` | arrow keys: up / down / left / right |
+| `Up`/`Down` | recall input history on an empty prompt (Down with running jobs opens the task manager); scroll the transcript otherwise |
+| `PgUp`/`PgDn` (`fn`+`L`/`M`) | page the transcript and list menus; `Home`/`End` jump to the ends |
 | `/` | command palette |
-| `Up`/`Down` | input history; on an empty prompt with jobs: the task manager |
-| `PgUp`/`PgDn`, `Home`/`End` | scroll the transcript / jump to top or bottom |
-| `CtrlO` | recent tool output (Enter opens, `s` saves) |
+| `CtrlO` | recent tool output (Enter opens call + result, `s` saves) |
 | `CtrlQ` | edit the queued message |
 | `CtrlA`/`CtrlE`, `CtrlW` | cursor to start/end, delete a word |
 
@@ -398,8 +446,9 @@ values interactively; `/config path` prints the file location.
 | `src/checkpoint.rs` | turn checkpoints for `/rewind` |
 | `src/bg.rs` | background jobs and line watchers |
 | `src/jobs.rs` | cron and file-watch scheduler |
-| `src/skills.rs` | skill catalog and progressive loader |
-| `src/apps.rs` | creator mode: app packages, catalog, screen takeover |
+| `src/skills.rs` | skill packages: catalog, progressive loader, `skill_save`/`skill_file`/`skill_rollback` |
+| `src/apps.rs` | runnable skill packages: `meta.json` loader, `/apps` launcher data, screen takeover |
+| `src/hwinfo.rs` | the shipped `hardware-info` skill: bounded read-only hardware scan, scan-section renderer, seed install |
 | `src/mcp.rs` | MCP stdio client |
 | `src/voice.rs` | TTS/ASR, resampling, WAV framing, recorder |
 | `src/config.rs` | `~/.dst` home and the DSH-dialect YAML config |
@@ -438,24 +487,53 @@ artifacts, sessions across a restart, onboarding, sandbox modes, jobs, watchers,
 searchable resume, push-to-talk with mocked speech, the nine-step WeChat login
 chain, provider failures and recovery, CJK input and the creator-mode scenarios.
 
-Unit tests (host, no network): `cargo test` — 73 tests over the harness, tool
+Unit tests (host, no network): `cargo test` — 70 tests over the harness, tool
 pipeline, compaction budgets, goal state machine, context formatting, config
-round-trip, skills, apps and the i18n catalogue.
+round-trip, skill packages, runnable apps and the i18n catalogue.
 
 ---
 
 ## Deploying to the device
 
-The device boots `cpzterm.service` (`fbterm` + `dst`). The deploy script copies
-sources, builds on the device (single-threaded LTO), installs the binary and
-restarts the service:
+The device boots `cpzterm.service` (`fbterm` + `dst`). Deployment is
+cross-compiled on the host and pushed over SSH — nothing is built on the device,
+because a release build on the 446 MB box gets OOM-killed.
 
 ```sh
-tools/deploy/deploy.sh hanxiao@192.168.43.49
+tools/deploy/deploy.sh                     # default target: hanxiao@192.168.43.49
+tools/deploy/deploy.sh user@host           # another device
+tools/deploy/deploy.sh --build-only        # cross-compile + verify only; no SSH
+tools/deploy/deploy.sh --no-restart        # install, leave cpzterm running
 ```
 
+Host prerequisites (the script detects missing pieces and prints the fix, it
+never installs them): `rustup target add aarch64-unknown-linux-gnu`, `zig` for
+the aarch64 linker (a wrapper at `/tmp/zigcc/zig-cc` is recreated when missing),
+and `sshpass` only when using `DST_SSH_PASSWORD`.
+
+Stages:
+
+1. **host toolchain** — cargo/rustc, the aarch64 Rust target and the zig linker
+   wrapper;
+2. **cross build** — `cargo build --release --target aarch64-unknown-linux-gnu`
+   with `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER` pointing at the zig
+   wrapper (LTO + `codegen-units=1`; `DST_JOBS=1` by default);
+3. **artifact verification** — an aarch64 ELF64 little-endian PIE checked with
+   `file` + `readelf` (ELF header via `od` when binutils is absent), plus size
+   and sha256;
+4. **copy** — `scp` to `/tmp/dst.new`, sha256 compared on the device;
+5. **install** — `sudo install -m755` to `/usr/local/bin/dst`;
+6. **restart** — `systemctl restart cpzterm.service`, poll `is-active` for
+   `DST_RESTART_WAIT` seconds, dump `journalctl -u` if it fails;
+7. **smoke check** — `dst --tools` runs and exits before the TUI, so the panel
+   is never taken over.
+
 `DST_SSH_KEY` selects a key; `DST_SSH_PASSWORD` (needs `sshpass`) uses password
-auth. `tools/deploy/fix-cpzterm-order.sh` repairs an early-boot ordering cycle
+auth and the same password for remote `sudo -S` (passwordless sudo works too).
+Other overrides: `DST_CARGO_TARGET_DIR`, `DST_ZIG_CC`, `DST_JOBS`,
+`DST_REMOTE_TMP`, `DST_REMOTE_BIN`, `DST_SERVICE`, `DST_RESTART_WAIT`;
+`DST_BUILD_ONLY=1` / `DST_NO_RESTART=1` mirror the flags.
+`tools/deploy/fix-cpzterm-order.sh` repairs an early-boot ordering cycle
 (`Before=sysinit.target` deadlocks boot with `Resource deadlock avoided`).
 
 ---
@@ -466,7 +544,7 @@ auth. `tools/deploy/fix-cpzterm-order.sh` repairs an early-boot ordering cycle
 | --- | --- |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | turn/step loop, tool pipeline, compaction, goals, permissions |
 | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) | every config key, `insert:` rows, capabilities per endpoint |
-| [`docs/CREATOR.md`](docs/CREATOR.md) | creator mode: requirements, package layout, prompt and takeover contract |
+| [`docs/CREATOR.md`](docs/CREATOR.md) | creator mode: skill packages, `meta.json` runnable apps, `/apps`, prompt and takeover contract |
 | [`docs/LOGIN.md`](docs/LOGIN.md) | DeepSeek sign-in: states, requirements, troubleshooting — [中文](docs/LOGIN.zh.md) · [ES](docs/LOGIN.es.md) · [日本語](docs/LOGIN.ja.md) · [DE](docs/LOGIN.de.md) · [IT](docs/LOGIN.it.md) |
 | [`docs/UX-AUDIT.md`](docs/UX-AUDIT.md) | screen-by-screen UX audit checklist and known limits |
 | [`docs/UX-LIVE.md`](docs/UX-LIVE.md) | the common-usage walkthrough behind the screenshots |

@@ -22,6 +22,7 @@ mod dsh_login;
 mod context;
 mod goal;
 mod harness;
+mod hwinfo;
 mod i18n;
 mod instructions;
 mod jobs;
@@ -88,6 +89,9 @@ pub struct Scr {
     ctx_for: String,
     /// Hide typed characters (API key entry).
     mask: bool,
+    /// Let a bare Enter submit an empty line (prompts whose default is "keep
+    /// what is configured", e.g. the onboarding model/base questions).
+    allow_empty: bool,
     /// Submit automatically once speech fills the input.
     auto_send: bool,
     /// Incomplete UTF-8 sequence being assembled from keystrokes.
@@ -314,6 +318,7 @@ impl Scr {
             ctx_window: 0,
             ctx_for: String::new(),
             mask: false,
+            allow_empty: false,
             auto_send: true,
             utf8_buf: Vec::new(),
             artifact: None,
@@ -1436,6 +1441,8 @@ impl Scr {
     /// the keypress was deliberate (the user asked to talk, not to type).
     fn voice_capture(&mut self, pre: Option<crate::voice::Recorder>) {
         if !self.speech_ok {
+            // A pre-opened recorder must not be dropped silently: dropping it
+            // stops the capture (Drop impl), which is exactly the intent.
             self.push(i18n::t("voice_official_only"), K_ERR);
             return;
         }
@@ -1829,6 +1836,16 @@ impl Scr {
         }
     }
 
+    /// Like `edit`, but a bare Enter submits an empty line: prompts with a
+    /// sensible default ("keep deepseek-flash", "official base URL") should not
+    /// force the user to type the default out.
+    fn edit_allow_empty(&mut self) -> Option<String> {
+        self.allow_empty = true;
+        let r = self.edit();
+        self.allow_empty = false;
+        r
+    }
+
     /// returns Some(line) when the user submits
     fn edit(&mut self) -> Option<String> {
         loop {
@@ -2010,6 +2027,11 @@ impl Scr {
                         continue;
                     }
                     if self.input.is_empty() {
+                        if self.allow_empty {
+                            self.input.clear();
+                            self.cursor = 0;
+                            return Some(String::new());
+                        }
                         continue;
                     }
                     let line: String = self.input.iter().collect();
@@ -3621,8 +3643,85 @@ fn login_type(scr: &mut Scr) -> Option<LoginResult> {
     }
 }
 
+/// Credentials that worked before a login attempt. A rejected key test puts
+/// them back, so `/login` can never leave the device unable to chat.
+#[derive(Clone)]
+struct CredSnapshot {
+    base: String,
+    api_key: String,
+    dsh_token: String,
+    model: String,
+    configured: bool,
+}
+
+fn cred_snapshot(config_rc: &ConfigRc) -> CredSnapshot {
+    let c = config_rc.borrow();
+    CredSnapshot {
+        base: c.base.clone(),
+        api_key: c.api_key.clone(),
+        dsh_token: c.dsh_token.clone(),
+        model: c.model.clone(),
+        configured: c.configured,
+    }
+}
+
+fn restore_credentials(config_rc: &ConfigRc, snap: &CredSnapshot) {
+    let mut c = config_rc.borrow_mut();
+    c.base = snap.base.clone();
+    c.api_key = snap.api_key.clone();
+    c.dsh_token = snap.dsh_token.clone();
+    c.model = snap.model.clone();
+    c.configured = snap.configured;
+    let _ = c.save();
+}
+
+/// Test that the just-saved credentials can actually answer before accepting
+/// them. The user asked for this explicitly: a key that does not work is
+/// rejected (and the previous credentials are restored) instead of leaving a
+/// device that looks configured but cannot chat.
+fn verify_saved_credentials(scr: &mut Scr, config_rc: &ConfigRc, revert: &CredSnapshot) -> bool {
+    let cfg = api_cfg(&config_rc.borrow());
+    scr.push(i18n::t("login_testing"), K_DIM);
+    scr.draw();
+    let checked: Result<Option<crate::api::KeyCheck>, String> = if !cfg.token.is_empty() {
+        // DSH account token: the platform has no /models, so a tiny real
+        // completion (hosted by the login platform) is the only truthful test.
+        crate::dsh_login::verify_token_for(&cfg.token, &cfg.model).map(|_| None)
+    } else {
+        crate::api::verify_key(&cfg).map(Some)
+    };
+    match checked {
+        Ok(None) => {
+            scr.push(i18n::t("login_verified"), K_DIM);
+            true
+        }
+        Ok(Some(k)) => {
+            if k.models > 0 {
+                scr.push(
+                    &i18n::tf("login_verified_models", &[&k.models.to_string()]),
+                    K_DIM,
+                );
+            } else {
+                scr.push(i18n::t("login_verified"), K_DIM);
+            }
+            if !k.model_listed {
+                // The key works but the configured model is not advertised:
+                // warn instead of rejecting (many gateways alias model ids).
+                scr.push(&i18n::tf("login_model_warn", &[&cfg.model, &k.sample]), K_DIM);
+            }
+            true
+        }
+        Err(e) => {
+            restore_credentials(config_rc, revert);
+            scr.push(&i18n::tf("login_rejected", &[&e]), K_ERR);
+            false
+        }
+    }
+}
+
 fn apply_login_result(scr: &mut Scr, config_rc: &ConfigRc, result: LoginResult) -> bool {
-    {
+    let prev = cred_snapshot(config_rc);
+    let saved = {
         let mut c = config_rc.borrow_mut();
         match result {
             LoginResult::Token(token) => {
@@ -3642,22 +3741,26 @@ fn apply_login_result(scr: &mut Scr, config_rc: &ConfigRc, result: LoginResult) 
             }
         }
         c.configured = true;
-        match c.save() {
-            Ok(()) => {
-                let home = std::env::var("HOME").unwrap_or_default();
-                let full = config::config_path().display().to_string();
-                let path = if !home.is_empty() && full.starts_with(&home) {
-                    format!("~{}", &full[home.len()..])
-                } else {
-                    full
-                };
-                scr.push(&i18n::tf("login_ready", &[&path]), K_NORM);
-                true
+        c.save()
+    };
+    match saved {
+        Err(e) => {
+            scr.push(&i18n::tf("ui_save_failed", &[&e.to_string()]), K_ERR);
+            false
+        }
+        Ok(()) => {
+            if !verify_saved_credentials(scr, config_rc, &prev) {
+                return false;
             }
-            Err(e) => {
-                scr.push(&i18n::tf("ui_save_failed", &[&e.to_string()]), K_ERR);
-                false
-            }
+            let home = std::env::var("HOME").unwrap_or_default();
+            let full = config::config_path().display().to_string();
+            let path = if !home.is_empty() && full.starts_with(&home) {
+                format!("~{}", &full[home.len()..])
+            } else {
+                full
+            };
+            scr.push(&i18n::tf("login_ready", &[&path]), K_NORM);
+            true
         }
     }
 }
@@ -3688,6 +3791,56 @@ fn start_login(scr: &mut Scr, config_rc: &ConfigRc) -> bool {
             scr.push(&i18n::tf("login_fail", &[&e]), K_ERR);
             false
         }
+    }
+}
+
+/// Final first-run stage: offer to record this device's hardware in the
+/// shipped hardware-info skill, so later hardware work starts from measured
+/// facts. Asked once; `/update-hwinfo` re-runs the scan on demand.
+fn onboarding_hardware(scr: &mut Scr, config_rc: &ConfigRc) {
+    if config_rc.borrow().hw_survey_done {
+        return;
+    }
+    scr.push(i18n::t("hw_intro"), K_NORM);
+    scr.push(i18n::t("hw_ask"), K_NORM);
+    scr.push(i18n::t("hw_ask_hint"), K_DIM);
+    scr.draw();
+    let mut answer = false;
+    loop {
+        match scr.read_key_timeout() {
+            Some(b'y') | Some(b'Y') | Some(0x0d) | Some(0x0a) => {
+                answer = true;
+                break;
+            }
+            Some(b'n') | Some(b'N') | Some(0x1b) | Some(0x03) => break,
+            Some(_) => {}
+            None => {}
+        }
+    }
+    {
+        let mut c = config_rc.borrow_mut();
+        c.hw_survey_done = true;
+        let _ = c.save();
+    }
+    if !answer {
+        scr.push(i18n::t("hw_scan_skipped"), K_DIM);
+        return;
+    }
+    scr.push(i18n::t("hw_scanning"), K_DIM);
+    scr.draw();
+    match hwinfo::update() {
+        Ok(s) => scr.push(
+            &i18n::tf(
+                "hw_scanned",
+                &[
+                    &s.sections.to_string(),
+                    &(s.bytes / 1024).max(1).to_string(),
+                    &s.version.to_string(),
+                ],
+            ),
+            K_NORM,
+        ),
+        Err(e) => scr.push(&i18n::tf("hw_scan_failed", &[&e]), K_ERR),
     }
 }
 
@@ -3813,7 +3966,7 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc) {
     }
     if sel == 1 {
         scr.push(i18n::t("onboard_base"), K_DIM);
-        let base = match scr.edit() {
+        let base = match scr.edit_allow_empty() {
             Some(l) => l.trim().to_string(),
             None => return,
         };
@@ -3825,11 +3978,12 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc) {
         };
         scr.mask = false;
         scr.push(i18n::t("onboard_model"), K_DIM);
-        let model = match scr.edit() {
+        let model = match scr.edit_allow_empty() {
             Some(l) => l.trim().to_string(),
             None => return,
         };
-        {
+        let prev = cred_snapshot(config_rc);
+        let saved = {
             let mut c = config_rc.borrow_mut();
             if !base.is_empty() {
                 c.base = base;
@@ -3840,15 +3994,28 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc) {
                 c.model = model;
             }
             c.configured = !c.api_key.is_empty();
-            match c.save() {
-                Ok(()) => scr.push(i18n::t("onboard_saved"), K_NORM),
-                Err(e) => scr.push(&i18n::tf("ui_save_failed", &[&e.to_string()]), K_ERR),
+            c.save()
+        };
+        match saved {
+            Ok(()) => {
+                // A key that cannot answer is rejected here: the user is left
+                // unconfigured and can run the setup again, instead of ending
+                // up with a device that silently cannot talk.
+                if config_rc.borrow().configured
+                    && !verify_saved_credentials(scr, config_rc, &prev)
+                {
+                    return;
+                }
+                scr.push(i18n::t("onboard_saved"), K_NORM);
+                onboarding_sandbox(scr, config_rc);
+                onboarding_hardware(scr, config_rc);
             }
+            Err(e) => scr.push(&i18n::tf("ui_save_failed", &[&e.to_string()]), K_ERR),
         }
-        onboarding_sandbox(scr, config_rc);
     } else {
         if start_login(scr, config_rc) {
             onboarding_sandbox(scr, config_rc);
+            onboarding_hardware(scr, config_rc);
         } else {
             scr.push(i18n::t("onboard_cancelled"), K_DIM);
         }
@@ -3878,14 +4045,23 @@ fn save_session(msgs: &jobs::Msgs, cfg: &config::Config, path: &std::path::Path)
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-    let doc = json::J::o(vec![
-        ("title", json::J::s(&crate::session::title())),
-        ("cwd", json::J::s(&cwd)),
-        ("model", json::J::s(&cfg.model)),
-        ("effort", json::J::s(&cfg.effort)),
-        ("messages", json::J::Arr(msgs.borrow().clone())),
-    ]);
-    let _ = std::fs::write(path, doc.dump());
+    let doc = {
+        let m = msgs.borrow();
+        json::doc_messages(
+            &[
+                ("title", json::J::s(&crate::session::title())),
+                ("cwd", json::J::s(&cwd)),
+                ("model", json::J::s(&cfg.model)),
+                ("effort", json::J::s(&cfg.effort)),
+            ],
+            &m,
+        )
+    };
+    // Atomic replace: a crash mid-write must not leave a truncated session.
+    let tmp = path.with_extension("json.tmp-write");
+    if std::fs::write(&tmp, doc).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
 }
 
 fn resume_session_path(
@@ -3899,10 +4075,28 @@ fn resume_session_path(
         .and_then(|x| x.to_str())
         .unwrap_or("session")
         .to_string();
+    // A session file is a full transcript. Refuse to load a monster instead
+    // of parsing and copying it several times on a 446 MB device.
+    const MAX_SESSION_BYTES: u64 = 24 * 1024 * 1024;
+    if let Ok(m) = std::fs::metadata(&path) {
+        if m.len() > MAX_SESSION_BYTES {
+            scr.push(
+                &i18n::tf("ui_resume_too_big", &[&(m.len() / (1024 * 1024)).to_string()]),
+                K_ERR,
+            );
+            return None;
+        }
+    }
     let txt = std::fs::read_to_string(&path).ok()?;
-    let v = json::parse(&txt)?;
-    let arr = v.get("messages")?.as_arr()?.clone();
-    *msgs.borrow_mut() = arr.clone();
+    let mut v = json::parse(&txt)?;
+    drop(txt);
+    // Move the array out of the parsed doc: no clone of the whole history.
+    let arr = match v.take("messages") {
+        json::J::Arr(a) => a,
+        _ => return None,
+    };
+    *msgs.borrow_mut() = arr;
+    let arr = msgs.borrow();
     crate::session::set_current(path.clone());
     scr.lines.clear();
     scr.scroll = 0;
@@ -4306,10 +4500,24 @@ fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             } else {
                 String::new()
             };
-            let label = if off {
-                format!("skill  {} {}{}", sk.name, i18n::t("ext_disabled"), model_tag)
+            // A package with meta.json is also a runnable app: say so here,
+            // where the user manages the library, not in a second list.
+            let app_marker = crate::apps::run_marker(&sk.dir);
+            let app_tag = if app_marker.is_some() {
+                format!("  [{}]", i18n::t("ext_app_tag"))
             } else {
-                format!("skill  {}{}", sk.name, model_tag)
+                String::new()
+            };
+            let label = if off {
+                format!(
+                    "skill  {} {}{}{}",
+                    sk.name,
+                    i18n::t("ext_disabled"),
+                    model_tag,
+                    app_tag
+                )
+            } else {
+                format!("skill  {}{}{}", sk.name, model_tag, app_tag)
             };
             items.push(MenuItem { label, value: String::new() });
             let mut d = vec![
@@ -4322,6 +4530,9 @@ fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
             ];
             if sk.origin == "model" {
                 d.push(format!("origin: {}", i18n::t("ext_model_tag")));
+            }
+            if let Some(m) = &app_marker {
+                d.push(format!("app: {m}"));
             }
             if sk.version > 1 {
                 d.push(format!("version: {}", sk.version));
@@ -5064,8 +5275,8 @@ fn apps_menu(scr: &mut Scr, config_rc: &ConfigRc) -> AppsAction {
             p
         }
     };
-    // Full annotation panel openable from the list (`→` or doc-app Enter).
-    // Metadata first, then the APP.md body without the generated header lines.
+    // Skill panel openable from the list (`->` or doc-app Enter): the
+    // meta.json facts first, then the SKILL.md instructions.
     fn panel_body(app: &crate::apps::App, short_path: String) -> Vec<String> {
         let mut d = vec![
             i18n::tf("apps_path", &[&short_path]),
@@ -5692,6 +5903,10 @@ fn main() {
         }
         return;
     }
+    // Housekeeping before the TUI starts: sessions and scratch files were
+    // written every turn/action and never pruned.
+    config::prune_sessions(40);
+    config::prune_tmp(7 * 24 * 3600);
     let config_rc: ConfigRc = std::rc::Rc::new(std::cell::RefCell::new(config::Config::load()));
     i18n::set(&config_rc.borrow().language);
     let mut cfg = api_cfg(&config_rc.borrow());
@@ -5701,9 +5916,20 @@ fn main() {
     // Skills first (their catalog goes into the prompt), then MCP servers
     // (their tools are discovered over JSON-RPC at startup).
     usage::load();
+    jobs::set_compact_settings(crate::compact::Settings::from_config(&config_rc.borrow()));
+    // The hardware notebook is a normal skill package that ships with dst:
+    // install the seed before the catalog is read so the model can use it from
+    // the very first turn (a scanned/refined copy is never overwritten).
+    let hw_seeded = hwinfo::seed();
     let mut skill_list = skills::load_all();
+    if hw_seeded {
+        skill_list = skills::load_all();
+    }
     tools::set_skills(skill_list.clone());
     mcp::install(mcp::start_all());
+    // Every return path (diagnostics included) must kill the MCP servers it
+    // started; a dropped Child is not reaped and would outlive dst.
+    let _mcp_guard = mcp::ShutdownOnDrop;
     let mut caps_at_start = config_rc.borrow().capabilities();
     let mut creator_at_start = config_rc.borrow().creator;
     let mut reg = build_registry(caps_at_start, creator_at_start);
@@ -5713,10 +5939,26 @@ fn main() {
     let argv: Vec<String> = std::env::args().collect();
     if argv.len() >= 2 && argv[1] == "--voice-selftest" {
         voice::set_cfg(cfg.clone());
+        jobs::set_compact_settings(crate::compact::Settings::from_config(&config_rc.borrow()));
         let secs = argv.get(2).and_then(|s| s.parse().ok()).unwrap_or(5u32);
         match voice::mic_probe(secs) {
             Ok((rms, text)) => println!("rms={rms:.4}\ntranscript={text:?}"),
             Err(e) => println!("error: {e}"),
+        }
+        return;
+    }
+    if argv.len() >= 2 && argv[1] == "--hwinfo-scan" {
+        // Diagnostics: run the hardware scan exactly as /update-hwinfo does.
+        // Safe on the panel (it exits without touching the terminal UI).
+        match hwinfo::update() {
+            Ok(s) => println!(
+                "path={} version={} sections={} bytes={} changed={} secs={:.1}",
+                s.path, s.version, s.sections, s.bytes, s.changed, s.secs
+            ),
+            Err(e) => {
+                println!("HWINFO FAILED {e}");
+                std::process::exit(1);
+            }
         }
         return;
     }
@@ -5936,6 +6178,7 @@ fn main() {
                         *shared_cfg.borrow_mut() = cfg.clone();
                         tools::set_cfg(cfg.clone());
                         voice::set_cfg(cfg.clone());
+        jobs::set_compact_settings(crate::compact::Settings::from_config(&config_rc.borrow()));
                         refresh_ctx_window(&mut scr, &cfg);
                         maybe_show_tips(&mut scr, &config_rc);
                     }
@@ -5999,6 +6242,7 @@ fn main() {
                 *shared_cfg.borrow_mut() = cfg.clone();
                 tools::set_cfg(cfg.clone());
                 voice::set_cfg(cfg.clone());
+        jobs::set_compact_settings(crate::compact::Settings::from_config(&config_rc.borrow()));
                 // A command may have paused/cleared the goal while a round was
                 // already planned: do not run that round.
                 if goal_seed.is_some()
@@ -6051,6 +6295,14 @@ fn main() {
                         AppsAction::None => {}
                     }
                     scr.refresh_apps_count();
+                }
+                // A command may hand work to the model (/update-hwinfo in
+                // creator mode): dispatch it as the next turn's request.
+                if let Some(p) = out.model_prompt {
+                    // The request is internal: show a short label in the
+                    // transcript instead of the whole prompt body.
+                    scr.prompt_label = Some(i18n::t("hw_refining").to_string());
+                    pending_line = Some(p);
                 }
                 scr.draw();
                 // `/goal <objective>`, `/goal resume`, `/goal edit` re-arm the
@@ -6275,6 +6527,7 @@ fn main() {
         save_session(&msgs, &config_rc.borrow(), p);
     }
     crate::bg::shutdown();
+    crate::mcp::shutdown();
     raw_mode(false);
     let _ = std::io::stdout().write_all(b"\x1b[0m\x1b[2J\x1b[H");
     println!("bye");

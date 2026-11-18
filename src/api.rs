@@ -320,6 +320,101 @@ pub fn context_window(cfg: &Cfg) -> Option<u64> {
     None
 }
 
+/// What a credential check learned about the endpoint.
+pub struct KeyCheck {
+    /// Number of models the endpoint advertises (0 = it did not say).
+    pub models: usize,
+    /// The configured model id appears in that list (true when unknown).
+    pub model_listed: bool,
+    /// First few advertised ids, for a rejection/warning message.
+    pub sample: String,
+}
+
+/// Verify that the configured base URL + key are actually usable, before the
+/// config is accepted. Uses `GET /models`, which costs no tokens and covers
+/// auth, reachability and the endpoint path in one request.
+pub fn verify_key(cfg: &Cfg) -> Result<KeyCheck, String> {
+    let url = format!("{}/models", cfg.base.trim_end_matches('/'));
+    if cfg.base.trim().is_empty() {
+        return Err("no API base configured".into());
+    }
+    if !url.starts_with("https://") && !is_loopback(&url) {
+        return Err(format!(
+            "refusing non-HTTPS endpoint {url}: use an https:// base (or a loopback test server)"
+        ));
+    }
+    let out = Command::new("curl")
+        .args([
+            "-sS",
+            "--max-time",
+            "20",
+            "-w",
+            "\n%{http_code}",
+            "-H",
+            &auth_header(cfg),
+            &url,
+        ])
+        .output()
+        .map_err(|e| format!("curl: {e}"))?;
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return Err(format!(
+            "cannot reach {}: {}",
+            short_url(&url),
+            stderr.chars().take(120).collect::<String>()
+        ));
+    }
+    let body = String::from_utf8_lossy(&out.stdout).to_string();
+    let (payload, status) = match body.rsplit_once('\n') {
+        Some((p, code)) => (p.to_string(), code.trim().parse::<u16>().unwrap_or(0)),
+        None => (body.clone(), 0),
+    };
+    if status == 401 || status == 403 {
+        return Err(format!(
+            "the endpoint rejected this key (HTTP {status}) - the key is not usable"
+        ));
+    }
+    if status == 404 || (status >= 400 && status != 0) {
+        return Err(format!(
+            "{} returned HTTP {status}; check the base URL",
+            short_url(&url)
+        ));
+    }
+    let v = parse(&payload).ok_or_else(|| {
+        format!(
+            "unexpected response from {}: {}",
+            short_url(&url),
+            payload.chars().take(120).collect::<String>().replace('\n', " ")
+        )
+    })?;
+    if let Some(err) = v.get("error") {
+        let msg = err
+            .get("message")
+            .and_then(|x| x.as_str())
+            .unwrap_or("endpoint error");
+        return Err(format!("the endpoint rejected this key: {msg}"));
+    }
+    let ids: Vec<String> = v
+        .get("data")
+        .and_then(|d| d.as_arr())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let sample = ids.iter().take(4).cloned().collect::<Vec<_>>().join(", ");
+    Ok(KeyCheck {
+        models: ids.len(),
+        model_listed: ids.is_empty() || ids.iter().any(|id| id == &cfg.model),
+        sample,
+    })
+}
+
+fn short_url(url: &str) -> String {
+    url.chars().take(60).collect()
+}
+
 /// Models the endpoint advertises, with their supported effort levels.
 pub fn list_models(cfg: &Cfg) -> Result<Vec<(String, String, Vec<String>)>, String> {
     let url = format!("{}/models", cfg.base.trim_end_matches('/'));
@@ -368,6 +463,27 @@ pub fn list_models(cfg: &Cfg) -> Result<Vec<(String, String, Vec<String>)>, Stri
 }
 
 /// Blocking wrapper for background jobs.
+/// Like `chat_stream`, but takes the already-serialized messages array. The
+/// scheduler path uses this so a cron/watcher turn does not deep-clone the
+/// whole transcript J-tree for every step.
+pub fn chat_stream_json<F: FnMut(&str)>(
+    cfg: &Cfg,
+    messages_json: &str,
+    tools: &J,
+    mut on_delta: F,
+) -> Result<StreamOut, String> {
+    let chat = spawn_chat_json(cfg, messages_json, tools)?;
+    loop {
+        match chat.rx.recv() {
+            Ok(ApiEv::Content(c)) => on_delta(&c),
+            Ok(ApiEv::Reason(_)) => {}
+            Ok(ApiEv::Done(o)) => return Ok(o),
+            Ok(ApiEv::Failed(e)) => return Err(e),
+            Err(_) => return Err("stream closed unexpectedly".into()),
+        }
+    }
+}
+
 pub fn chat_stream<F: FnMut(&str)>(
     cfg: &Cfg,
     messages: &J,

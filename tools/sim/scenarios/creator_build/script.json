@@ -1,50 +1,52 @@
 {
  "responses": [
   {
-   "reasoning": "The user wants a reusable battery viewer, so build it as an app package.",
+   "reasoning": "The user wants a reusable battery viewer, so build it as a runnable skill package: SKILL.md first, then meta.json (which makes it an app), then the entry program, then test it.",
    "content": "",
    "tool_calls": [
     {
      "id": "c1",
-     "name": "app_save",
+     "name": "skill_save",
      "arguments": {
-      "name": "battery_viewer",
-      "category": "system",
-      "title": "Battery viewer",
-      "description": "Shows the charge level and charging state.",
-      "annotation": "Shows the battery level.\n\nRun it from /apps (Enter) or ask me to run it.\nIt reads /sys/class/power_supply/BAT0/capacity once a second.",
-      "kind": "sh",
-      "entry": "run.sh",
-      "requires": [
-       "sh"
-      ]
+      "name": "battery-viewer",
+      "description": "Shows the battery charge level and charging state.",
+      "instructions": "# Battery viewer\n\nShows the battery level.\n\nRun it from /apps (Enter) or ask me to run it.\nIt reads /sys/class/power_supply/BAT0/capacity once a second.\n"
      }
     },
     {
      "id": "c2",
-     "name": "app_file",
+     "name": "skill_file",
      "arguments": {
-      "name": "battery_viewer",
-      "path": "run.sh",
-      "content": "#!/bin/sh\nwhile :; do\n  cap=$(cat /sys/class/power_supply/BAT0/capacity 2>/dev/null || echo 0)\n  echo \"Battery: ${cap}%\"\n  sleep 1\ndone\n"
+      "name": "battery-viewer",
+      "path": "meta.json",
+      "content": "{\"title\": \"Battery viewer\", \"kind\": \"sh\", \"entry\": \"run.sh\", \"requires\": [\"sh\"], \"version\": 1, \"created\": \"2026-11-18T10:00:00+08:00\", \"updated\": \"2026-11-18T10:00:00+08:00\"}\n"
      }
     },
     {
      "id": "c3",
-     "name": "app_export",
+     "name": "skill_file",
      "arguments": {
-      "name": "battery_viewer"
+      "name": "battery-viewer",
+      "path": "run.sh",
+      "content": "#!/bin/sh\ncap=$(cat /sys/class/power_supply/BAT0/capacity 2>/dev/null || echo 87)\necho \"Battery: ${cap}%\"\nsleep 1\n"
+     }
+    },
+    {
+     "id": "c4",
+     "name": "app_test",
+     "arguments": {
+      "name": "battery-viewer"
      }
     }
    ]
   },
   {
-   "reasoning": "Saved.",
-   "content": "Battery viewer saved as system/battery_viewer. Open /apps and press Enter to run it."
+   "reasoning": "Saved and tested.",
+   "content": "Battery viewer saved as a runnable skill package. Open /apps and press Enter to run it."
   },
   {
    "reasoning": "Answering from the catalog.",
-   "content": "You have one app: system/battery_viewer (Battery viewer)."
+   "content": "You have one runnable package: battery-viewer (Battery viewer), kind sh."
   }
  ]
 }

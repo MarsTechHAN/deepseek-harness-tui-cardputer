@@ -33,14 +33,10 @@ static STOP_PLAYBACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 pub fn request_stop() {
     // A clip may not be playing; log anyway so the simulator (and the device
     // journal) can prove an interrupt reached the voice layer.
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(crate::config::log_dir().join("voice.log"))
-    {
-        use std::io::Write as _;
-        let _ = writeln!(f, "stop requested (aplay pid={})", PLAYING.load(std::sync::atomic::Ordering::SeqCst));
-    }
+    vlog(&format!(
+        "stop requested (aplay pid={})",
+        PLAYING.load(std::sync::atomic::Ordering::SeqCst)
+    ));
     STOP_PLAYBACK.store(true, std::sync::atomic::Ordering::SeqCst);
     let pid = PLAYING.load(std::sync::atomic::Ordering::SeqCst);
     if pid > 0 {
@@ -79,13 +75,20 @@ fn short(s: &str) -> String {
 // ----------------------------------------------------------------------- TTS
 
 /// Append one line to the voice log (also the evidence trail for the
-/// simulator's mocked speech paths).
+/// simulator's mocked speech paths). The log rotates at 256 KB: every Esc/Tab
+/// writes a line, and a device that runs for weeks must not grow it forever.
 fn vlog(msg: &str) {
     use std::io::Write as _;
+    let path = crate::config::log_dir().join("voice.log");
+    if let Ok(m) = std::fs::metadata(&path) {
+        if m.len() > 256 * 1024 {
+            let _ = std::fs::rename(&path, path.with_extension("log.1"));
+        }
+    }
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(crate::config::log_dir().join("voice.log"))
+        .open(&path)
     {
         let _ = writeln!(f, "{msg}");
     }
@@ -212,6 +215,12 @@ pub struct Recorder {
     mock: bool,
 }
 
+/// Hard cap on one take: a push-to-talk take is capped at 30 s in the UI, but
+/// an interrupt take can stay open for a whole (unbounded) turn, and 48 kHz
+/// mono is 96 KB/s. 60 s is generous for speech and keeps the worst case at
+/// ~6 MB instead of tens of MB on the 446 MB device.
+pub const MAX_TAKE_SAMPLES: usize = 48_000 * 60;
+
 /// Start capturing from the microphone. Call `finish()` to transcribe, or
 /// `cancel()` to throw the take away.
 pub fn start_recording() -> Result<Recorder, String> {
@@ -251,7 +260,13 @@ pub fn start_recording() -> Result<Recorder, String> {
                 Ok(0) => break,
                 Ok(n) => {
                     let mut v = b.lock().unwrap();
-                    for i in 0..n / 8 {
+                    // A recording whose owner forgot to stop it must not eat
+                    // the device's RAM: stop buffering at the take cap.
+                    if v.len() >= MAX_TAKE_SAMPLES {
+                        break;
+                    }
+                    let room = MAX_TAKE_SAMPLES - v.len();
+                    for i in 0..(n / 8).min(room) {
                         let o = i * 8;
                         let s = i32::from_le_bytes([
                             chunk[o],
@@ -317,6 +332,14 @@ impl Recorder {
     }
 
     pub fn cancel(mut self) {
+        self.stop_capture();
+    }
+}
+
+/// Never leave `arecord` running if a Recorder is dropped without finishing
+/// (e.g. the turn was interrupted again while the take was being handed over).
+impl Drop for Recorder {
+    fn drop(&mut self) {
         self.stop_capture();
     }
 }

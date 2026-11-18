@@ -308,6 +308,33 @@ def check_esc_cancel(screens, reqs, work):
     return checks
 
 
+
+def check_esc_queue(screens, reqs, work):
+    busy = screens.get("busy", "")
+    queued = screens.get("queued", "")
+    reply = screens.get("reply", "")
+    agents = agent_requests(reqs)
+    checks = []
+    checks.append(("sleep 5" in busy, "a long tool call is running"))
+    checks.append(("queued (1)" in queued and "this message was queued" in queued,
+                   "Enter queues the typed message while the turn runs"))
+    checks.append(("Queued answer after the interrupt." in reply,
+                   "the queued message is sent after Esc stops the turn"))
+    checks.append((len(agents) == 2,
+                   f"exactly two model requests ({len(agents)}): interrupted turn + queued message"))
+    last_user = ""
+    if agents:
+        users = [m for m in (agents[-1].get("messages") or [])
+                 if m.get("role") == "user"]
+        if users:
+            last_user = str(users[-1].get("content") or "")
+    checks.append(("this message was queued" in last_user,
+                   "the queued text is the user prompt of the next request"))
+    checks.append(("Queued answer" not in busy,
+                   "the interrupted turn never got the scripted follow-up reply"))
+    return checks
+
+
 def check_step_limit(screens, reqs, work):
     limited = screens.get("limited", "")
     checks = []
@@ -579,11 +606,16 @@ def check_i18n_es(screens, reqs, work):
     splash = screens.get("splash", "")
     menu = screens.get("menu", "")
     reply = screens.get("reply", "")
+    sys1 = system_text(reqs[0]) if reqs else ""
     checks = []
     checks.append(("mantén Tab" in splash, "Spanish splash/hint rendered"))
     checks.append(("Configuración" in menu, "config menu is translated"))
     checks.append(("modelo" in menu, "config help preview is translated"))
     checks.append(("Idioma" in menu and "Modelo" in menu, "menu labels translated"))
+    checks.append(("The interface language is Spanish" in sys1,
+                   "the first request pins the UI language for model output"))
+    checks.append(("user's own request wins" in sys1,
+                   "the language directive still lets the user override it"))
     checks.append(("Hola desde el mock." in reply, "conversation still works in Spanish"))
     return checks
 
@@ -1292,46 +1324,124 @@ def check_creator_build(screens, reqs, work):
     built = screens.get("built", "")
     lst = screens.get("apps_list", "")
     prev = screens.get("apps_preview", "")
+    body = screens.get("apps_preview_body", "")
     home = os.path.join(work, "home")
-    base = os.path.join(home, ".dst", "apps", "system", "battery_viewer")
-    manifest = read_file(os.path.join(base, "app.json"))
-    ann = read_file(os.path.join(base, "APP.md"))
+    base = os.path.join(home, ".dst", "skills", "battery-viewer")
+    manifest = {}
+    try:
+        manifest = json.loads(read_file(os.path.join(base, "meta.json")) or "{}")
+    except json.JSONDecodeError:
+        pass
+    skill = read_file(os.path.join(base, "SKILL.md"))
     entry = read_file(os.path.join(base, "run.sh"))
     sys1 = system_text(reqs[0]) if reqs else ""
     sys3 = system_text(reqs[2]) if len(reqs) > 2 else ""
-    texts = "\n".join(message_texts(reqs))
+    # Tool calls/results are repeated in later request histories: dedupe.
+    calls = [n for n, _ in {(c["name"], c["args"]) for c in request_tool_calls(reqs)}]
+    results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
     checks = []
-    checks.append(('"battery_viewer"' in manifest.replace(" ", ""),
-                   "app manifest written under ~/.dst/apps"))
-    checks.append(("Battery viewer" in ann and "Run it from /apps" in ann,
-                   "APP.md annotation written"))
+    checks.append((manifest.get("title") == "Battery viewer"
+                   and manifest.get("kind") == "sh"
+                   and manifest.get("entry") == "run.sh"
+                   and manifest.get("requires") == ["sh"],
+                   "meta.json written into the skill folder makes it runnable"))
+    checks.append((skill.startswith("---\nname: battery-viewer\n")
+                   and "description: Shows the battery charge level and charging state." in skill
+                   and "Shows the battery level." in skill,
+                   "SKILL.md holds the frontmatter and the instructions body"))
     checks.append(("Battery: ${cap}%" in entry, "entry program written"))
-    checks.append(("* app_file" in built and "wrote run.sh" in built,
-                   "the file tool card shows the program write"))
-    checks.append(("saved app system/battery_viewer" in built
-                   and "creator: files changed but no app saved" not in built,
-                   "creator mode announces the saved app (and does not nudge)"))
-    checks.append(("Apps" in lst and "Battery viewer" in lst and "system \u00b7 sh" in lst,
-                   "/apps lists the new app"))
-    checks.append(("path: ~/.dst/apps/system/battery_viewer" in prev,
+    checks.append((calls.count("skill_save") == 1 and calls.count("skill_file") == 2
+                   and "app_test" in calls,
+                   "the model built the package with skill_save/skill_file and tested it"))
+    checks.append(("wrote meta.json" in built and "wrote run.sh" in built,
+                   "the file tool cards show the package writes"))
+    checks.append(("saved skill battery-viewer v1" in built
+                   and "saved app battery-viewer (runnable skill)" in built,
+                   "creator mode announces the saved skill and the runnable app"))
+    checks.append(("creator: files changed but no package saved" not in built,
+                   "saving the package does not trigger the nudge"))
+    checks.append(("app_test battery-viewer: exit=0" in results
+                   and "Battery: 87%" in results,
+                   "app_test ran the entry and its output reached the model"))
+    checks.append(("Apps \u00b7 1 \u00b7 skills " in lst and "Battery viewer" in lst,
+                   "/apps lists the new runnable skill (app count + skills segment)"))
+    rows = [l for l in lst.splitlines() if "Battery viewer" in l]
+    checks.append((bool(rows) and "sh" in rows[0],
+                   "the launcher row shows the app kind"))
+    checks.append(("path: ~/.dst/skills/battery-viewer" in prev,
                    "app preview shows the package path"))
     checks.append(("kind: sh" in prev and "entry: run.sh" in prev,
                    "app preview shows kind and entry"))
     checks.append(("version: 1" in prev, "app preview shows the manifest version"))
     checks.append(("requires: sh" in prev, "app preview shows declared requirements"))
-    checks.append(("Shows the battery level." in prev,
-                   "app preview shows the annotation"))
-    checks.append(("CREATOR MODE" in sys1 and "INSTALLED APPS (0)" in sys1,
-                   "creator prompt injected before any app exists"))
-    checks.append(("INSTALLED APPS (1)" in sys3
-                   and "battery_viewer \u2014 Battery viewer [sh:run.sh]" in sys3,
-                   "installed catalog reaches the next turn (with its entry file)"))
-    checks.append(("App package 'system/battery_viewer' is installed" in texts,
-                   "app_save explains the next step to the model"))
-    exported = os.path.join(home, ".dst", "tmp", "app-system-battery_viewer.tar.gz")
-    checks.append(("exported app system/battery_viewer" in texts
-                   and os.path.getsize(exported) > 100,
-                   "app_export packs the package into a tarball"))
+    checks.append(("Shows the battery level." in prev or "Shows the battery level." in body,
+                   "app preview shows the SKILL.md instructions"))
+    checks.append(("CREATOR MODE" in sys1 and "- battery-viewer" not in sys1,
+                   "creator prompt injected before any package exists"))
+    checks.append(("SKILLS" in sys3
+                   and "- battery-viewer [sh:run.sh]: Shows the battery charge level and charging state."
+                   in sys3,
+                   "the runnable package joins the SKILLS catalog next turn (with its entry file)"))
+    checks.append((len(reqs) == 3, "exactly the scripted requests were made"))
+    return checks
+
+
+
+def check_creator_app_flow(screens, reqs, work):
+    built = screens.get("built", "")
+    lst = screens.get("list", "")
+    running = screens.get("running", "")
+    menu_back = screens.get("menu_back", "")
+    after = screens.get("after_run", "")
+    review = screens.get("prompt_review", "")
+    reply = screens.get("prompt_reply", "")
+    home = os.path.join(work, "home")
+    app_base = os.path.join(home, ".dst", "skills", "battery-viewer")
+    prompt_base = os.path.join(home, ".dst", "skills", "status-report")
+    meta = {}
+    prompt_meta = {}
+    try:
+        meta = json.loads(read_file(os.path.join(app_base, "meta.json")) or "{}")
+        prompt_meta = json.loads(read_file(os.path.join(prompt_base, "meta.json")) or "{}")
+    except json.JSONDecodeError:
+        pass
+    run_sh = read_file(os.path.join(app_base, "run.sh"))
+    prompt_md = read_file(os.path.join(prompt_base, "PROMPT.md"))
+    calls = [n for n, _ in {(c["name"], c["args"]) for c in request_tool_calls(reqs)}]
+    results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
+    texts = "\n".join(message_texts(reqs))
+    checks = []
+    checks.append((meta.get("kind") == "sh" and meta.get("entry") == "run.sh"
+                   and "Battery: 87%" in run_sh,
+                   "the battery viewer package exists and its program prints 87%"))
+    checks.append((calls.count("skill_save") == 2 and calls.count("skill_file") == 4
+                   and "app_test" in calls,
+                   "the model built both packages with skill_save/skill_file and tested the app"))
+    checks.append(("app_test battery-viewer: exit=0" in results
+                   and "Battery: 87%" in results,
+                   "the app_test output (87%) reached the model as a tool result"))
+    checks.append(("saved app battery-viewer (runnable skill)" in built,
+                   "the runnable battery app is announced in the transcript"))
+    checks.append(("Apps \u00b7 2 \u00b7 skills " in lst
+                   and "Battery viewer" in lst and "Status report" in lst,
+                   "/apps lists both packages with app and skill counts"))
+    checks.append(("Battery: 87%" in running and "creator \u00b7" not in running,
+                   "Enter runs the battery viewer full-screen and it shows 87%"))
+    checks.append(("Apps \u00b7 2" in menu_back,
+                   "the launcher comes back after the app exits"))
+    checks.append(("app battery-viewer returned to dst" in after,
+                   "the run is reported back in the transcript"))
+    checks.append(("Give me a three-line status of the device" in review
+                   and "Enter send" in review,
+                   "the prompt package opens its PROMPT.md in the review panel"))
+    checks.append((prompt_meta.get("kind") == "prompt"
+                   and "three-line status" in prompt_md,
+                   "the prompt package has meta.json + PROMPT.md on disk"))
+    checks.append(("Run the prompt app 'status-report'" in texts
+                   and "Give me a three-line status of the device" in texts,
+                   "Enter sends the prompt app's request to the model"))
+    checks.append(("Device status: battery 87%" in reply,
+                   "the model follows the prompt app and the reply renders"))
     checks.append((len(reqs) == 3, "exactly the scripted requests were made"))
     return checks
 
@@ -1346,11 +1456,12 @@ def check_creator_run(screens, reqs, work):
     checks.append(("creator \u00b7 /apps" not in app and "Up/Down hist" not in app,
                    "the chat UI is gone during the takeover"))
     checks.append(("* app_run" in after, "the tool card records the run"))
-    checks.append(("time limit" in after, "the time limit returns the screen"))
+    checks.append(("stopped by timeout_s=2" in after,
+                   "the timeout_s limit returns the screen"))
     checks.append(("It ran on the panel" in after, "the turn finishes after the app returns"))
     checks.append(("last run: timeout 2s" in panel,
                    "/apps records the last run (timeout 2s) in the panel"))
-    checks.append(("system \u00b7 sh ! \u00b7" in screens.get("list", ""),
+    checks.append(("sh ! \u00b7" in screens.get("list", ""),
                    "the launcher shows when the app was last used"))
     checks.append((len(reqs) == 2, "one request before and one after the app run"))
     return checks
@@ -1381,8 +1492,10 @@ def check_creator_apps_zh(screens, reqs, work):
     checks = []
     checks.append(("\u5e94\u7528" in lst and "\u7535\u6c60\u67e5\u770b\u5668" in lst,
                    "localized app menu lists the CJK app title"))
-    checks.append(("system \u00b7 sh" in lst, "localized menu keeps the machine value"))
-    checks.append(("\u8def\u5f84: ~/.dst/apps/system/battery_viewer" in prev,
+    rows = [l for l in lst.splitlines() if "\u7535\u6c60\u67e5\u770b\u5668" in l]
+    checks.append((bool(rows) and " sh" in rows[0],
+                   "localized menu keeps the machine value (kind)"))
+    checks.append(("\u8def\u5f84: ~/.dst/skills/battery_viewer" in prev,
                    "preview path label localized"))
     checks.append(("\u7c7b\u578b: sh" in prev and "\u5165\u53e3: run.sh" in prev,
                    "preview kind/entry labels localized"))
@@ -1400,14 +1513,14 @@ def check_creator_apps_zh(screens, reqs, work):
     ask = screens.get("delete_ask", "")
     deleted = screens.get("deleted", "")
     empty = screens.get("empty", "")
-    base = os.path.join(work, "home", ".dst", "apps", "system", "battery_viewer")
+    base = os.path.join(work, "home", ".dst", "skills", "battery_viewer")
     checks.append(("\u5220\u9664" in ask and "y/n" in ask,
                    "delete asks for confirmation in the footer"))
     checks.append(("\u5df2\u5220\u9664\u5e94\u7528" in deleted,
                    "delete is confirmed in the transcript"))
     checks.append((not os.path.isdir(base), "the app package is removed from the device"))
     checks.append(("+ \u65b0\u5efa\u5e94\u7528" in empty
-                   and "\u5e94\u7528 \u00b7 0" in empty,
+                   and "\u5e94\u7528 \u00b7 0 \u00b7 \u6280\u80fd " in empty,
                    "the creator launcher offers + new app after the last delete"))
     checks.append((len(reqs) == 0, "no model request in this scenario"))
     return checks
@@ -1417,9 +1530,9 @@ def check_creator_nudge(screens, reqs, work):
     turn = screens.get("turn", "")
     note = read_file(os.path.join(work, "notes.txt"))
     checks = []
-    checks.append(("creator: files changed but no app saved" in turn,
+    checks.append(("creator: files changed but no package saved" in turn,
                    "creator mode nudges when work was not persisted"))
-    checks.append(("app_save keeps this work" in turn.replace("\n", " "),
+    checks.append(("skill_save keeps it" in turn.replace("\n", " "),
                    "the nudge names the fix"))
     checks.append(("Saved notes.txt." in turn, "the turn still answers normally"))
     checks.append(("microSD" in note, "the write itself happened"))
@@ -1445,7 +1558,7 @@ def check_creator_apps_run(screens, reqs, work):
                    "menu launches pass the app's default_args"))
     checks.append(("Apps \u00b7 2" in menu_back,
                    "the menu comes back after the app returns"))
-    checks.append(("app system/quick returned to dst" in after,
+    checks.append(("app quick returned to dst" in after,
                    "leaving the menu shows the run notice in the transcript"))
     checks.append(("args: --fast" in screens.get("quick_panel", ""),
                    "the annotation panel shows default args"))
@@ -1492,9 +1605,10 @@ def check_creator_skill(screens, reqs, work):
     md = read_file(os.path.join(home, ".dst", "skills", "battery-report", "SKILL.md"))
     sys3 = system_text(reqs[2]) if len(reqs) > 2 else ""
     sys1 = system_text(reqs[0]) if reqs else ""
+    calls = [n for n, _ in {(c["name"], c["args"]) for c in request_tool_calls(reqs)}]
     checks = []
-    checks.append(("* skill_save" in built and "saved skill battery-report" in built,
-                   "skill_save is shown and announced"))
+    checks.append(("skill_save" in calls and "saved skill battery-report v2" in built,
+                   "skill_save runs and the save is announced"))
     results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
     checks.append(("UPDATED: read capacity" in results and "package:" in results,
                    "the skill tool loads the latest body written in the same turn"))
@@ -1541,11 +1655,14 @@ def check_creator_app_test(screens, reqs, work):
     tested = screens.get("tested", "")
     home = os.path.join(work, "home")
     results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
-    good_log = read_file(os.path.join(home, ".dst", "tmp", "app-test-tools-good.log"))
-    broken_log = read_file(os.path.join(home, ".dst", "tmp", "app-test-tools-broken.log"))
+    calls = [n for n, _ in {(c["name"], c["args"]) for c in request_tool_calls(reqs)}]
+    good_log = read_file(os.path.join(home, ".dst", "tmp", "app-test-good.log"))
+    broken_log = read_file(os.path.join(home, ".dst", "tmp", "app-test-broken.log"))
     checks = []
-    checks.append(("* app_test" in tested and tested.count("* app_test") >= 2,
-                   "both headless tests are shown as tool cards"))
+    checks.append((calls.count("app_test") == 2 and "* app_test" in tested
+                   and "app_test good: exit=0" in tested
+                   and "app_test broken: exit=3" in tested,
+                   "both headless tests ran and are shown as tool cards"))
     checks.append(("GOOD APP" in results and "arg=--fast" in results
                    and "stdin=hello from test" in results,
                    "stdout, argv and piped stdin are captured"))
@@ -1563,12 +1680,12 @@ def check_creator_app_test(screens, reqs, work):
     checks.append(("last test: exit 3" in panel and "last run:" not in panel,
                    "the panel records the headless test (and no screen run)"))
     lst = screens.get("list", "")
-    checks.append(("tools \u00b7 sh !" in lst and "tools \u00b7 sh ! \u00b7" in lst,
+    checks.append(("sh ! \u00b7" in lst,
                    "the app list flags the failing app and shows its last-use time"))
-    checks.append(("Apps \u00b7 2 \u00b7 1!" in lst,
+    checks.append(("Apps \u00b7 2 \u00b7 1! \u00b7 skills " in lst,
                    "the launcher title counts the failing app"))
     improve = screens.get("improve", "")
-    checks.append(("Improve the app tools/broken:" in improve,
+    checks.append(("Improve the app broken:" in improve,
                    "i pre-fills an improvement request for the selected app"))
     checks.append((" \u00b7 1!" in screens.get("tested", ""),
                    "the creator idle hint counts the failing app"))
@@ -1591,46 +1708,21 @@ def check_creator_kinds(screens, reqs, work):
                    "app_test and app_run both report the binary app"))
     checks.append(("* app_run" in after and "exited (code 0)" in results,
                    "the tool card records the binary run"))
-    checks.append(("Hello binary" in lst and "Report" in lst,
-                   "the menu lists binary and prompt apps"))
+    rows = [l for l in lst.splitlines() if "Hello binary" in l or "Report" in l]
+    checks.append(("Hello binary" in lst and "Report" in lst and len(rows) == 2
+                   and "binary" in rows[0] and "prompt" in rows[1],
+                   "the menu lists binary and prompt apps with their kind values"))
     review = screens.get("review", "")
     checks.append(("three-line status of the device" in review
                    and "Enter send" in review,
                    "a prompt app is previewed before sending (Enter sends)"))
-    checks.append(("> prompt app tools/report" in sent,
+    checks.append(("> prompt app report" in sent,
                    "launching a prompt app is marked in the transcript"))
-    checks.append(("Run the prompt app 'tools/report'" in texts
+    checks.append(("Run the prompt app 'report'" in texts
                    and "three-line status of the device" in texts,
                    "the prompt app's request reaches the model"))
     checks.append(("Device status: battery 87%" in reply,
                    "the model follows the prompt app"))
-    checks.append((len(reqs) == 3, "exactly the scripted requests were made"))
-    return checks
-
-
-
-def check_creator_import(screens, reqs, work):
-    home = os.path.join(work, "home")
-    base = os.path.join(home, ".dst", "apps", "tools", "greeter")
-    results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
-    lst = screens.get("list", "")
-    sys3 = system_text(reqs[2]) if len(reqs) > 2 else ""
-    checks = []
-    checks.append((os.path.isfile(os.path.join(base, "app.json"))
-                   and os.path.isfile(os.path.join(base, "APP.md"))
-                   and os.path.isfile(os.path.join(base, "run.sh")),
-                   "app_import restores the package under ~/.dst/apps"))
-    checks.append((os.access(os.path.join(base, "run.sh"), os.X_OK),
-                   "the executable bit survives the archive round-trip"))
-    checks.append(("imported app tools/greeter" in results
-                   and "replaced app tools/greeter" in results,
-                   "import and replace are reported to the model"))
-    checks.append(("refusing to import from outside" in results,
-                   "archives outside ~/.dst/tmp are refused"))
-    checks.append(("Greeter" in lst and "tools \u00b7 sh" in lst,
-                   "/apps lists the imported app"))
-    checks.append(("- tools/greeter \u2014 Greeter [sh:run.sh]" in sys3,
-                   "the imported app joins INSTALLED APPS next turn"))
     checks.append((len(reqs) == 3, "exactly the scripted requests were made"))
     return checks
 
@@ -1658,7 +1750,7 @@ def check_creator_skill_rollback(screens, reqs, work):
 
 def check_creator_capture(screens, reqs, work):
     home = os.path.join(work, "home")
-    log_path = os.path.join(home, ".dst", "apps", "tools", "chatty", "state", "last-run.log")
+    log_path = os.path.join(home, ".dst", "skills", "chatty", "state", "last-run.log")
     log = read_file(log_path)
     results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
     checks = []
@@ -1675,7 +1767,7 @@ def check_creator_capture(screens, reqs, work):
     checks.append(("Chatty app \u00b7 log" in panel and "CHATTY LINE 1" in panel,
                    "/apps 'l' replays the recorded output"))
     lst = screens.get("list", "")
-    checks.append(("tools \u00b7 sh \u00b7" in lst,
+    checks.append(("sh \u00b7" in lst,
                    "the launcher shows when the app was last used"))
     checks.append((len(reqs) == 2, "exactly the scripted requests were made"))
     return checks
@@ -1688,7 +1780,7 @@ def check_creator_home(screens, reqs, work):
     asked = screens.get("asked", "")
     texts = "\n".join(message_texts(reqs))
     checks = []
-    checks.append(("Apps \u00b7 0 \u00b7 skills 1" in launcher,
+    checks.append(("Apps \u00b7 0 \u00b7 skills " in launcher,
                    "the launcher title counts apps and skills"))
     checks.append(("+ new app" in launcher,
                    "creator mode offers a + new app row even with no apps"))
@@ -1705,8 +1797,10 @@ def check_creator_home(screens, reqs, work):
 def check_creator_tty_test(screens, reqs, work):
     results = "\n".join(str(m.get("content") or "") for m in request_tool_results(reqs))
     tested = screens.get("tested", "")
+    calls = [n for n, _ in {(c["name"], c["args"]) for c in request_tool_calls(reqs)}]
     checks = []
-    checks.append(("* app_test" in tested, "both app_test calls are shown"))
+    checks.append((calls.count("app_test") == 2 and "app_test ttycheck: exit=0" in tested,
+                   "both app_test calls ran and are shown"))
     checks.append(("MODE: pipe" in results and "MODE: tty" in results,
                    "tty=true runs under a pseudo-terminal while the default is piped"))
     checks.append(("STDIN: pipe" in results and "STDIN: tty" in results,
@@ -1822,13 +1916,43 @@ def check_voice_interrupt(screens, reqs, work):
     return checks
 
 
+
+def check_voice_interrupt_send(screens, reqs, work):
+    busy = screens.get("busy", "")
+    rec = screens.get("recording", "")
+    reply = screens.get("reply", "")
+    voice_log = read_file(os.path.join(work, "home", ".dst", "logs", "voice.log"))
+    agents = agent_requests(reqs)
+    checks = []
+    checks.append(("sleep 5" in busy, "a long tool call is running"))
+    checks.append(("REC" in rec, "Tab during the turn interrupts and records at once"))
+    checks.append(("stop requested" in voice_log, "the voice layer got the stop signal"))
+    checks.append(("armed (interrupt)" in voice_log,
+                   "the interrupt take skips the tap debounce"))
+    checks.append((len(agents) == 2,
+                   f"the interrupted turn stopped at once ({len(agents)} requests)"))
+    last_user = ""
+    if agents:
+        users = [m for m in (agents[-1].get("messages") or [])
+                 if m.get("role") == "user"]
+        if users:
+            last_user = str(users[-1].get("content") or "")
+    checks.append(("stop and take this" in last_user,
+                   "auto_send_voice sends the ASR text with no Enter"))
+    checks.append(("Heard the voice interrupt." in reply,
+                   "the reply to the auto-sent voice prompt renders"))
+    return checks
+
+
 CHECKS = {
+    "creator_app_flow": check_creator_app_flow,
+    "esc_queue": check_esc_queue,
+    "voice_interrupt_send": check_voice_interrupt_send,
     "creator_requires": check_creator_requires,
     "creator_tty_test": check_creator_tty_test,
     "creator_home": check_creator_home,
     "creator_capture": check_creator_capture,
     "creator_skill_rollback": check_creator_skill_rollback,
-    "creator_import": check_creator_import,
     "creator_skill": check_creator_skill,
     "creator_app_test": check_creator_app_test,
     "creator_kinds": check_creator_kinds,
@@ -1930,7 +2054,7 @@ def main(argv):
         for passed, label in checks:
             print(f"  {'ok  ' if passed else 'FAIL'} {label}")
         print(f"[{'PASS' if ok else 'FAIL'}] {name} ({time.time() - t0:.1f}s)")
-        if ok:
+        if ok and not os.environ.get("DST_KEEP_WORK"):
             shutil.rmtree(work, ignore_errors=True)
         else:
             print(f"  work dir kept: {work}")

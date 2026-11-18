@@ -371,6 +371,64 @@ pub fn mcp_path() -> PathBuf {
     home().join("mcp.json")
 }
 
+/// Keep the newest `keep` session files and delete older ones: dst writes one
+/// full-history file per launch and never removed any, so the sessions dir grew
+/// with every run on a microSD card.
+pub fn prune_sessions(keep: usize) {
+    let mut files: Vec<(u64, std::path::PathBuf)> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(sessions_dir()) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) != Some("json") {
+                continue;
+            }
+            let mtime = e
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            files.push((mtime, p));
+        }
+    }
+    if files.len() <= keep {
+        return;
+    }
+    files.sort_by_key(|(t, _)| *t);
+    let drop = files.len() - keep;
+    for (_, p) in files.into_iter().take(drop) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// Delete stale scratch files under `~/.dst/tmp`. Artifact exports, job dumps
+/// and app-test logs were written per action and never cleaned up.
+pub fn prune_tmp(max_age_secs: u64) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(rd) = std::fs::read_dir(tmp_dir()) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if !p.is_file() {
+                continue;
+            }
+            let old = e
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| now.saturating_sub(d.as_secs()) > max_age_secs)
+                .unwrap_or(false);
+            if old {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    }
+}
+
 /// Sessions ordered newest-first: (path, label, modified seconds).
 pub fn list_sessions() -> Vec<(PathBuf, String, u64)> {
     let mut out = Vec::new();
@@ -495,6 +553,9 @@ pub struct Config {
     pub language: String,
     /// One-time interaction tips have been shown.
     pub tips_shown: bool,
+    /// First-run setup asked whether to scan the local hardware into the
+    /// hardware-info skill (see hwinfo.rs). Asking happens once.
+    pub hw_survey_done: bool,
     pub disabled_tools: Vec<String>,
     pub tool_config: Vec<(String, Y)>,
     /// Steps (model requests) allowed in one turn. 0 = no limit.
@@ -551,6 +612,7 @@ impl Default for Config {
             auto_send_voice: true,
             language: "en".into(),
             tips_shown: false,
+            hw_survey_done: false,
             disabled_tools: Vec::new(),
             tool_config: Vec::new(),
             max_steps: 0,
@@ -661,6 +723,9 @@ impl Config {
             }
             if let Some(v) = tui.get("tips_shown").and_then(|v| v.as_bool()) {
                 self.tips_shown = v;
+            }
+            if let Some(v) = tui.get("hw_survey_done").and_then(|v| v.as_bool()) {
+                self.hw_survey_done = v;
             }
             if let Some(v) = tui.get("mode").and_then(|v| v.as_str()) {
                 self.creator = v.eq_ignore_ascii_case("creator");
@@ -787,6 +852,7 @@ impl Config {
         s.push_str(&format!("  auto_send_voice: {}\n", self.auto_send_voice));
         s.push_str(&format!("  language: {}\n", yaml_quote(&self.language)));
         s.push_str(&format!("  tips_shown: {}\n", self.tips_shown));
+        s.push_str(&format!("  hw_survey_done: {}\n", self.hw_survey_done));
         s.push_str(&format!(
             "  mode: {}\n",
             if self.creator { "creator" } else { "normal" }

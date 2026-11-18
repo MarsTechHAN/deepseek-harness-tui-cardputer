@@ -375,6 +375,9 @@ pub fn start(port: u16, lang: &str) -> Result<Session, String> {
                 }
                 Err(_) => continue,
             };
+            // A stalled browser/phone must not wedge the single accept thread:
+            // its fd and buffer would leak for the rest of the process.
+            let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(5)));
             let mut req = Vec::new();
             let mut buf = [0u8; 4096];
             loop {

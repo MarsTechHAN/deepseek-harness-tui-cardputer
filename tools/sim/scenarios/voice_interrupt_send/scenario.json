@@ -1,0 +1,90 @@
+{
+ "env": {
+  "DST_MOCK_SPEECH": "1",
+  "DST_MOCK_ASR_TEXT": "stop and take this"
+ },
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   },
+   "snap": "splash"
+  },
+  {
+   "send": "start the slow job"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "sleep 5",
+    "timeout_ms": 15000
+   },
+   "snap": "busy"
+  },
+  {
+   "key": "Tab"
+  },
+  {
+   "wait_ms": 120
+  },
+  {
+   "key": "Tab"
+  },
+  {
+   "wait_ms": 120
+  },
+  {
+   "key": "Tab"
+  },
+  {
+   "wait_ms": 120
+  },
+  {
+   "key": "Tab"
+  },
+  {
+   "snap": "recording",
+   "wait_ms": 120
+  },
+  {
+   "key": "Tab"
+  },
+  {
+   "wait_ms": 120
+  },
+  {
+   "key": "Tab"
+  },
+  {
+   "wait_ms": 120
+  },
+  {
+   "key": "Tab"
+  },
+  {
+   "wait_ms": 120
+  },
+  {
+   "key": "Tab"
+  },
+  {
+   "wait_ms": 1400
+  },
+  {
+   "wait_for": {
+    "text": "Heard the voice interrupt.",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 20000
+   },
+   "snap": "reply"
+  }
+ ]
+}

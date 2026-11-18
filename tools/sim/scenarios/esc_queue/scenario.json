@@ -1,0 +1,54 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 10000
+   },
+   "snap": "splash"
+  },
+  {
+   "send": "start the slow job"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "sleep 5",
+    "timeout_ms": 15000
+   },
+   "snap": "busy"
+  },
+  {
+   "send": "this message was queued"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "queued (1)",
+    "timeout_ms": 10000
+   },
+   "wait_ms": 120,
+   "snap": "queued"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_for": {
+    "text": "Queued answer after the interrupt.",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 900,
+    "timeout_ms": 20000
+   },
+   "snap": "reply"
+  }
+ ]
+}

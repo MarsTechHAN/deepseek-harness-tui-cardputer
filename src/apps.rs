@@ -35,6 +35,8 @@
 //! prompt, the `/apps` launcher and the model's own `read_file` all see the
 //! same thing.
 //!
+//! The design and the model contract live in `docs/CREATOR.md`.
+//!
 //! What stays here is the part that needs the platform: the screen-takeover
 //! runner (long-press Esc + timeout + ulimits + scrubbed env), the headless
 //! tester the model uses to verify behaviour, and the run/test history.
@@ -317,11 +319,6 @@ pub fn run_marker(dir: &Path) -> Option<String> {
         }
     }
     Some(m)
-}
-
-/// Whether a directory is a runnable package (has meta.json).
-pub fn meta_exists(dir: &Path) -> bool {
-    dir.join("meta.json").is_file()
 }
 
 /// Compact "HH:MM" from an ISO stamp (only the time of a run matters in the
@@ -710,6 +707,46 @@ fn read_capped(mut r: impl std::io::Read + Send + 'static) -> std::thread::JoinH
     })
 }
 
+/// Give the app its own process group so the platform can stop it *and* any
+/// helper it forked (`run.sh &`, a daemon): otherwise the leftovers keep the
+/// capture pipes open and the reader join below would block forever.
+fn own_process_group(cmd: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+}
+
+/// Signal the app's whole process group (negative pid).
+fn kill_group(pid: u32, force: bool) {
+    if pid == 0 {
+        return;
+    }
+    let sig = if force { "-KILL" } else { "-TERM" };
+    let _ = Command::new("kill")
+        .args([sig, &format!("-{pid}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Join a reader thread with a deadline: a pipe held by a process that escaped
+/// the group must not freeze the turn (or the UI) forever.
+fn join_deadline<T: Send + 'static>(
+    h: std::thread::JoinHandle<T>,
+    ms: u64,
+) -> Option<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(h.join().ok());
+    });
+    match rx.recv_timeout(std::time::Duration::from_millis(ms)) {
+        Ok(v) => v,
+        Err(_) => None,
+    }
+}
+
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
@@ -767,9 +804,11 @@ fn run_headless(
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    own_process_group(&mut cmd);
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("could not start app '{}' ({prog}): {e}", app.label()))?;
+    let app_pid = child.id();
     if let Some(mut stdin) = child.stdin.take() {
         // A pty is in canonical mode: without a newline the app's `read` blocks.
         let text = if tty && !stdin_text.is_empty() && !stdin_text.ends_with('\n') {
@@ -808,11 +847,14 @@ fn run_headless(
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    // Reap the group, then read the capture with a deadline: a daemonized
+    // helper must not block app_test forever.
+    kill_group(app_pid, false);
     let (stdout, stdout_bytes) = out_thread
-        .and_then(|h| h.join().ok())
+        .and_then(|h| join_deadline(h, 2_000))
         .unwrap_or((Vec::new(), 0));
     let (stderr, stderr_bytes) = err_thread
-        .and_then(|h| h.join().ok())
+        .and_then(|h| join_deadline(h, 2_000))
         .unwrap_or((Vec::new(), 0));
     let secs = started.elapsed().as_secs_f32();
     let code = status.and_then(|s| s.code());
@@ -1259,7 +1301,7 @@ pub fn run_on_screen(app: &App, timeout_s: u64) -> Result<String, String> {
 /// Run a saved app with arguments (`app_run args` / future user args).
 pub fn run_on_screen_args(app: &App, timeout_s: u64, args: &str) -> Result<String, String> {
     let (prog, argv) = run_plan_args(app, args)?;
-    // A stable place for app state: survives runs, keeps APP.md/listing clean.
+    // A stable place for app state: survives runs, keeps SKILL.md/meta.json clean.
     let state_dir = app.dir.join("state");
     let _ = std::fs::create_dir_all(&state_dir);
     let started = std::time::Instant::now();
@@ -1281,6 +1323,7 @@ pub fn run_on_screen_args(app: &App, timeout_s: u64, args: &str) -> Result<Strin
     } else {
         cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
     }
+    own_process_group(&mut cmd);
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("could not start app '{label}' ({prog}): {e}"))?;
@@ -1351,9 +1394,7 @@ pub fn run_on_screen_args(app: &App, timeout_s: u64, args: &str) -> Result<Strin
         }
     }
     if outcome != "exit" {
-        let _ = Command::new("kill")
-            .args(["-TERM", &child_id.to_string()])
-            .output();
+        kill_group(child_id, false);
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(300);
         while std::time::Instant::now() < deadline {
             match child.try_wait() {
@@ -1362,17 +1403,23 @@ pub fn run_on_screen_args(app: &App, timeout_s: u64, args: &str) -> Result<Strin
             }
         }
         if !matches!(child.try_wait(), Ok(Some(_))) {
+            kill_group(child_id, true);
             let _ = child.kill();
         }
     }
     let status = status.or_else(|| child.wait().ok());
+    // The app is gone (or stopped): take its group with it so nothing keeps the
+    // capture pipes open below.
+    kill_group(child_id, false);
     drop(to_child);
     // Capture mode: wait for the readers to reach EOF, flush what is left to
     // the panel, then persist the readable log next to the app state.
     let mut log_path: Option<PathBuf> = None;
     if app.capture {
         for h in readers {
-            let _ = h.join();
+            if join_deadline(h, 2_000).is_none() {
+                kill_group(child_id, true);
+            }
         }
         for chunk in cap_rx.try_iter() {
             let _ = std::io::stdout().write_all(&chunk);

@@ -1,1 +1,0 @@
-{"name": "quick", "title": "Quick app", "category": "system", "description": "Prints a line and exits.", "kind": "sh", "entry": "run.sh", "version": 1, "created": "2026-01-01T10:00:00+08:00", "updated": "2026-01-01T10:00:00+08:00", "default_args": "--fast"}

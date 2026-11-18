@@ -65,6 +65,8 @@ fn post_json(path: &str, body: &str, what: &str) -> Result<J, Fail> {
             "-sS",
             "--max-time",
             "60",
+            "--max-filesize",
+            "2000000",
             "-H",
             &crate::api::auth_header(&cfg),
             "-H",
@@ -545,6 +547,73 @@ fn short(s: &str, n: usize) -> String {
 // bash
 // ---------------------------------------------------------------------------
 
+/// Cap one child stream at `cap` bytes while draining the rest into the void.
+///
+/// `Command::output()` collects the whole stream before the tool truncates it,
+/// which means `cat big.log` / `yes` / a fat `dmesg` can allocate hundreds of
+/// MB on a 446 MB device and OOM it. The executors read with this instead: the
+/// first `cap` bytes are kept, the remainder is counted and discarded (so the
+/// child never blocks on a full pipe), and the model is told it was truncated.
+fn read_capped<R: std::io::Read + Send + 'static>(
+    r: R,
+    cap: usize,
+) -> std::thread::JoinHandle<(Vec<u8>, usize, bool)> {
+    std::thread::spawn(move || {
+        let mut r = r;
+        let mut out: Vec<u8> = Vec::with_capacity(cap.min(64 * 1024));
+        let mut total = 0usize;
+        let mut truncated = false;
+        let mut buf = [0u8; 8192];
+        loop {
+            match r.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    total += n;
+                    if out.len() < cap {
+                        let room = cap - out.len();
+                        out.extend_from_slice(&buf[..n.min(room)]);
+                        if n > room {
+                            truncated = true;
+                        }
+                    } else {
+                        truncated = true;
+                    }
+                }
+            }
+        }
+        (out, total, truncated)
+    })
+}
+
+/// Per-stream capture caps for exec tools. 64 KB stdout is ~10 screens of text;
+/// anything past it is truncated and reported.
+const STREAM_CAP: usize = 64 * 1024;
+const STREAM_ERR_CAP: usize = 16 * 1024;
+
+/// Run a command with capped, concurrently drained stdout/stderr.
+fn run_capped(mut cmd: std::process::Command) -> Result<(Option<i32>, Vec<u8>, usize, bool, Vec<u8>, usize, bool), Fail> {
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| Fail::new(format!("could not start command: {e}")))?;
+    let out_pipe = child.stdout.take();
+    let err_pipe = child.stderr.take();
+    let h_out = out_pipe.map(|p| read_capped(p, STREAM_CAP));
+    let h_err = err_pipe.map(|p| read_capped(p, STREAM_ERR_CAP));
+    let status = child
+        .wait()
+        .map_err(|e| Fail::new(format!("command wait failed: {e}")))?;
+    let (stdout, out_total, out_trunc) = h_out
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+    let (stderr, err_total, err_trunc) = h_err
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+    Ok((status.code(), stdout, out_total, out_trunc, stderr, err_total, err_trunc))
+}
+
 fn bash_exec(args: &J) -> Result<J, Fail> {
     let cmd = str_arg(args, "command").ok_or_else(|| Fail::new("missing 'command'"))?;
     let secs = num_arg(args, "timeout_s").unwrap_or(60.0).max(1.0) as u64;
@@ -557,26 +626,38 @@ fn bash_exec(args: &J) -> Result<J, Fail> {
         .arg("sh")
         .arg("-c")
         .arg(&cmd);
-    let out = match c.output() {
-        Ok(o) => o,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // No coreutils `timeout`: run without an executor deadline.
-            Command::new("sh")
-                .arg("-c")
-                .arg(&cmd)
-                .output()
-                .map_err(|e| Fail::new(format!("could not start shell: {e}")))?
-        }
-        Err(e) => return Err(Fail::new(format!("could not start shell: {e}"))),
-    };
-
-    let code = out.status.code();
-    Ok(obj(vec![
+    let (code, stdout, out_total, out_trunc, stderr, err_total, err_trunc) =
+        match run_capped(c) {
+            Ok(v) => v,
+            Err(e) => {
+                // No coreutils `timeout`: run without an executor deadline.
+                if !e.message.contains("could not start command") {
+                    return Err(e);
+                }
+                let mut plain = Command::new("sh");
+                plain.arg("-c").arg(&cmd);
+                match run_capped(plain) {
+                    Ok(v) => v,
+                    Err(e) => return Err(e),
+                }
+            }
+        };
+    let mut v = obj(vec![
         ("exit", code.map(|c| J::Num(c as f64)).unwrap_or(J::Null)),
         ("timed_out", J::Bool(code == Some(124))),
-        ("stdout", J::s(&String::from_utf8_lossy(&out.stdout))),
-        ("stderr", J::s(&String::from_utf8_lossy(&out.stderr))),
-    ]))
+        ("stdout", J::s(&String::from_utf8_lossy(&stdout))),
+        ("stderr", J::s(&String::from_utf8_lossy(&stderr))),
+        ("stdout_bytes", J::Num(out_total as f64)),
+        ("stderr_bytes", J::Num(err_total as f64)),
+        ("truncated", J::Bool(out_trunc || err_trunc)),
+    ]);
+    if out_trunc || err_trunc {
+        v.set("truncated_note", J::s(&format!(
+            "output truncated: kept {} of {} stdout bytes / {} of {} stderr bytes",
+            stdout.len(), out_total, stderr.len(), err_total
+        )));
+    }
+    Ok(v)
 }
 
 fn bash_render(_args: &J, v: &J) -> String {
@@ -603,6 +684,17 @@ fn bash_render(_args: &J, v: &J) -> String {
     if v.get("timed_out").map(|x| matches!(x, J::Bool(true))).unwrap_or(false) {
         s.push_str("\n[command hit its timeout and was killed]");
     }
+    if v
+        .get("truncated")
+        .map(|x| matches!(x, J::Bool(true)))
+        .unwrap_or(false)
+    {
+        let note = v
+            .get("truncated_note")
+            .and_then(|x| x.as_str())
+            .unwrap_or("output truncated");
+        s.push_str(&format!("\n[{note}]"));
+    }
     s.trim_end().to_string()
 }
 
@@ -614,16 +706,41 @@ fn read_exec(args: &J) -> Result<J, Fail> {
     let path = str_arg(args, "path").ok_or_else(|| Fail::new("missing 'path'"))?;
     let off = num_arg(args, "offset").unwrap_or(1.0).max(1.0) as usize;
     let lim = num_arg(args, "limit").unwrap_or(400.0).max(1.0) as usize;
-    let text = std::fs::read_to_string(&path).map_err(|e| Fail::new(format!("{path}: {e}")))?;
-    let lines: Vec<&str> = text.lines().collect();
-    let start = off.saturating_sub(1).min(lines.len());
-    let end = (start + lim).min(lines.len());
-    let body = lines[start..end].join("\n");
+    // Stream only the requested range: reading a 100 MB log into a String (and
+    // then into lines) just to return 400 lines is how a device runs out of
+    // memory. 4 MB of single-line data is already far past one screen.
+    let file = std::fs::File::open(&path).map_err(|e| Fail::new(format!("{path}: {e}")))?;
+    let reader = std::io::BufReader::new(file);
+    let mut body_lines: Vec<String> = Vec::new();
+    let mut idx = 0usize;
+    let mut more = false;
+    let mut bytes = 0usize;
+    for line in std::io::BufRead::lines(reader) {
+        let line = line.map_err(|e| Fail::new(format!("{path}: {e}")))?;
+        idx += 1;
+        if idx < off {
+            continue;
+        }
+        if body_lines.len() >= lim {
+            more = true;
+            break;
+        }
+        bytes += line.len() + 1;
+        body_lines.push(line);
+        if bytes > 4 * 1024 * 1024 {
+            more = true;
+            break;
+        }
+    }
+    let body = body_lines.join("\n");
+    let start = off.saturating_sub(1);
+    let end = start + body_lines.len();
     Ok(obj(vec![
         ("path", J::s(&path)),
         ("start", J::Num((start + 1) as f64)),
         ("end", J::Num(end as f64)),
-        ("total", J::Num(lines.len() as f64)),
+        ("total", J::Num(end as f64)),
+        ("more", J::Bool(more)),
         ("text", J::s(&body)),
     ]))
 }
@@ -645,13 +762,15 @@ fn read_render(_args: &J, v: &J) -> String {
 /// file, so it does not have to re-read blindly.
 fn read_post(args: &J, v: &J) -> Option<String> {
     let end = v.get("end").and_then(|x| x.as_num()).unwrap_or(0.0) as usize;
-    let total = v.get("total").and_then(|x| x.as_num()).unwrap_or(0.0) as usize;
-    if total > end {
+    let more = v
+        .get("more")
+        .map(|x| matches!(x, J::Bool(true)))
+        .unwrap_or(false);
+    if more {
         let path = str_arg(args, "path").unwrap_or_default();
         Some(format!(
-            "read_file returned lines up to {end} of {total} in {path}; {} line(s) remain. \
+            "read_file returned lines up to {end} of {path}; more lines remain. \
 Call read_file again with offset={} to continue.",
-            total - end,
             end + 1
         ))
     } else {
@@ -772,19 +891,23 @@ fn glob_render(_a: &J, v: &J) -> String {
 fn grep_exec(args: &J) -> Result<J, Fail> {
     let pattern = str_arg(args, "pattern").ok_or_else(|| Fail::new("missing 'pattern'"))?;
     let path = str_arg(args, "path").unwrap_or_else(|| ".".into());
-    let out = Command::new("grep")
-        .args(["-rnE", "--exclude-dir=.git", "--exclude-dir=target", "-m", "200", &pattern, &path])
-        .output()
-        .map_err(|e| Fail::new(format!("grep: {e}")))?;
-    let mut text = String::from_utf8_lossy(&out.stdout).to_string();
+    let mut c = Command::new("grep");
+    c.args(["-rnE", "--exclude-dir=.git", "--exclude-dir=target", "-m", "200", &pattern, &path]);
+    let (code, stdout, _total, out_trunc, _stderr, _, _) = run_capped(c)?;
+    let mut text = String::from_utf8_lossy(&stdout).to_string();
+    let mut truncated = out_trunc;
     if text.len() > 6000 {
         text.truncate(6000);
+        truncated = true;
+    }
+    if truncated {
         text.push_str("\n... [truncated]");
     }
     Ok(obj(vec![
         ("output", J::s(&text)),
         ("matches", J::Num(text.lines().count() as f64)),
-        ("exit", J::Num(out.status.code().unwrap_or(-1) as f64)),
+        ("exit", J::Num(code.unwrap_or(-1) as f64)),
+        ("truncated", J::Bool(truncated)),
     ]))
 }
 
@@ -800,6 +923,16 @@ fn edit_exec(args: &J) -> Result<J, Fail> {
     let all = matches!(args.get("replace_all"), Some(J::Bool(true)));
     if old.is_empty() {
         return Err(Fail::new("old_string must not be empty (use write_file to create a file)"));
+    }
+    // Editing needs the whole file in memory; refuse a monster instead of
+    // letting a 100 MB log allocate several hundred MB.
+    if let Ok(m) = std::fs::metadata(&path) {
+        if m.len() > 8 * 1024 * 1024 {
+            return Err(Fail::new(format!(
+                "{path} is {} MB; edit_file is for source-sized files (max 8 MB)",
+                m.len() / (1024 * 1024)
+            )));
+        }
     }
     let text = std::fs::read_to_string(&path).map_err(|e| Fail::new(format!("{path}: {e}")))?;
     let count = text.matches(&old).count();

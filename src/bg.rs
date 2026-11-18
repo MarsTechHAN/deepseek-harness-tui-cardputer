@@ -11,13 +11,18 @@
 use crate::json::J;
 use crate::tool::{Fail, Param, ToolDef};
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 const TAIL_MAX: usize = 200;
 const WAIT_CAP_S: u64 = 120;
+/// A job line is delivered to the model and kept in the tail. A watcher that
+/// prints one endless line must not buffer it forever: keep 8 KB and say so.
+const LINE_CAP: usize = 8 * 1024;
+/// Finished jobs are pruned beyond this many: a device that runs for weeks
+/// with `job_start` must not keep every command and tail in RAM.
+const MAX_JOBS: usize = 24;
 
 struct Job {
     id: String,
@@ -69,38 +74,82 @@ fn read_stream<R: std::io::Read + Send + 'static>(
     watcher_id: Option<String>,
 ) {
     std::thread::spawn(move || {
-        let reader = BufReader::new(stream);
-        for line in reader.lines() {
-            let line = match line {
-                Ok(l) => l,
-                Err(_) => break,
-            };
+        // Read bytes, not `lines()`: an endless line would otherwise grow a
+        // single String without bound inside BufRead::lines().
+        let mut reader = std::io::BufReader::new(stream);
+        let mut line: Vec<u8> = Vec::with_capacity(256);
+        let mut discarding = false;
+        let mut chunk = [0u8; 4096];
+        let emit = |bytes: &[u8], truncated: bool| {
+            let mut text = String::from_utf8_lossy(bytes).to_string();
+            if truncated {
+                text.push_str(" [line truncated]");
+            }
             if let Ok(mut t) = tail.lock() {
                 if t.len() >= TAIL_MAX {
                     t.pop_front();
                 }
-                t.push_back(line.clone());
+                t.push_back(text.clone());
             }
             if let Some(id) = &watcher_id {
                 if let Ok(mut inbox) = inbox_mutex().try_lock() {
                     if inbox.len() > 100 {
                         inbox.pop_front();
                     }
-                    let n = id.rsplit(' ').next().unwrap_or(&id).to_string();
-                    inbox.push_back((n, line));
+                    let n = id.rsplit(' ').next().unwrap_or(id).to_string();
+                    inbox.push_back((n, text));
                 }
             }
+        };
+        loop {
+            use std::io::Read;
+            match reader.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    for &b in &chunk[..n] {
+                        if discarding {
+                            if b == b'\n' {
+                                discarding = false;
+                            }
+                            continue;
+                        }
+                        if b == b'\n' || b == b'\r' {
+                            if !line.is_empty() {
+                                emit(&line, false);
+                                line.clear();
+                            }
+                        } else if line.len() < LINE_CAP {
+                            line.push(b);
+                        } else {
+                            emit(&line, true);
+                            line.clear();
+                            discarding = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !line.is_empty() {
+            emit(&line, false);
         }
     });
 }
 
 fn spawn(command: &str, watcher: bool) -> Result<Job, String> {
-    let mut child = Command::new("sh")
-        .arg("-c")
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
         .arg(command)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    // Own process group: `kill -TERM -<pid>` then also reaches the children of
+    // `sh -c 'daemon &'`, which would otherwise keep the pipes open forever.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("spawn failed: {e}"))?;
     let id = next_id(watcher);
@@ -123,6 +172,48 @@ fn spawn(command: &str, watcher: bool) -> Result<Job, String> {
         tail,
         started: now(),
     })
+}
+
+/// Kill a job's whole process group, then reap it. A bare `child.kill()` only
+/// signals `sh`; a daemonizing command keeps the pipes (and the reader
+/// threads) alive forever.
+fn kill_job(child: &mut Child, pid: u32) {
+    if pid > 0 {
+        let _ = Command::new("kill")
+            .args(["-TERM", &format!("-{pid}")])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Drop the oldest finished jobs beyond `MAX_JOBS`, freeing their tail memory.
+fn prune(guard: &mut Vec<Job>) {
+    if guard.len() <= MAX_JOBS {
+        return;
+    }
+    let mut excess = guard.len() - MAX_JOBS;
+    let mut i = 0;
+    while i < guard.len() && excess > 0 {
+        if guard[i].child.is_none() {
+            guard.remove(i);
+            excess -= 1;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Reap finished children and prune the registry; called from the idle tick so
+/// a job that exits while nobody polls it does not stay a zombie for days.
+pub fn reap() {
+    let mut guard = jobs();
+    for job in guard.iter_mut() {
+        refresh(job);
+    }
+    prune(&mut guard);
 }
 
 fn refresh(job: &mut Job) {
@@ -224,8 +315,7 @@ pub fn stop(id: &str) -> Result<String, String> {
         .find(|j| j.id == id)
         .ok_or_else(|| format!("no job '{id}'"))?;
     if let Some(mut child) = job.child.take() {
-        let _ = child.kill();
-        let _ = child.wait();
+        kill_job(&mut child, job.pid);
     }
     job.status = "killed".to_string();
     Ok(job.status.clone())
@@ -237,6 +327,7 @@ pub fn stop(id: &str) -> Result<String, String> {
 
 /// Drain pending watcher lines as `(id, line)` pairs.
 pub fn poll_watchers() -> Vec<(String, String)> {
+    reap();
     let mut inbox = inbox_mutex()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -252,8 +343,7 @@ pub fn shutdown() {
     let mut guard = jobs();
     for job in guard.iter_mut() {
         if let Some(mut child) = job.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+            kill_job(&mut child, job.pid);
         }
         job.status = "killed (exit)".to_string();
     }
@@ -370,8 +460,7 @@ fn kill_exec(args: &J) -> Result<J, Fail> {
     let job = &mut guard[idx];
     let was_running = job.child.is_some();
     if let Some(mut child) = job.child.take() {
-        let _ = child.kill();
-        let _ = child.wait();
+        kill_job(&mut child, job.pid);
     }
     job.status = if was_running {
         "killed".to_string()
@@ -391,8 +480,7 @@ fn kill_any_exec(args: &J) -> Result<J, Fail> {
     let idx = guard.iter().position(|j| j.id == id).ok_or_else(|| Fail::new(format!("no watcher '{id}'")))?;
     let job = &mut guard[idx];
     if let Some(mut child) = job.child.take() {
-        let _ = child.kill();
-        let _ = child.wait();
+        kill_job(&mut child, job.pid);
     }
     job.status = "stopped".to_string();
     Ok(J::o(vec![

@@ -1,12 +1,19 @@
-# Creator mode — the device as an app platform
+# Creator mode — one skill package, runnable when it has `meta.json`
 
 Creator mode turns dst from "a chat window on a handheld" into "the only program
 on the device, which builds the device's programs". It is opt-in; normal chat
 mode stays the default and is unchanged.
 
-This document is the requirement analysis, the business rules, the data layout,
-the prompt contract, the screen-takeover contract and the verification plan.
-`tools/sim/scenarios/creator_*` are the executable form of this document.
+The model is **skill-centric**: there is exactly one unit, the skill package
+under `~/.dst/skills/<name>/`. A package becomes a runnable **app** by adding a
+`meta.json` next to its `SKILL.md`. There is no separate app store, no second
+catalog and no app-writing tool — the package folder is the registry.
+
+This document is the reference for the data layout, the model contract, the
+writing/reading tools, the execution contract, the `/apps` UX, safety and the
+verification matrix. The executable form is intended to be the
+`tools/sim/scenarios/creator_*` scenarios plus the unit tests listed in §11 (the
+simulator set is ported alongside the code; see the note at the end of §11).
 
 ## 1. Why
 
@@ -16,8 +23,8 @@ answers a question and forgets it; the answer is gone when the screen scrolls.
 
 Creator mode makes *building* the default interaction: when the user asks for
 something ("show the battery level", "a pomodoro timer", "a list of the Wi-Fi
-networks"), dst builds it, saves it as a permanent, annotated package under
-`~/.dst/apps/`, and can run it full-screen on the panel. The device accumulates
+networks"), dst builds it, saves it as a permanent package under
+`~/.dst/skills/`, and can run it full-screen on the panel. The device accumulates
 capability over time, and the user can list / reopen / delete what it built.
 
 Two invariants keep this from becoming a dangerous toy:
@@ -33,81 +40,115 @@ Two invariants keep this from becoming a dangerous toy:
 
 Functional:
 
-- R1 A mode flag `tui.mode: normal|creator`, default `normal`, switched from the
-  `/config` menu (Mode row). Persisted. Deliberately not a slash command: the
-  mode changes the whole contract, so it belongs behind the settings screen,
-  and a one-word command is too easy to fire accidentally.
-- R2 In creator mode the model can persist work two ways:
-  - **app**: a runnable package (script, binary, prompt or document) with a
-    manifest, short human annotation and files; and
-  - **skill**: a systematic, self-contained engineering package (procedure,
-    format, checklist, supporting files) written for the model itself, kept in
-    the same catalog as hand-installed skills.
+- **R1** A mode flag `tui.mode: normal|creator`, default `normal`, switched from
+  the `/config` menu (Mode row). Persisted. Deliberately not a slash command: the
+  mode changes the whole contract, so it belongs behind the settings screen, and
+  a one-word command is too easy to fire accidentally.
+- **R2** One unit: the *skill package*, a folder with `SKILL.md` (frontmatter
+  `name`/`description` plus instructions) and optional supporting files. A
+  package is a runnable **app** when the folder also contains `meta.json`.
+  Writing either kind of package is `skill_save` + `skill_file`; there is no
+  `app_save`/`app_file`/`app_export`/`app_import` and no `app_list`.
   Memory stays the place for short durable facts/preferences; the prompt makes
-  that split explicit (memory = fragments, skill = complete procedure, app =
-  runnable thing).
-- R3 App packages persist across sessions and reboots (plain files under
-  `~/.dst/apps/`).
-- R4 The model is told which apps already exist, skills-style: a one-line
-  catalog is injected into the system prompt each turn; the annotation body is
-  read on demand (`read_file`), mirroring the skills catalog/`SKILL.md` split.
-- R5 The model can run a saved app on the device screen (`app_run`) — the app
-  owns the whole panel and all input while dst is paused — and can verify it
-  headlessly first (`app_test`: piped stdio, captured exit/stdout/stderr, full
-  log file) the way the developers test dst itself.
-- R5b Apps are bounded by a platform contract: platform-enforced long-press Esc
-  and timeout, CPU/file-size ulimits, a working directory and `$DST_APP_STATE`
-  inside the package, no root; the system prompt states the guidelines (no
-  system configuration, installs, services or writes outside the package) and
-  the app kinds are `sh`, `python`, `binary`, `prompt` and `doc`.
-- R6 The user can browse apps (`/apps`): list, preview the annotation, run
-  (Enter), delete (x, with confirmation).
-- R7 After a turn that changed files but saved no app, creator mode nudges
-  (one dim line) — the "no work is lost" rule is visible, not just prompted.
-- R8 Everything user-facing is localized in en/zh/es/ja/de/it.
+  the split explicit (memory = fragments, skill = complete procedure, runnable
+  package = app).
+- **R3** Packages persist across sessions and reboots as plain files under
+  `~/.dst/skills/` (`/etc/dst/skills/` is the read-only hand-installed library).
+- **R4** The model is told which packages exist through the shared `SKILLS`
+  catalog injected into the system prompt each turn: one line per package, with
+  runnable packages marked `[kind:entry]` and carrying the failure of their last
+  run/test. Bodies load on demand (`skill`, `read_file`), so the catalog stays
+  cheap.
+- **R5** The model can verify a runnable package headlessly with `app_test`
+  (pipes by default, a pseudo-terminal with `tty=true`; captured
+  stdout/stderr/exit, full log file) and run it on the device screen with
+  `app_run` (the app owns the whole panel and all input while dst is paused).
+- **R5b** Apps are bounded by a platform contract: platform-enforced long-press
+  Esc and timeout, CPU/file-size ulimits, a working directory and
+  `$DST_APP_STATE` inside the package, no root; the system prompt states the
+  guidelines (no system configuration, installs, services or writes outside the
+  package) and the app kinds are `sh`, `python`, `binary`, `prompt` and `doc`.
+- **R6** The user can browse runnable packages (`/apps`): list, read
+  `SKILL.md`, run (Enter), replay captured output (`l`), ask the model to
+  improve (`i`), delete (`x`, with confirmation), search (`/`) and, in creator
+  mode, start a new build (`+ new app`).
+- **R7** After a turn creator mode names what was saved — `saved skill <name>`
+  and/or `saved app <name> (runnable skill)` — or nudges with one dim line when
+  the turn wrote files but saved no package (the "no work is lost" rule is
+  visible, not just prompted).
+- **R8** Everything user-facing is localized in en/zh/es/ja/de/it.
 
 Constraints:
 
-- C1 The device is 320×170 px, 53×12 cells, 8 ANSI colours, no mouse. Apps must
-  fit that; the prompt says so.
-- C2 512 MB / 4×A53: no on-device compilation, no package installs in the app
-  flow. Apps are `sh` scripts (coreutils, /proc, /sys), `python` scripts when
-  the interpreter exists, or doc-only packages.
-- C3 App writes are restricted to `~/.dst/apps/<category>/<name>/`; traversal,
-  absolute paths and system paths are rejected by the tool, not just the prompt.
-- C4 Screen takeover only exists in the interactive TUI. `--once`, background
-  jobs and `--call` fail with a clear error instead of hanging.
+- **C1** The device is 320×170 px, 53×12 cells, 8 ANSI colours, no mouse. Apps
+  and their saved text must fit that; the prompt says so. `state_report` lines
+  are capped at 50 display cells so they fit the top row.
+- **C2** 512 MB / 4×A53: no on-device compilation, no package installs in the
+  app flow. Apps are `sh` scripts (coreutils, /proc, /sys), `python` scripts when
+  the interpreter exists, binaries already on the device, or prompt/doc-only
+  packages.
+- **C3** Package writes are restricted to `~/.dst/skills/<name>/`; traversal,
+  absolute paths, backslashes and `SKILL.md` via `skill_file` are rejected by the
+  tools, not just the prompt. Deleting refuses anything outside the user skills
+  dir.
+- **C4** Screen takeover only exists in the interactive TUI. `--once`,
+  background jobs and `--call` fail with a clear error instead of hanging.
 
 Non-goals: replacing fbterm/the OS; running services in the background (jobs and
-watchers already cover that); grabbing the framebuffer; a GUI toolkit.
+watchers already cover that); grabbing the framebuffer; a GUI toolkit; a
+separate app store or registry file.
 
 ## 3. Data layout
 
 ```text
-~/.dst/apps/
-    system/battery_viewer/
-        app.json        machine manifest (see below)
-        APP.md          short annotation: what it is, how to use it, how it works
-        run.sh          entry program (kind=sh)
-        state/          runtime state written by the app ($DST_APP_STATE)
-    tools/report/
-        app.json        kind=prompt
-        APP.md          human annotation
-        PROMPT.md       the request the model follows when the app is run
-    tools/pomodoro/
-        app.json
-        APP.md
-        main.py
+~/.dst/skills/
+    battery-viewer/            app: skill package + meta.json
+        SKILL.md               frontmatter name/description + instructions
+        meta.json              manifest: makes the package runnable
+        run.sh                 entry program (kind=sh)
+        state/                 $DST_APP_STATE: HOME, TMPDIR, last-run.log
+        .history/v1.md         previous SKILL.md bodies (kept by skill_save)
+    report-writer/             prompt app
+        SKILL.md
+        meta.json              kind=prompt, no entry
+        PROMPT.md              the reusable request
+    field-notes/               plain skill: not runnable, still in the catalog
+        SKILL.md
 ```
 
-`app.json`:
+`/etc/dst/skills/<name>/` uses the same layout for hand-installed packages; it is
+read-only (`/extensions` cannot delete from it).
+
+### 3.1 `SKILL.md`
+
+```text
+---
+name: battery-viewer
+description: Use when the user asks for the battery level or charging state.
+origin: model
+version: 2
+updated: 2026-11-17T15:00:00+08:00
+---
+
+# Battery viewer
+
+Read /sys/class/power_supply/BAT0/... and print two short lines.
+```
+
+- `name`/`description` are the catalog entry; the body is what `skill` returns
+  and what `/apps` `→` shows. Keep `name` equal to the folder name; `/apps`
+  resolves and lists packages by folder name.
+- `origin: model`, `version` and `updated` are written by `skill_save` for
+  packages dst wrote itself. Hand-installed packages may omit them.
+
+### 3.2 `meta.json`
+
+The presence of this file is the *only* switch that makes a package runnable.
+It is written by the model with `skill_file`; dst rewrites it to record runs.
 
 ```json
 {
-  "name": "battery_viewer",
   "title": "Battery viewer",
-  "category": "system",
-  "description": "Shows the charge level and charging state, refreshed live.",
   "kind": "sh",
   "entry": "run.sh",
   "requires": ["sh"],
@@ -115,345 +156,477 @@ watchers already cover that); grabbing the framebuffer; a GUI toolkit.
   "capture": false,
   "version": 1,
   "created": "2026-11-17T15:00:00+08:00",
-  "updated": "2026-11-17T15:00:00+08:00"
+  "updated": "2026-11-17T15:00:00+08:00",
+  "last_run": {"at": "2026-11-17T15:01:00+08:00", "secs": 1.2, "outcome": "exit 0"},
+  "last_test": {"at": "2026-11-17T15:01:40+08:00", "secs": 0.4, "outcome": "exit 3"}
 }
 ```
 
+| field | written by | meaning |
+| --- | --- | --- |
+| `title` | model | human label in `/apps`; defaults to the folder name with `-`/`_` turned into spaces |
+| `kind` | model | `sh`, `python`, `binary`, `prompt` or `doc`; any other value makes the package non-runnable |
+| `entry` | model | relative file inside the package; required for `sh`/`python`/`binary`, empty for `prompt`/`doc` |
+| `requires` | model | binaries the app needs: names on `PATH` or absolute paths, max 8; checked before every run/test |
+| `default_args` | model | whitespace-split argv appended to the entry when `/apps` launches it (an `app_run` `args` value wins) |
+| `capture` | model | record the app's stdout/stderr to `state/last-run.log`; implies piped output (not a tty) |
+| `version` | model | build number shown in the `/apps` panel (default 1); it is independent of the `SKILL.md` version that `skill_save` maintains |
+| `created`, `updated` | model | ISO local timestamps shown in the `/apps` panel |
+| `last_run`, `last_test` | **dst** | `{at, secs, outcome}` after each run/test; treat as read-only |
+
 Rules:
 
-- `name` is a slug (`[a-z0-9][a-z0-9_-]{0,31}`), unique within the category;
-  category is a slug, default `apps`.
-- `kind` is `sh` | `python` | `binary` | `prompt` | `doc`; `entry` is a
-  relative file inside the app dir and is required except for `doc` and
-  `prompt`. `sh`/`python` go through the interpreter, `binary` executes the
-  entry directly (it must be executable), `prompt` returns PROMPT.md as a
-  request to follow, `doc` opens APP.md in the panel.
-- `description` is one line (≤160 chars); `annotation` (APP.md) is a short
-  markdown body (≤4000 chars): what it does, how to use it, how it works, the
-  files. It is written for the user reading `/apps` later, not for the model.
-- Saving an existing name updates in place and bumps `version` (and `updated`);
-  files not rewritten are kept, so a one-file fix does not need a full rebuild.
-- Runtime state goes to a `state/` directory inside the app (`$DST_APP_STATE`),
-  so a counter or cache never pollutes APP.md/app.json.
-- `app_export` packs the whole package (manifest, annotation, program, state)
-  into `~/.dst/tmp/app-<category>-<name>.tar.gz` for backups or for copying an
-  app off the device; it is the model-side export path.
-- `requires` lists binaries the app needs (commands on PATH or absolute
-  paths, max 8). `app_run`/`app_test` refuse to start an app whose
-  requirements are missing, with an error naming the exact binary — important
-  on a minimal device where python/curl may not exist.
-- `default_args` is passed when the user launches the app from `/apps`
-  (model `app_run` args override it); useful for CLI-style apps with a fixed
-  mode. The annotation panel shows the version and the default args.
-- `capture: true` makes `app_run` give the app a **piped** stdout/stderr
-  (not a tty) while dst forwards the bytes to the panel and records a cleaned
-  copy (`state/last-run.log`, ANSI/CR stripped) for replay. It is for text
-  apps; full-screen TUI apps should leave it off.
-- `app_import` restores an archive from `~/.dst/tmp`: it extracts into a temp
-  dir, requires exactly one `<category>/<name>/` tree with a valid manifest,
-  caps the package (200 files / 256 KB) and refuses paths outside the tmp dir;
-  `replace=true` overwrites an installed app.
-- Model-written skills use the existing skills layout:
-  `~/.dst/skills/<name>/{SKILL.md, …supporting files}`; `skill_save` writes the
-  frontmatter + body (including `origin: model`), `skill_file` adds support
-  files. They appear in the SKILLS catalog (and in `/extensions`) from the next
-  turn on, and are loaded with the `skill` tool exactly like hand-installed
-  skills.
-- `/extensions` marks model-written skills with a localized `[model]` badge and
-  lets the user manage them: Enter shows the metadata preview, `→` opens the
-  full SKILL.md body in the panel viewer, `x` disables/enables, `d` deletes the
-  selected user-owned package after `delete skill <name>? y/n`. Packages under
-  `/etc/dst/skills` are read-only (no delete).
-- Saving a skill **versions** it: `skill_save` bumps `version` in the
-  frontmatter, stamps `updated`, copies the previous body to
-  `.history/v<N>.md` (last five kept), and shows `(vN)` in the SKILLS catalog
-  from v2 on; `/extensions` details show version/updated.
-- `skill_rollback` restores the body of an earlier version (default: previous
-  step) as a **new** version, archiving the current one first — so a rollback
-  is itself reversible and the version number only goes up. Unknown versions
-  fail with the available version list.
-- The `skill` tool reloads from disk when the startup catalog misses a name, so
-  a skill the model just wrote can be loaded and followed in the same turn (the
-  SKILLS catalog itself updates on the next turn).
-- The injected catalog names the entry (`[sh:run.sh]`), so the model knows which
-  file to rewrite without reading the manifest first. A failed last run/test is
-  appended to the catalog line (` (!last test: exit 3)`) so the model knows to
-  fix an app before reusing it.
-- Each run/test is recorded back into `app.json` as `last_run` / `last_test`
-  (`{at, secs, outcome}`, outcome `exit N` / `timeout Ns` / `esc` / `signal`).
-  The `/apps` annotation panel shows both with a short time; a manifest update
-  by `app_save` preserves them.
-- Writes go through `app_save` / `app_file`; each file is capped (32 KB per
-  file, 256 KB per app) so a model cannot fill the microSD through the tool.
+- The folder name is the app name: a flat slug (`[a-z0-9][a-z0-9_-]{0,47}`), no
+  category. A legacy `category/name` string is still accepted when resolving an
+  `app_run` name from an old prompt/session, but it never selects a subdirectory.
+- A package whose `meta.json` has an unknown `kind`, invalid JSON, or a missing
+  `entry` for a program kind is silently **not an app**; it stays a plain skill
+  in the catalog.
+- dst rewrites `meta.json` when it records a run/test and preserves only the
+  fields in the table above. Keep generated data out of it (and out of
+  `SKILL.md`); put runtime state in `state/`.
+- `description` for `/apps` comes from the `SKILL.md` frontmatter; an optional
+  `meta.json` `description` wins when present, but the catalog text belongs in
+  `SKILL.md` (it is also what the `skill` tool returns).
+- A failed last run/test is the health flag: `exit 0`, `esc` and an empty stamp
+  are healthy; everything else marks the package with `!` in `/apps`, counts it
+  in the idle hint (`.dst` shows `creator · 2 apps · 1! · /apps · hold Esc`) and
+  appends ` (!last test: exit 3)` to its catalog line.
+
+### 3.3 Kinds
+
+| `kind` | `entry` | execution | Enter in `/apps` |
+| --- | --- | --- | --- |
+| `sh` | script | `/bin/sh <entry> [args]` | full-screen run |
+| `python` | script | `python3` (or `python`) `<entry> [args]`; fails if no interpreter | full-screen run |
+| `binary` | executable | executes the entry directly; must have the executable bit (`chmod +x` via bash) | full-screen run |
+| `prompt` | — | nothing runs: `app_run` returns `PROMPT.md` (else the `SKILL.md` body) as instructions to follow now | request is previewed; Enter sends it as the next turn, Esc goes back |
+| `doc` | — | nothing runs; `app_run`/`app_test` return an actionable error | opens the `SKILL.md` panel |
+
+A `prompt`/`doc` package needs no entry file, but still needs `meta.json` to
+appear in `/apps`. A deliverable that needs no program does not need `meta.json`
+at all: a plain skill is valid.
+
+### 3.4 State, history and limits
+
+- `$DST_APP_STATE` is created by dst before every run/test: it is the package's
+  `state/` directory. `HOME` is `state/home`, `TMPDIR` is `state/tmp`, and the
+  working directory is the package folder.
+- `capture: true` apps get their cleaned output (ANSI/CR stripped, last 64 KB)
+  written to `state/last-run.log`; `/apps` `l` replays it and `app_run`'s result
+  names the path.
+- `skill_save` keeps the previous `SKILL.md` under `.history/vN.md` and prunes to
+  the last five snapshots. `skill_rollback` restores an earlier body as a new
+  version.
+- Tool-enforced limits: `SKILL.md` body ≤12,000 characters, description ≤200,
+  package name ≤48 characters, one `skill_file` write ≤32 KB, package total
+  ≤256 KB, safe relative paths only (no absolute paths, `..`, backslashes or
+  control characters; ≤120 characters). `/apps` loads at most 200 runnable
+  packages (`MAX_APPS`).
+
+### 3.5 Migration from the old app layout
+
+The pre-refactor packages under `~/.dst/apps/<category>/<name>/` (`app.json` +
+`APP.md` + program) are **not auto-migrated**, and there were none on the shipped
+device. To recreate one by hand (or to port one from a development machine):
+
+1. Create `~/.dst/skills/<name>/` (the folder name is the new app name; the old
+   category disappears — skill names are flat).
+2. Write `SKILL.md` with frontmatter `name` (same as the folder) and
+   `description`, and use the old `APP.md` content as the body. The model path is
+   `skill_save`, which handles versioning/`.history`.
+3. Write `meta.json` with `title`/`kind`/`entry`/`requires`/`default_args`/
+   `capture`/`version` from the old `app.json`. The model path is `skill_file`.
+4. Keep the entry program (`run.sh`, `main.py`, the binary) and `PROMPT.md` in
+   the same folder. Runtime state is not migrated; the app recreates `state/`.
+5. There is no `app_export`/`app_import`: back up or copy a package with `bash`
+   (`tar -C ~/.dst/skills -czf backup.tgz <name>`) like any other directory.
+
+Old `/apps` labels such as `system/battery_viewer` are no longer displayed; the
+launcher shows the folder name and title, and the catalog uses the skill name.
+
+### 3.6 Shipped skills: `hardware-info`
+
+dst ships one skill package, `~/.dst/skills/hardware-info/`, installed from a
+seed embedded in the binary on first start (only when the package is missing;
+a scanned or refined copy is never overwritten). It is a normal skill — model
+readable with the `skill` tool, listed in the catalog, managed by
+`/extensions` — but dst itself maintains its measured section:
+
+- the reference body (parts, how dst talks to the panel/keys/audio/battery,
+  safe probe commands, hardware-code rules, sources) is the seed/file content;
+- between `<!-- hw-scan:begin -->` and `<!-- hw-scan:end -->` the owner is
+  `src/hwinfo.rs`: a bounded, read-only scan (every probe has a timeout) writes
+  the measured state, the version bumps only when the measured hardware
+  changed, the previous copy goes to `.history/` and the raw capture to
+  `state/scan-latest.txt`;
+- first-run setup offers the scan once (`tui.hw_survey_done` records that it was
+  asked); `/update-hwinfo` re-runs it later. In creator mode the command also
+  asks the model to read the refreshed skill and refine it with `skill_save`;
+  in normal mode the scan alone is applied.
+
+This is the ground truth for hardware tasks ("show the battery", "read the
+IMU", "what is on the i2c bus"): answer from the skill before probing blindly,
+and prefer the measured current state over the reference assumptions.
 
 ## 4. Modes: what changes
 
 | | normal | creator |
 |---|---|---|
-| system prompt | base | base + `CREATOR MODE` block + installed-app catalog |
-| tools | base set | + `app_save`, `app_file`, `app_test`, `app_run`,
-  `app_export`, `app_import`, `skill_save`, `skill_file`, `skill_rollback` |
-| idle hint | `idle_hint` | `creator_hint` (mentions `/apps` and long-Esc) |
-| after a turn | nothing | saved-app notice, or a nudge when files changed but no app was saved |
-| conversation | unchanged | unchanged (apps are additive) |
+| system prompt | base | base + `CREATOR MODE` block (the `SKILLS` catalog is shared) |
+| tools | 32 base tools | + `app_run`, `app_test`, `skill_save`, `skill_file`, `skill_rollback` |
+| writing | hand-installed skills only | + model can create/update/roll back packages |
+| `/apps` | browse/run/delete; empty state is a one-line notice | always opens; adds `i` (improve) and `+ new app` |
+| idle hint | `idle_hint` (`Up/Down hist · PgUp/PgDn · CtrlO out · /help`) | `creator_hint` (`creator · N apps · /apps · hold Esc`, plus `N!` when packages are broken) |
+| after a turn | nothing | saved-skill/saved-app notices, or the unsaved-work nudge |
+| conversation | unchanged | unchanged (packages are additive) |
 
-Switching mode rebuilds the tool registry and the system prompt (the prompt is
-rebuilt at the start of every turn anyway, so a new app shows up immediately in
-the next turn's catalog). The switch is reported in the transcript, so it is
-never a silent state change.
+`/config` gains a Mode row (`normal` / `creator`). Toggling it closes the menu
+and reports `creator mode on · apps: ~/.dst/skills (N installed)` or
+`creator mode off · N apps stay installed`; the registry and the idle hint
+switch immediately and the prompt is rebuilt at the start of the next turn
+(it is rebuilt every turn anyway, so a package written in turn N is catalogued
+in turn N+1). There is deliberately no `/creator` command.
 
-## 5. Model contract (system prompt block)
+## 5. Model contract (system-prompt block)
 
-Appended in creator mode; the catalog is one line per app, capped at 40 apps:
+The creator block is appended only in creator mode (`src/apps.rs::prompt_section`).
+Abridged; the catalog itself is the shared `SKILLS` block:
 
 ```text
 CREATOR MODE — you own this device
-You are the only application on this Cardputer Zero. The panel, the keyboard
-and the storage are yours: everything the user sees is something you built or
-will build.
+You are the only application on this Cardputer Zero. The panel, the keyboard and
+the storage are yours: everything the user sees is something you built or will
+build.
 
-APPS — persistent things you own
-- Root: <home>/.dst/apps/<category>/<name>/ — app.json (manifest), APP.md
-  (annotation), the entry program and any supporting files.
-- When the user asks you to build, change or automate something for the device,
-  persist it as an app before your final answer: app_save creates the package
-  and the annotation, app_file writes the files, app_run runs it full-screen.
-- Write APP.md for the user who opens `/apps` next week: what it does, how to
-  use it, how it works, which files matter. Keep it short and factual.
-- Update an existing app instead of duplicating it: keep its name, bump the
-  version, rewrite only the files that changed.
-- A pure question ("what is...") stays an answer; a doc-only deliverable is a
-  valid app (kind=doc, the annotation is the content).
-- Device limits for apps: 320x170 px, 53x12 cells, 8 ANSI colours, no mouse;
-  sh + coreutils (/proc, /sys) and python3 when present; no installs, no
-  services, no compilation.
-- app_run takes optional space-separated `args` (passed to the entry as argv)
-  and a timeout; a run needs an interactive screen, so it fails from background
-  jobs and --once.
-- App state goes under $DST_APP_STATE (a state/ directory inside the app); apps
-  draw on stdout and read keys from stdin; the platform owns long-Esc/timeout.
-- Kinds: sh and python scripts, binary (an executable file), prompt (a reusable
-  request you follow when run; APP.md is the annotation, PROMPT.md the request),
-  doc.
-- APP CONTRACT (bounded, the platform enforces what it can): an app owns the
-  whole screen while it runs and dst is paused; it may not change system
-  configuration, install software, start services, or write outside its
-  package/state/tmp; it must exit (0 = success) and leave the screen
-  recoverable (the platform repaints). The platform caps CPU time and per-file
-  size with ulimits and enforces the Esc/timeout backstop.
-- Verify before you show it: call app_test (headless pipes, captured
-  stdout/stderr/exit, log file under ~/.dst/tmp) and fix failures; test the
-  happy path plus bad input. app_run is for the user to see the real
-  full-screen behaviour.
+ONE UNIT: THE SKILL PACKAGE
+- Everything you persist lives in ~/.dst/skills/<name>/: SKILL.md (frontmatter
+  name+description, then the instructions), optional supporting files, and
+  optional meta.json.
+- A skill package is an APP when its folder also has meta.json: that file
+  declares kind (sh|python|binary|prompt|doc), entry, requires, default_args and
+  capture. Multiplied by nothing else — there is no separate app store and no
+  app_* writing tool.
+- Create/update a skill with skill_save (SKILL.md + frontmatter, versioned) and
+  put every other file — run.sh, PROMPT.md, meta.json — in the folder with
+  skill_file. Writing meta.json is the step that makes the package runnable, and
+  the platform reads it to list, run and test the app.
+- The SKILLS catalog injected below is the single source of truth: a runnable
+  skill shows its kind and entry ([sh:run.sh]) and a failed last run/test. Read
+  details with read_file (SKILL.md, meta.json) instead of guessing; there is no
+  app_list tool because the folder IS the list.
+- Update an existing package instead of duplicating it: keep its name, rewrite
+  only the files that changed; skill_save bumps the version and keeps the old
+  SKILL.md under .history/ (restore it with skill_rollback).
+- A pure question ("what is...") stays a chat answer. A deliverable that needs
+  no program is still a valid app: kind=doc (SKILL.md is the content) or no
+  meta.json at all (a plain skill).
+- Device limits for apps: 320x170 px, 53 columns x 12 rows, 8 ANSI colours, no
+  mouse. Use sh + coreutils (/proc, /sys); python only when present. No
+  installs, no services, no compilation.
+- App state: write runtime state under $DST_APP_STATE (a state/ dir inside the
+  package); keep SKILL.md and meta.json free of generated data. Apps draw on
+  stdout and read keys from stdin; the platform guarantees a long-press of Esc
+  and a timeout.
+- APP CONTRACT (the platform enforces what it can): an app owns the whole screen
+  while it runs and dst is paused; it may not change system configuration,
+  install software, start services, or write outside its package/state/tmp; it
+  must exit (0 = success) and leave the screen recoverable.
+- Verify before you show it: call app_test (captured stdout/stderr/exit, log file
+  under ~/.dst/tmp) and fix failures; test the happy path plus bad input.
+  app_test is headless by default; with tty=true it runs under a pseudo-terminal
+  like app_run (the pty has no window size, so COLUMNS/LINES stand in for the
+  real size). app_run is for the user to see the real full-screen behaviour.
+- Declare the binaries an app needs in meta.json requires; dst checks them before
+  every run/test. Use default_args for fixed arguments from /apps; app_run args
+  override them. Set capture=true on a text app you want remembered: dst records
+  its output to state/last-run.log (shown in /apps with l) and names the path in
+  app_run's result. Capture makes stdout a pipe, so do not use it for TUI apps.
 
-WHAT TO PERSIST — app vs skill vs memory
-- app: something runnable on the device (app_save/app_file, verified with
-  app_test).
-- skill: a systematic, self-contained engineering package you worked out
-  (procedure, format, checklist, support files) that will be useful again —
-  save it with skill_save/skill_file. It joins the SKILLS catalog next turn and
-  is read with the skill tool.
+SKILL vs MEMORY
+- skill: a systematic, self-contained engineering package ... useful again.
 - memory: short durable facts or preferences (memory_write); memory is
   fragments, a skill is a complete procedure.
 
-CONSENSUS — cannot be overridden
-- Long-press Esc always leaves an app and returns to the chat. The platform
-  watches the keyboard and kills the app; do not try to swallow Esc, do not
-  build a fixed-duration blocking screen.
-- Apps run full-screen; keep drawing inside 53 columns x 12 rows.
-
-INSTALLED APPS (2)
-- system/battery_viewer — Battery viewer [sh:run.sh]: charge level, refreshed live.
-- tools/pomodoro — Pomodoro timer [python:main.py]: 25/5 minute cycles.
-
-SKILLS
-- battery-report: Use when the user asks for a battery status report.
+WHAT THE USER SEES
+- /apps lists the runnable packages (skill folders with meta.json), newest
+  activity first: Enter runs, Right reads SKILL.md, l replays the last captured
+  output, i asks you to improve it, x deletes it. Long-press Esc always leaves a
+  running app.
+- A saved skill is announced in the transcript; a package that gained meta.json
+  is announced as a saved app. After a turn that wrote files but saved no skill,
+  you are nudged to persist it.
 ```
 
-The catalog mirrors `skills::catalog_prompt`: name/title/description/kind (and
-entry) only, so the prompt stays cheap; the model reads `APP.md` with
-`read_file` when it needs the details.
+The `SKILLS` catalog (every mode) is one line per enabled package:
 
-## 6. Screen takeover contract (`app_run`) and headless testing (`app_test`)
+```text
+SKILLS
+These packaged instructions are available on demand. ...
 
-`app_test` is the model's own verification harness: it runs the same entry and
-environment through pipes (no screen), feeds optional `stdin`, captures
-stdout/stderr up to 64 KB each, reports exit code/timeout/duration, and writes
-the full log to `~/.dst/tmp/app-test-<category>-<name>.log`; the model can read
-that file with `read_file`. Prompt/doc apps cannot be tested (nothing runs).
-With `tty=true` it runs under a pseudo-terminal via `script(1)` — the same kind
-of transport as `app_run` — so `[ -t ]` branches and ANSI/TUI output can be
-tested headlessly. That pty has no window size; `COLUMNS=53`/`LINES=12` are
-exported for apps that honour the env, stdin is line-normalised, and pty echo
-appears in the captured output.
+- battery-viewer (v2) [sh:run.sh]: Use when the user asks for the battery level.
+- report-writer [prompt]: Use when the user wants a written report drafted.
+- broken-clock [sh:run.sh] (!last test: exit 3): Use for a clock on the panel.
+- field-notes: Use when the user asks about field observations.
+```
 
+`(vN)` appears from `SKILL.md` version 2 on; `[kind:entry]` (or just `[kind]` for
+`prompt`/`doc`) marks runnable packages; the health suffix names the most recent
+failed stamp and ends the catalog line's marker. The model reads the details with
+`read_file` instead of paying for them in every request.
+
+### 5.1 Shared prompt blocks that shape creator work
+
+These are in the base system prompt in every mode; they are what makes a build
+turn readable on the panel:
+
+- `LANGUAGE` — the UI language is pinned as the **default answer language**
+  (`prose, artifact bodies, state reports, questions and errors`). A user request
+  for another language, or a request to match the language they write in, wins
+  and stays in effect. The UI language itself is set by `tui.language` /
+  `/config`.
+- `PROGRESS ROW` — call `state_report` with ONE short line when a long task
+  changes stage. It is pinned to the top row while the turn runs, must fit one
+  row (at most 50 display cells on the 53-column panel, CJK counts as 2) or the
+  call is rejected, and must not contain secrets.
+- `STYLE` — concise answers, no narration of steps; on interrupt, stop
+  immediately and do not retry the cancelled work.
+
+## 6. Writing and reading packages
+
+All writing goes through two tools registered only in creator mode; reading works
+in every mode.
+
+### 6.1 `skill_save`
+
+Parameters: `name`, `description` (max 200 chars, whitespace-normalised),
+`instructions` (the complete markdown body, max 12,000 chars).
+
+- Creates `~/.dst/skills/<name>/SKILL.md` with frontmatter
+  `name`/`description`/`origin: model`/`version`/`updated` (a title-ish name is
+  slugged: lowercase, whitespace → `-`).
+- On update: archives the current body to `.history/v<N>.md` (last five kept) and
+  bumps `version`; the visible version is `(vN)` in the catalog and in
+  `/extensions`.
+- Announced in the transcript as `saved skill <name> vN`; `skill_save` alone
+  does not make a runnable app.
+
+### 6.2 `skill_file`
+
+Parameters: `name`, `path` (relative path inside the package), `content`
+(max 32 KB; the whole package ≤256 KB).
+
+- Requires an existing package (`call skill_save first`); paths are validated
+  (no absolute paths, no `..`, no backslashes, no control characters).
+- `SKILL.md` is refused here — it belongs to `skill_save`. Everything else is
+  fair game: `run.sh`, `main.py`, `PROMPT.md`, templates, reference data and
+  `meta.json`.
+- Writing `meta.json` is the moment a package becomes runnable; the transcript
+  announces `saved app <name> (runnable skill)`. Other support files are not
+  announced.
+
+### 6.3 `skill_rollback`
+
+Restores the body of an earlier version as a **new** version (current body is
+archived first, so a rollback is itself reversible). Omit `version` to go back
+one step. Unknown versions fail with the list of available versions.
+
+### 6.4 Reading
+
+- `skill` loads the body of a package (the result includes the package path so
+  relative references resolve); it falls back to a fresh disk scan, so a skill
+  written earlier in the same turn can be loaded immediately.
+- `read_file` reads raw package files (`SKILL.md`, `meta.json`, entry programs)
+  and is the right way to inspect details instead of guessing.
+- `/apps` `→` shows the same `SKILL.md` body to the user.
+- There is no `app_list`: the `SKILLS` catalog is the list, and the folder is the
+  source of truth.
+
+## 7. Execution: `app_test` and `app_run`
+
+Both tools are registered only in creator mode, and both refuse `prompt`/`doc`
+packages (nothing to execute; `app_run` on a prompt returns its instructions
+instead).
+
+### 7.1 `app_test` — headless verification
+
+Parameters: `name`, `args` (space-separated argv), `stdin` (text piped to stdin,
+closed afterwards), `timeout_s` (default 10, max 120), `tty` (boolean).
+
+- Default: pipes, no screen. Captures stdout/stderr up to 64 KB each, reports
+  exit code/timeout/duration/bytes, and writes the full log to
+  `~/.dst/tmp/app-test-<name>.log` (readable with `read_file`).
+- `tty=true`: runs under a pseudo-terminal via `script(1)` — the same transport
+  class as `app_run` — so `[ -t ]` branches and ANSI/TUI output can be tested.
+  The pty has no window size; `COLUMNS=53` / `LINES=12` are exported for apps
+  that honour the environment, and stdin is line-normalised.
+- The run is recorded back into the package's `meta.json` as `last_test`
+  (`outcome` = `exit N`, `timeout Ns` or `signal`).
+
+### 7.2 `app_run` — full-screen on the panel
+
+Parameters: `name`, `args` (max 200 characters, split on whitespace into at most
+32 argv tokens, appended after the entry file), `timeout_s` (default 60, max
+600).
+
+Preflight: the package must exist and `requires` must be satisfied (missing
+binaries fail with the exact name).
+
+Screen takeover:
 
 ```text
 model → app_run{name, timeout_s?, args?}
-  → runner blocks the calling tool thread, asks the TUI to take over
-  → TUI: flush, clear, spawn the entry with stdout/stderr on the panel tty,
-    stdin a pipe the runner forwards to; env carries DST_APP, DST_APP_DIR,
-    DST_APP_STATE (state/ inside the app), DST_COLS=53, DST_ROWS=12
+  → the tool thread blocks and asks the TUI to hand over the panel
+  → TUI: flush, clear, spawn the entry: stdout/stderr on the panel tty, stdin a
+    pipe the runner forwards to; env carries DST_APP, DST_APP_DIR, DST_APP_STATE,
+    DST_COLS=53, DST_ROWS=12 (and COLUMNS/LINES=53/12)
   → runner loop: forward keys, watch the child, detect long-press Esc, timeout
   → child exits / Esc / timeout → SIGTERM, wait 300 ms, SIGKILL
-  → TUI: reset the tty, repaint the whole screen, return a one-line result
+  → TUI: reset the tty, repaint the screen, return a one-line result
 ```
 
-- Long-press Esc = ≥3 ESC bytes while the hold lasts ≥450 ms. A tap (one ESC)
-  is forwarded to the app like any other key; key auto-repeat makes a real hold
-  produce many bytes, so it is unambiguous. This matches the existing
-  hold-detection used for Tab (3 bytes = hold). After a hold, the runner keeps
-  swallowing input until the keyboard has been quiet for 300 ms (2 s cap), so
-  the rest of the held key's auto-repeat cannot reach the TUI and cancel the
-  turn.
-- `timeout_s` defaults to 60, max 600. Model-initiated runs are bounded; the
-  user's `/apps` Enter has no timeout (long-Esc is the exit).
-- `args` is space-separated (max 32 tokens / 200 chars) and appended after the
-  entry file, so `run.sh --fast` arrives as `$1`.
-- The runner owns the keyboard, so an app cannot trap the user even if it
-  ignores input. Apps read keys from stdin; their stdout is the panel.
-- The tool result is one line: ran/exit code/Esc/timeout and duration. App
-  output is not captured during a normal `app_run` — the screen is the app's;
-  with `capture: true` the bytes are forwarded to the panel *and* written to
-  `state/last-run.log`, and the result names the path.
-- The result also tells the model not to repeat the app's content in the chat.
-- Every launch (screen or headless) goes through a bounded wrapper
-  (`/bin/sh -c 'ulimit -c 0; ulimit -t 120; ulimit -f 2048; exec "$0" "$@"'`):
-  no core dumps, ≤120 s CPU time, ≤1 MB per file written. The environment is **scrubbed**: nothing is inherited from dst except PATH,
-  locale and terminal basics; HOME/TMPDIR point inside `$DST_APP_STATE`
-  (`state/home`, `state/tmp`), so dst's API keys/DSH tokens and config are
-  invisible to the app. Combined with the working directory, per-app state and
-  the Esc/timeout backstop this is the enforceable part of the APP CONTRACT.
-- `kind=prompt` does not take the screen: `app_run` returns PROMPT.md as
-  instructions for the model to follow in the current turn, and choosing it in
-  `/apps` submits it as the next request (the transcript shows `> prompt app
-  <name>` instead of the whole body). `kind=doc` opens the annotation panel;
-  `kind=binary` executes the entry directly (it must be executable).
+- **Long-press Esc = ≥3 ESC bytes while the hold lasts ≥450 ms.** A tap (one
+  ESC) is forwarded to the app like any other key; key auto-repeat makes a real
+  hold produce many bytes. After a hold, the runner swallows input until the
+  keyboard has been quiet for 300 ms (2 s cap), so the rest of the auto-repeat
+  cannot reach the TUI and cancel the turn.
+- `timeout_s` defaults to 60 and is capped at 600. A launch from the user's
+  `/apps` Enter has a one-hour backstop (`DIRECT_TIMEOUT_S`) because long-press
+  Esc is the real exit there.
+- The environment is **scrubbed**: nothing is inherited from dst except `PATH`,
+  locale (`LANG`/`LC_ALL`/`TZ`) and terminal basics (`TERM`, `COLORTERM`).
+  `HOME`/`TMPDIR` point inside `$DST_APP_STATE` (`state/home`, `state/tmp`), so
+  dst's API keys/DSH tokens and config are invisible to the app. The working
+  directory is the package.
+- Every launch goes through a bounded wrapper (`/bin/sh -c 'ulimit -c 0;
+  ulimit -t 120; ulimit -f 2048; exec "$0" "$@"'`): no core dumps, capped CPU
+  time and file size. The Esc/timeout backstop is the platform guarantee the app
+  cannot disable.
+- The result is one line: ran and exit code / stopped by Esc / timeout, plus
+  duration; with `capture: true` it also names `state/last-run.log`. The model is
+  told not to repeat the app's content afterwards.
+- The run is recorded back as `last_run` in `meta.json`; `/apps` shows the last
+  use time, a `!` when the last run/test failed, and the catalog line carries the
+  same health suffix.
+- `app_run` needs the interactive screen: from `--once`, background jobs or
+  `--call` it fails with an error instead of waiting forever.
 
-## 7. UX
+## 8. Turn-time behaviour on the 53×12 panel
 
-- `/config` gains a `Mode` row: `normal` / `creator` (tokens, like
-  `auto/strict/full` for the sandbox). Toggling it closes the menu and reports
-  `creator mode on · apps: ~/.dst/apps (2)` / `creator mode off · 2 apps stay
-  installed`, and the idle hint switches immediately.
-- `/apps` is a full-width menu with the app count in the title
-  (`Apps · 3 · 1! · skills 2` in creator mode — apps, failing apps and the
-  skill catalog count; `1!` only appears when an app needs fixing),
-  rows `Battery viewer   system · sh · 18:20` — most recently
-  used apps first, with the last-run/test time in the value column (a `!`
-  after the kind means its last run/test failed) — footer
-  `↑↓·Enter run·→ read·l log·/ find·x del·Esc`. Enter runs (doc apps
-  open their APP.md panel instead); `→` opens the full annotation panel
-  (metadata: path/kind/entry/updated/files, then APP.md) for any app; `/`
-  starts search mode (typing filters live by name/title/category, Enter keeps
-  the filter, Esc cancels; the list title becomes `Apps · 1/3`); `x` asks
-  `delete <name>? y/n` in the footer before removing the package. Running an
-  app from the menu returns to the menu; leaving it prints the run notice in
-  the transcript.
-- The idle hint in creator mode is `creator_hint`, which shows the installed
-  count, a failing-app counter (`creator · 2 apps · 1! · /apps · hold Esc`
-  when an app's last run/test failed), `/apps` and the long-Esc rule, e.g.
-  `creator · 2 apps · /apps · hold Esc`,
-  so the mode is visible without a second status glyph. The count is cached and
-  refreshed when the mode changes, a turn ends or `/apps` closes.
-- A saved app is announced in the transcript on one line: `saved app
-  system/battery_viewer`; a model-written skill is announced as `saved skill
-  battery-report` and appears in the SKILLS catalog and `/extensions` next turn.
-- `l` in `/apps` replays the selected app's last recorded output
-  (`state/last-run.log`, capture apps only) in the panel viewer; `i` asks the
-  model to improve the selected app (creator mode): it closes the launcher and
-  pre-fills `Improve the app <category>/<name>: ` in the prompt.
-- In creator mode the launcher always exists: with zero apps it still opens
-  (title `Apps · 0 · skills N`) and ends with a `+ new app` row. Enter on it
-  closes the launcher and pre-fills the prompt with the localized
-  "Build an app: " seed plus a one-line hint, so the user only types what the
-  app should do and Enter sends it to the model to build. In normal mode an
-  empty `/apps` stays a one-line text notice.
-- Launching a prompt app from `/apps` first opens its request in the panel
-  viewer (Enter sends, Esc goes back), then submits it as the next turn marked
-  `> prompt app <name>` — an accidental Enter no longer fires a stored prompt.
-- The nudge appears only when the turn actually wrote files through a tool
-  (`write_file` / `edit_file` / `app_file` / `skill_file`) and did not call
-  `app_save`/`skill_save`; a
-  read-only shell inspection does not trigger it.
+The following UI changes are part of the creator-mode workflow (they apply in
+every mode):
 
-## 8. Safety
+- **Pinned progress row.** `state_report` puts one short line on the top row in
+  bright magenta with a `»` icon. A newer report replaces it; when the next
+  transcript line appears (or the turn ends) the report is committed to the log
+  with the same icon and the row is freed. No tool card is drawn for it — the
+  pinned row is the whole presentation. The line is normalised to one row and
+  rejected above 50 display cells, so it can never wrap or push the input off
+  the panel.
+- **Tool cards show their arguments.** When a call starts the transcript gets
+  `* <tool>` plus the call's arguments as indented lines (long values folded,
+  capped at five rows, then `… more: CtrlO`). When it settles the card gets
+  `└ <secs>s ok` / `└ <secs>s x` and a one-line `↳` preview of the result. The
+  full arguments and result stay available in `CtrlO`.
+- **`CtrlO` opens during a turn.** It lists the last 20 tool calls (full args,
+  result up to 6,000 chars; failures marked `x`): `↑↓` selects, Enter opens the
+  full call + result in the panel viewer, `s` saves the pair under
+  `~/.dst/tmp/tool-<session>-<tool>.txt`, Esc/`q` closes. The turn keeps
+  streaming behind it.
+- **Paging.** `PgUp`/`PgDn` move the transcript by one screenful; the scroll
+  clamps so the top of the transcript stops at the top row instead of scrolling
+  into blankness. List menus page the same keys: a page key is replayed as a
+  screenful of `↑`/`↓`, so the list window moves and the selection follows. On an
+  empty prompt `↑`/`↓` first recall input history (and scroll only when there is
+  no history left to recall); with an empty prompt and a scrolled transcript,
+  `Home`/`End` jump to top/bottom.
+- **One interrupt stops the whole turn.** `Esc` cancels the turn at once — not
+  just the tool in flight — and stops any speech. Text already typed becomes the
+  next message (queued at the front and announced as
+  `⚡ interrupted, sending now: …`); messages queued during the turn are sent
+  right after it, in order. An interrupted goal round disarms the goal
+  (`/goal resume` re-arms).
+- **Tab during a turn is an interrupt-and-talk gesture.** It stops the turn and
+  starts recording immediately (the microphone is live before the turn unwinds,
+  so the first words are kept). On release the transcript is queued as the next
+  message when `tui.auto_send_voice: true` (the default), or left in the prompt
+  for editing when it is off. Idle, Tab is hold-to-talk: a tap is ignored; speech
+  needs the official DeepSeek API.
 
-- Creator mode is explicit opt-in and is revoked in one keystroke. Apps persist
-  but cannot run themselves: they run only when the model calls `app_run` or the
-  user presses Enter in `/apps`.
-- `app_save` / `app_file` are classified Safe by the sandbox because they can
-  only write inside the app root (the tool validates every path); they never
-  cause an extra judge request.
-- `app_run` executes a file the model wrote. That is the point of the mode; the
-  consent is the mode switch plus the platform-enforced long-Esc exit. The
-  prompt forbids installs/services; the sandbox still governs everything else
-  the model does.
-- Files are writable only under `~/.dst/apps`; the app root itself is a normal
-  user directory (no root, no systemd units).
+On the device there are no dedicated arrow or page keys: hold the sticky `fn`
+modifier to press `fn`+`F`/`X`/`Z`/`C` for up/down/left/right and `fn`+`L`/`M` for
+PageUp/PageDown. The terminal sees standard cursor sequences (`ESC[5~` /
+`ESC[6~`), and dst decodes them in one place.
 
-## 9. Verification
+## 9. `/apps` — the launcher
 
-- Unit tests: slug/path validation, manifest round-trip, version bump, catalog
-  formatting, run-plan selection, Esc-hold detection, tool schema registration,
-  `/apps` command dispatch, `/config` Mode row persistence.
-- Simulator scenarios (`tools/sim/run_scenarios.py`):
-  - `creator_mode` — toggle on/off from the `/config` Mode row, idle hint,
-    transcript notice; no model request.
-  - `creator_skill_rollback` — two saves build v1/v2, `skill_rollback` restores
-    the v1 body as v3 with the pre-rollback body archived under `.history/v2.md`.
-  - `creator_requires` — an app declaring a missing binary is refused before
-    running (the other one still runs) and creator_build's panel shows
-    `requires: sh`.
-  - `creator_apps_run` also checks `default_args` (menu launch passes
-    `--fast`, panel shows `args: --fast`) and `creator_app_test` checks the
-    launcher title failing count plus `i` pre-filling an improvement request.
-  - `creator_home` — creator mode with no apps: `/apps` opens the launcher
-    (`Apps · 0 · skills 1`), `+ new app` pre-fills `Build an app:`, typing the
-    description and Enter sends it to the model.
-  - `creator_tty_test` — `app_test` in pipe mode vs `tty=true`: `[ -t 0/1 ]`,
-    `COLUMNS/LINES`, fed stdin and the result transport line all differ as
-    expected.
-  - `creator_capture` — a capture app prints ANSI lines and a CR progress line;
-    the panel echoes them, `state/last-run.log` holds cleaned text, the tool
-    result names it, and `/apps` `l` replays it.
-  - `creator_import` — restores a seeded `~/.dst/tmp/app-tools-greeter.tar.gz`,
-    refuses an archive outside the tmp dir, replaces the installed app with
-    `replace=true`, keeps the executable bit, and the app is listed by `/apps`
-    and in the next turn's catalog.
-  - `creator_skill` — the model writes skills (`SKILL.md` with frontmatter and
-    `origin: model`), updates one to v2 (`SKILL.md` version bump plus
-    `.history/v1.md`), the transcript announces them, the next turn's system
-    prompt contains them in the SKILLS catalog (no nudge), `/extensions` marks
-    them `[model]`, `→` shows the full body, the `skill` tool loads a skill in
-    the same turn it was written, and `d` + `y` deletes the selected package
-    (only the selected one; the catalog drops it next turn).
-  - `creator_app_test` — two apps tested headlessly: stdout/argv/stdin capture,
-    a 0 exit and a 3 exit, stderr capture, the full log file on disk, and
-    `last test: exit 3` recorded in the broken app's panel, a `!` flag and a
-    last-use time on its `/apps` row, and the idle hint counts it (`· 1!`).
-  - `creator_kinds` — a binary-kind app runs on the panel, a prompt app launched
-    from `/apps` is first previewed (Enter sends, Esc cancels), then submitted as
-    the next request and the model follows it.
-  - `creator_build` — model saves `system/battery_viewer` + writes `run.sh`,
-    exports the package with `app_export` and checks the tarball, writes files
-    with the annotation, a later turn's system prompt
-    contains the app in `INSTALLED APPS` (with its entry file), `/apps` lists it
-    and `→` shows the annotation panel.
-  - `creator_apps_run` — normal mode, user-driven menu: Enter runs a seeded app
-    full-screen, the menu comes back, `/` search filters, a doc app opens its
-    annotation panel, and leaving the menu shows the run notice (no model).
-  - `creator_run_args` — model `app_run` with `args`: argv arrives in the app,
-    `$DST_APP_STATE` points at the package's state directory, and a probe
-    variable (`DEEPSEEK_API_KEY`) set in dst's environment does not leak into
-    the app; its HOME is `state/home`.
-  - `creator_run` — seeded app, model calls `app_run`; the panel shows the app's
-    output mid-run, then returns to the TUI with a timeout result; the tool
-    card shows the run, the `/apps` annotation panel records
-    `last run: timeout 2s`, and the launcher row shows the use time and `!`.
-  - `creator_run_esc` — long-press Esc kills a long-running app and returns.
-  - `creator_apps_zh` — `/apps` menu, empty state and creator hint in Chinese.
-- `run_all.py --quick` (demo + all scenarios), then the full suite; the visual
-  contact sheets use the device-fidelity renderer (`tools/sim/fonts/`, 320×170
-  native pixels, subpixel AA for CJK) so every review is done at panel
-  resolution.
+Bare `/apps` opens the launcher. In normal mode with no runnable packages it
+prints a one-line notice (`no apps yet — switch to creator mode in /config`);
+creator mode always opens it, even with zero packages, so `+ new app` is always
+reachable.
+
+- **Title:** `Apps · N` (normal); in creator mode `Apps · N · B! · skills S` —
+  runnable packages, broken packages (the `!` group appears only when B > 0) and
+  the size of the whole skill catalog. `/` search shows `Apps · filtered/total`.
+- **Rows:** `title` on the left, value on the right = `kind` + ` !` when the last
+  run/test failed + ` · HH:MM` of the most recent run or test. Order: newest
+  activity first, then name. Up to 10 rows fit on the 12-row panel; longer lists
+  show a `sel/total` counter and window around the selection.
+- **Keys:**
+  - `↑`/`↓` move (PageUp/PageDown page the list).
+  - **Enter** — `sh`/`python`/`binary`: run full-screen (the menu returns after
+    the app exits or is long-Esc'd, then the transcript says `app <name>
+    returned to dst`). `doc`: open the `SKILL.md` panel. `prompt`: preview the
+    request first (Enter sends, Esc goes back, `s` saves); sending submits it as
+    the next turn marked `> prompt app <name>` and the model follows the body.
+  - **`→`** — detail panel: `path`, `kind`, `entry` (when set), `version`,
+    `updated`, `default_args`, `requires`, last run/test, the first files with
+    sizes, then the `SKILL.md` body. Scrollable; Esc closes.
+  - **`l`** — replay `state/last-run.log` (capture apps only) with the last run
+    stamp; without a log it says so. Esc closes.
+  - **`i`** (creator mode) — close the launcher and pre-fill
+    `Improve the app <name>: ` plus a hint; describe the change and press Enter.
+  - **`x`** — ask `delete <name>? y/n` in the footer, then remove the whole
+    package directory (refused outside the user skills dir).
+  - **`+ new app`** (creator mode, last row) — close the launcher and pre-fill
+    `Build an app: ` plus a hint, so the user only describes what the app should
+    do; Enter sends it to the model.
+  - **`/`** — search mode: typing filters live over name/title/description,
+    Enter keeps the filter (`filter: … · / edit · Esc clear`), Esc cancels.
+  - **Esc/`q`/Ctrl-C** — close the launcher (`Esc` first clears an active
+    filter).
+- `/apps run <name>` runs one package directly without the menu (same long-press
+  Esc exit); an unknown name prints `no app '<name>'`.
+
+## 10. Safety
+
+- Creator mode is explicit opt-in through `/config` and is revoked in one
+  keystroke. Packages persist but cannot run themselves: they run only when the
+  model calls `app_run` or the user presses Enter in `/apps`.
+- `skill_save`, `skill_file`, `skill_rollback`, `app_test` and `app_run` are
+  classified Safe by the sandbox (they never trigger the LLM judge): the write
+  tools validate every path inside the user skill library, and running a package
+  the user asked dst to build is the point of the mode.
+- `app_run` executes a file the model wrote. The consent is the mode switch plus
+  the platform-enforced long-press Esc; the prompt forbids installs/services and
+  the sandbox still governs everything else the model does.
+- Files are writable only under `~/.dst/skills/<name>/`; the package is a normal
+  user directory (no root, no systemd units, no writes outside it).
+- The APP CONTRACT is stated in the prompt and enforced where the platform can:
+  bounded CPU/file size, scrubbed environment, per-package state, and the
+  Esc/timeout backstop.
+
+## 11. Verification
+
+| Layer | Check | Covers |
+| --- | --- | --- |
+| unit tests | `cargo test` | `apps.rs`: packages load only with `meta.json`, known kind + entry required, legacy `category/name` lookup, run-plan interpreter/argv, requires preflight, run stamps written back into `meta.json`, Esc-hold detection, tool defs are execution-only (`app_test`/`app_run`). `skills.rs`: frontmatter parsing, save/update versioning + `.history`, rollback semantics, catalog formatting. Plus the `/apps` command dispatch and i18n parity tests |
+| registry | `mkdir -p /tmp/h/.dst && printf 'tui:\n  mode: creator\n' > /tmp/h/.dst/config.yml` then `HOME=/tmp/h ./target/debug/dst --tools` | prints `mode=creator` and the effective set: base 32 + `app_run,app_test,skill_file,skill_rollback,skill_save`; no `app_save`/`app_file`/`app_export`/`app_import`/`app_list` |
+| simulator | the `creator_*` scenarios in `tools/sim/scenarios/` (`run_scenarios.py`) | mode switch, packages written with `skill_save`/`skill_file` + `meta.json`, catalog line `[sh:run.sh]` and health suffix, `/apps` list/search/run/delete/detail/log/new/improve, skill versioning + rollback, prompt/doc/binary kinds, requires refusal, headless/tty tests, capture replay, run/run+args/long-Esc, zh localization |
+| live | `tools/sim/live_creator_check.py` | the real model builds a battery readout package and `/apps` shows it; the committed contact sheet predates the refactor — see `docs/UX-LIVE.md` |
+| device | manual pass | long-press Esc key-repeat rate, `/apps` Enter on the panel, prompt-app confirmation, capture log replay, `state/` writes on the real filesystem |
+
+Scenario names map to the contract; if a `creator_*` scenario still asserts
+`app.json`/`APP.md`/`~/.dst/apps`, it predates the skill-centric refactor and
+must be ported with this document. The unit tests above are the contract that
+runs everywhere, with no hardware and no network.

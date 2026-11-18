@@ -72,6 +72,12 @@ pub const COMMANDS: &[Command] = &[
         input_hint: None,
     },
     Command {
+        name: "update-hwinfo",
+        category: "cat_info",
+        description: "rescan this device's hardware and refresh the hardware-info skill",
+        input_hint: None,
+    },
+    Command {
         name: "compact",
         category: "cat_session",
         description: "summarise older history now (same method as automatic compaction)",
@@ -209,6 +215,9 @@ pub struct Outcome {
     pub apps_menu: bool,
     /// Run this saved app on the screen after the command handling (/apps run).
     pub run_app: Option<String>,
+    /// Seed the next model turn with this request (a command that hands work
+    /// to the model, e.g. /update-hwinfo refining the hardware skill).
+    pub model_prompt: Option<String>,
 }
 
 impl Outcome {
@@ -226,6 +235,7 @@ impl Outcome {
             help_menu: false,
             apps_menu: false,
             run_app: None,
+            model_prompt: None,
             compact: false,
         }
     }
@@ -243,6 +253,7 @@ impl Outcome {
             help_menu: false,
             apps_menu: false,
             run_app: None,
+            model_prompt: None,
             compact: false,
         }
     }
@@ -287,6 +298,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             help_menu: true,
             apps_menu: false,
             run_app: None,
+            model_prompt: None,
         },
         "model" => {
             if arg.is_empty() {
@@ -303,6 +315,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             help_menu: false,
             apps_menu: false,
             run_app: None,
+            model_prompt: None,
                     compact: false,
                 }
             } else if arg.len() > 120 {
@@ -378,6 +391,39 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 Outcome::many(lines)
             }
         }
+        "update-hwinfo" | "update_hwinfo" | "hwinfo" => {
+            // The scan is local and deterministic: it works in any mode. In
+            // creator mode the model then reads the refreshed skill and refines
+            // the parts that need judgement.
+            match crate::hwinfo::update() {
+                Ok(s) => {
+                    let mut out = Outcome::many(vec![(
+                        crate::i18n::tf(
+                            "hw_scanned",
+                            &[
+                                &s.sections.to_string(),
+                                &(s.bytes / 1024).max(1).to_string(),
+                                &s.version.to_string(),
+                            ],
+                        ),
+                        KIND_DIM,
+                    )]);
+                    if cfg.creator {
+                        out.model_prompt = Some(crate::hwinfo::refine_prompt(&s));
+                    } else {
+                        out.lines.push((
+                            crate::i18n::t("hw_refine_hint").to_string(),
+                            KIND_DIM,
+                        ));
+                    }
+                    out
+                }
+                Err(e) => Outcome::many(vec![(
+                    crate::i18n::tf("hw_scan_failed", &[&e]),
+                    KIND_ERR,
+                )]),
+            }
+        }
         "usage" => {
             // `report()` already opens with "<usage> · N requests"; a separate
             // heading row duplicated it and cost one of the 12 panel rows.
@@ -407,6 +453,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             help_menu: false,
             apps_menu: false,
             run_app: None,
+            model_prompt: None,
                     compact: false,
                 }
             }
@@ -418,6 +465,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             rewind_menu: true, extensions_menu: false, help_menu: false,
             apps_menu: false,
             run_app: None,
+            model_prompt: None,
         },
         "extensions" => Outcome {
             lines: Vec::new(), quit: false, clear: false, login: false,
@@ -425,6 +473,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             compact: false, rewind_menu: false, extensions_menu: true, help_menu: false,
             apps_menu: false,
             run_app: None,
+            model_prompt: None,
         },
         "rename" => {
             if arg.is_empty() {
@@ -449,6 +498,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             help_menu: false,
             apps_menu: false,
             run_app: None,
+            model_prompt: None,
             compact: true,
         },
         "goal" => {
@@ -526,6 +576,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                             help_menu: false,
                             apps_menu: false,
                             run_app: Some(app.label()),
+                            model_prompt: None,
                             compact: false,
                         },
                     }
@@ -549,6 +600,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                     help_menu: false,
                     apps_menu: true,
             run_app: None,
+            model_prompt: None,
                     compact: false,
                 }
             }
@@ -566,6 +618,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             help_menu: false,
             apps_menu: false,
             run_app: None,
+            model_prompt: None,
             compact: false,
         },
         "quit" | "exit" | "q" => Outcome {
@@ -581,6 +634,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             help_menu: false,
             apps_menu: false,
             run_app: None,
+            model_prompt: None,
             compact: false,
         },
         "" => usage("/"),

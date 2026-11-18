@@ -17,15 +17,16 @@ pub fn save(msgs: &[J], title: &str) {
         .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
         .and_then(|m| m.get("content").and_then(|c| c.as_str()))
         .unwrap_or("").chars().take(60).collect::<String>();
-    let doc = J::o(vec![
-        ("title", J::s(title)),
-        ("preview", J::s(&preview)),
-        ("created", J::Num(std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as f64).unwrap_or(0.0))),
-        ("messages", J::Arr(msgs.to_vec())),
-    ]);
+    let created = J::Num(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as f64).unwrap_or(0.0));
+    // Write the transcript straight into the document instead of cloning the
+    // whole message array first (checkpoints are full-history snapshots).
+    let doc = json::doc_messages(
+        &[("title", J::s(title)), ("preview", J::s(&preview)), ("created", created)],
+        msgs,
+    );
     let path = dir().join(format!("{}.json", stamp()));
-    let _ = std::fs::write(&path, doc.dump());
+    let _ = std::fs::write(&path, doc);
     let mut all = list_paths();
     all.sort();
     while all.len() > 20 {

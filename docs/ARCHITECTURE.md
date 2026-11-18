@@ -83,7 +83,7 @@ future parallel dispatcher (the A53 gains nothing from it today).
 `src/sandbox.rs` classifies every call before it executes:
 
 1. **Safe rules** — read-only commands, `read_file`/`list_dir`, web reads, writes
-   under the workspace, creator app tools. Pass.
+   under the workspace, skill-writing and app-run/test tools. Pass.
 2. **Danger rules** — `sudo`, `systemctl start|stop`, package managers, mounts,
    writes under `/etc`, `/boot`, `/usr`, reboot. Refused with a reason.
 3. **Everything else** — in `auto` mode one short, cheap LLM call returns a
@@ -165,23 +165,28 @@ its own conventions the way CLAUDE.md / AGENTS.md users expect.
 `/resume` groups sessions by directory and previews the last exchange;
 `/rewind` restores a checkpoint from an earlier turn.
 
-## Skills and apps
+## Skill packages (and runnable apps)
 
-Both are directories with a manifest and a body, discovered on startup and
-refreshed on change:
+Creator mode has one unit: a directory with a manifest and a body, discovered on
+startup and re-read before every turn. A package becomes a runnable app when it
+also carries `meta.json`; there is no second directory or catalog.
 
 ```text
 ~/.dst/skills/<name>/SKILL.md          YAML frontmatter + body, .history/vN.md
-~/.dst/apps/<category>/<name>/app.json manifest (kind, entry, requires, history)
-                             APP.md    user-facing annotation
-                             run.sh    entry program
-                             state/    $DST_APP_STATE
+                     meta.json         optional: makes the package a runnable app
+                     run.sh            entry program (kind=sh)
+                     state/            $DST_APP_STATE
+/etc/dst/skills/                       read-only hand-installed packages
 ```
 
-Only the catalog (one line per item) enters the prompt; bodies load on demand
-through the `skill` tool or `/apps`. Creator-mode runtime constraints — screen
-takeover, long-press `Esc`, timeouts, ulimits, scrubbed environment — are
-documented in `docs/CREATOR.md`.
+Only the catalog (one line per package) enters the prompt; bodies load on demand
+through the `skill` tool or `/apps`, and runnable packages are marked
+`[kind:entry]` with the outcome of their last run/test. `skill_save`,
+`skill_file` and `skill_rollback` write user packages and validate every path
+inside `~/.dst/skills/<name>/`; `app_test` and `app_run` only execute a package
+whose `meta.json` declares a known kind and entry. Creator-mode runtime
+constraints — screen takeover, long-press `Esc`, timeouts, ulimits, scrubbed
+environment — are documented in `docs/CREATOR.md`.
 
 ## MCP
 

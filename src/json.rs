@@ -56,6 +56,18 @@ impl J {
         J::Obj(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
     }
 
+    /// Remove a field from an object and return it, leaving `Null` behind.
+    /// Lets session/checkpoint code hand the message array over instead of
+    /// cloning the whole history (which at a full context is tens of MB).
+    pub fn take(&mut self, key: &str) -> J {
+        if let J::Obj(kv) = self {
+            if let Some(pos) = kv.iter().position(|(k, _)| k == key) {
+                return std::mem::replace(&mut kv[pos].1, J::Null);
+            }
+        }
+        J::Null
+    }
+
     pub fn dump(&self) -> String {
         let mut out = String::with_capacity(256);
         self.write(&mut out);
@@ -299,4 +311,27 @@ fn number(b: &[u8], i: &mut usize) -> Option<J> {
         return None;
     }
     std::str::from_utf8(&b[start..*i]).ok()?.parse::<f64>().ok().map(J::Num)
+}
+
+/// Serialize `{"<key>": value, ..., "messages": [ ... ]}` without building a
+/// cloned `J::Arr` of the whole transcript: sessions and checkpoints are written
+/// every turn and a full context can be several MB.
+pub fn doc_messages(header: &[(&str, J)], msgs: &[J]) -> String {
+    let mut out = String::with_capacity(4096);
+    out.push('{');
+    for (k, v) in header {
+        out.push_str(&J::s(k).dump());
+        out.push(':');
+        out.push_str(&v.dump());
+        out.push(',');
+    }
+    out.push_str("\"messages\":[");
+    for (i, m) in msgs.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&m.dump());
+    }
+    out.push_str("]}");
+    out
 }

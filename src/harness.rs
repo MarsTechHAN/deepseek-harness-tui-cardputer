@@ -346,7 +346,7 @@ fn repeat_reminder(name: &str, args: &str, count: u32) -> String {
 /// Serialise the transcript directly to JSON. Avoids the deep clone of the
 /// whole message tree that `J::Arr(msgs.clone()).dump()` used to make on every
 /// step (the context can be hundreds of KB near the limit).
-fn serialize_msgs(msgs: &[J]) -> String {
+pub(crate) fn serialize_msgs(msgs: &[J]) -> String {
     let mut s = String::with_capacity(msgs.len() * 192);
     s.push('[');
     for (i, m) in msgs.iter().enumerate() {

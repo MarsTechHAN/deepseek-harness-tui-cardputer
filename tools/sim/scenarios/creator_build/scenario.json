@@ -39,6 +39,13 @@
    "snap": "apps_preview"
   },
   {
+   "key": "PgDn"
+  },
+  {
+   "wait_ms": 300,
+   "snap": "apps_preview_body"
+  },
+  {
    "key": "Esc"
   },
   {

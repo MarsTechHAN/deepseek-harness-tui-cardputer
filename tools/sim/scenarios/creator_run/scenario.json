@@ -24,7 +24,7 @@
   },
   {
    "wait_for": {
-    "text": "time limit",
+    "text": "timeout_s=2",
     "timeout_ms": 20000
    }
   },

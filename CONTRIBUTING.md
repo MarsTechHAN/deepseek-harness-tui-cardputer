@@ -23,8 +23,12 @@ git clone git@github.com:MarsTechHAN/deepseek-harness-tui-cardputer.git
 cd deepseek-harness-tui-cardputer
 
 cargo build            # host binary: target/debug/dst
-cargo test             # 73 unit tests, no network
+cargo test             # 70 unit tests, no network
+tools/deploy/deploy.sh --build-only   # optional: aarch64 cross build + ELF check
 ```
+
+The device is never used as a build box: `tools/deploy/deploy.sh` cross-compiles
+on the host and pushes the binary (see `README.md`).
 
 ## Trying it without the device
 

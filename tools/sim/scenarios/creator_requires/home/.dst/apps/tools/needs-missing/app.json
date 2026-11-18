@@ -1,1 +1,0 @@
-{"name": "needs-missing", "title": "Needs missing tool", "category": "tools", "description": "Declares a binary that is not installed; dst must refuse to run it.", "kind": "sh", "entry": "run.sh", "version": 1, "created": "2026-01-01T10:00:00+08:00", "updated": "2026-01-01T10:00:00+08:00", "requires": ["dst-definitely-missing-tool"]}

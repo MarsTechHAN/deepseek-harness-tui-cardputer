@@ -1,0 +1,24 @@
+{
+ "responses": [
+  {
+   "reasoning": "start the long job",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "q1",
+     "name": "bash",
+     "arguments": {
+      "command": "sleep 5; echo slow-done",
+      "timeout_s": 30
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "The queued message is next.",
+   "content": "Queued answer after the interrupt.",
+   "finish_reason": "stop"
+  }
+ ]
+}
