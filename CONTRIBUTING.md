@@ -23,7 +23,7 @@ git clone git@github.com:MarsTechHAN/deepseek-harness-tui-cardputer.git
 cd deepseek-harness-tui-cardputer
 
 cargo build            # host binary: target/debug/dst
-cargo test             # 75 unit tests, no network
+cargo test             # 76 unit tests, no network
 tools/deploy/deploy.sh --build-only   # optional: aarch64 cross build + ELF check
 ```
 

@@ -147,6 +147,45 @@ fn reference_body(current: Option<&str>) -> (String, u32, String) {
     (body.trim_end().to_string(), version, updated)
 }
 
+/// Lines whose values move on their own (battery percentage, temperatures,
+/// uptime, free RAM, addresses) must not make a rescan look like new hardware.
+/// The comparison keeps the *presence* of subsystems/devices and ignores the
+/// current measurement.
+fn is_volatile_line(line: &str) -> bool {
+    const VOLATILE: &[&str] = &[
+        "uptime",
+        "available at scan",
+        "cpufreq now",
+        "voltage_now",
+        "current_now",
+        "capacity=",
+        "status=",
+        "addresses:",
+        "cpu-thermal=",
+        "bq27220-0=",
+        "root:",
+    ];
+    let l = line.to_ascii_lowercase();
+    VOLATILE.iter().any(|v| l.contains(v))
+}
+
+/// Normalised "what hardware is there" key for two scan sections.
+fn facts_key(section: &str) -> String {
+    section
+        .lines()
+        .filter(|l| !l.starts_with("Scan performed on the device at"))
+        .filter(|l| !is_volatile_line(l))
+        .map(|l| {
+            l.chars()
+                .map(|c| if c.is_ascii_digit() { '#' } else { c })
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
 /// The scan section of an existing SKILL.md (between the markers), or "".
 fn previous_scan(text: &str) -> String {
     let Some(begin) = text.find(SCAN_BEGIN) else {
@@ -680,22 +719,8 @@ pub fn update() -> Result<Summary, String> {
     // stamp the freshness and keep the version, so history stays meaningful.
     // Volatile numbers (uptime, free memory, temperatures, charge) are
     // normalised away; a different set of devices/subsystems still counts.
-    let facts = |section: &str| -> String {
-        section
-            .lines()
-            .filter(|l| !l.starts_with("Scan performed on the device at"))
-            .map(|l| {
-                l.chars()
-                    .map(|c| if c.is_ascii_digit() { '#' } else { c })
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_string()
-    };
     let prev_facts = current.as_deref().map(previous_scan).unwrap_or_default();
-    let changed = facts(&prev_facts) != facts(&scan_section);
+    let changed = facts_key(&prev_facts) != facts_key(&scan_section);
     if current.is_some() && changed {
         // Only a real change of the measured hardware is a new version; the
         // freshness stamp alone is not.
@@ -845,6 +870,16 @@ mod tests {
         let (reference, _, _) = reference_body(current.as_deref());
         assert_eq!(reference, "hand written", "a body without markers is kept whole");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn volatile_measurements_do_not_bump_the_version() {
+        let first = "# scan\n### Battery and power\n- bq27220-0: type=Battery status=Discharging capacity=87\n- bq27220-0 voltage_now=3947000 current_now=-528000\n### Thermal and sensors\n- cpu-thermal=53154\n### Buses and GPIO\n- i2c devices: 1-0010=es8390 1-0034=tca8418c\n";
+        let second = "# scan\n### Battery and power\n- bq27220-0: type=Battery status=Charging capacity=64\n- bq27220-0 voltage_now=4102000 current_now=210000\n### Thermal and sensors\n- cpu-thermal=48012\n### Buses and GPIO\n- i2c devices: 1-0010=es8390 1-0034=tca8418c\n";
+        assert_eq!(facts_key(first), facts_key(second), "only measurements changed");
+        // A device appearing on the bus IS a hardware change.
+        let third = second.replace("1-0034=tca8418c", "1-0034=tca8418c 1-0055=bq27220");
+        assert_ne!(facts_key(second), facts_key(&third));
     }
 
     #[test]

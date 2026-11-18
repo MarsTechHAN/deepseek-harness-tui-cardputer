@@ -15,7 +15,7 @@ zero-dependency Rust binary, on a 320×170 handheld.**
 <img src="https://img.shields.io/badge/binary-1.0%20MB-2ea043?style=flat-square" alt="1 MB binary">
 <img src="https://img.shields.io/badge/panel-320%C3%97170%20%C2%B7%2053%C3%9712%20cells-22d3ee?style=flat-square" alt="320x170 panel, 53x12 cells">
 <img src="https://img.shields.io/badge/UI%20languages-6-8b5cf6?style=flat-square" alt="6 UI languages">
-<img src="https://img.shields.io/badge/tests-75%20passing-2ea043?style=flat-square" alt="75 unit tests">
+<img src="https://img.shields.io/badge/tests-76%20passing-2ea043?style=flat-square" alt="76 unit tests">
 <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs welcome"></a>
 
 <a href="#quick-start">Quick start</a> ·
@@ -498,7 +498,7 @@ artifacts, sessions across a restart, onboarding, sandbox modes, jobs, watchers,
 searchable resume, push-to-talk with mocked speech, the nine-step WeChat login
 chain, provider failures and recovery, CJK input and the creator-mode scenarios.
 
-Unit tests (host, no network): `cargo test` — 75 tests over the harness, tool
+Unit tests (host, no network): `cargo test` — 76 tests over the harness, tool
 pipeline, compaction budgets, goal state machine, context formatting, config
 round-trip, skill packages, runnable apps, the hardware-info scan/renderer and
 the i18n catalogue.
