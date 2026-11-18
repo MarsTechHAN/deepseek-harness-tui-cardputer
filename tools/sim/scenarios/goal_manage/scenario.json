@@ -16,6 +16,12 @@
    "wait_ms": 150
   },
   {
+   "wait_for": {
+    "text": "working",
+    "timeout_ms": 20000
+   }
+  },
+  {
    "send": "/goal pause"
   },
   {

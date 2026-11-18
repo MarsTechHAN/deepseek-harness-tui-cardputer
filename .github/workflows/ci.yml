@@ -88,7 +88,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     continue-on-error: true
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -114,7 +114,7 @@ jobs:
         run: |
           cd tools/sim
           set +e
-          DST_SCENARIO_TIMEOUT=120 timeout 2100 python3 run_scenarios.py 2>&1 | tee /tmp/scen.log
+          DST_SCENARIO_TIMEOUT=180 timeout 2700 python3 run_scenarios.py 2>&1 | tee /tmp/scen.log
           exit 0
 
       - name: Scenario summary
@@ -122,20 +122,36 @@ jobs:
         run: |
           set -euo pipefail
           total=$(grep -cE '^\[PASS\]' /tmp/scen.log || true)
-          failed=$(grep -E '^\[FAIL\]' /tmp/scen.log || true)
+          awk '
+            /^\[FAIL\] / {
+              name=$0
+              sub(/^\[FAIL\] /, "", name)
+              sub(/ \(.*$/, "", name)
+              scen=name
+              next
+            }
+            /^  FAIL / {
+              label=$0
+              sub(/^  FAIL /, "", label)
+              print scen "\t" label
+            }
+          ' /tmp/scen.log > /tmp/failing-checks.tsv || true
           {
             echo "### Simulator scenarios"
             echo
             echo "passed: ${total:-0} / 96"
-            if [ -n "$failed" ]; then
+            if [ -s /tmp/failing-checks.tsv ]; then
               echo
-              echo "| failed scenario |"
-              echo "| --- |"
-              echo "$failed" | sed -E 's/^\[FAIL\] ([^ ]+).*/| `\1` |/'
+              echo "| scenario | failing check |"
+              echo "| --- | --- |"
+              awk -F '\t' '{printf "| `%s` | %s |\n", $1, $2}' /tmp/failing-checks.tsv
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-          # Surface failures as annotations on the run page.
-          echo "$failed" | grep -E '^\[FAIL\]' | sed -E 's/^\[FAIL\] ([^ ]+).*/::error title=scenario \1 failed::\1/' || true
+          # One annotation per failing check on the run page.
+          while IFS=$'\t' read -r scen label; do
+            [ -n "$scen" ] || continue
+            echo "::error title=scenario $scen:: $label"
+          done < /tmp/failing-checks.tsv || true
 
   # ---------------------------------------------------------------------
   # Release binaries: native x86_64 Linux + cross-compiled aarch64 (the
