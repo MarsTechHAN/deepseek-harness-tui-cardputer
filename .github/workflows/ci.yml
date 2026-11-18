@@ -46,7 +46,28 @@ jobs:
         run: cargo build --release --locked
 
       - name: Unit tests
-        run: cargo test --locked
+        continue-on-error: true
+        run: |
+          set +e
+          cargo test --locked --no-fail-fast 2>&1 | tee /tmp/test.log
+          exit 0
+
+      - name: Unit test summary
+        if: always()
+        run: |
+          set -euo pipefail
+          if grep -qE 'test result: FAILED' /tmp/test.log; then
+            {
+              echo "### Unit tests"
+              echo
+              echo "| failed test |"
+              echo "| --- |"
+              grep -E '^test .* FAILED$' /tmp/test.log | sed -E 's/^test ([^ ]+) .*/| `\1` |/'
+            } >> "$GITHUB_STEP_SUMMARY"
+            grep -E '^test .* FAILED$' /tmp/test.log | sed -E 's/^test ([^ ]+) .*/::error title=failed unit test::\1/'
+            exit 1
+          fi
+          echo "unit tests passed" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build debug binary for the simulator
         run: cargo build --locked
