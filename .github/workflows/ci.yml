@@ -127,10 +127,8 @@ jobs:
         include:
           - arch: x86_64
             target: x86_64-unknown-linux-gnu
-            linker: ""
           - arch: aarch64
             target: aarch64-unknown-linux-gnu
-            linker: aarch64-linux-gnu-gcc
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -144,22 +142,41 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Install the aarch64 cross linker
+      - name: Add the aarch64 target
         if: matrix.arch == 'aarch64'
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
-          rustup target add aarch64-unknown-linux-gnu
+          rustup target add "${{ matrix.target }}"
+          rustup target list --installed
 
-      - name: Build
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.linker }}
+      # zig cc is the cross linker used by tools/deploy/deploy.sh; it bundles
+      # the aarch64 glibc/sysroot so the runner needs no cross toolchain.
+      - name: Setup zig
+        if: matrix.arch == 'aarch64'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
+
+      - name: Build (x86_64)
+        if: matrix.arch == 'x86_64'
+        run: cargo build --release --locked
+
+      - name: Build (aarch64)
+        if: matrix.arch == 'aarch64'
         run: |
-          if [ -n "${{ matrix.linker }}" ]; then
-            cargo build --release --locked --target ${{ matrix.target }}
-          else
-            cargo build --release --locked
+          set -euo pipefail
+          rustc --version
+          wrapper="$RUNNER_TEMP/zig-cc"
+          printf '#!/bin/sh\nexec zig cc -target aarch64-linux-gnu "$@"\n' > "$wrapper"
+          chmod +x "$wrapper"
+          if CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$wrapper" \
+              cargo build --release --locked --target "${{ matrix.target }}"; then
+            exit 0
           fi
+          echo "::warning::zig link failed; retrying with the Ubuntu cross gcc"
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+            cargo build --release --locked --target "${{ matrix.target }}"
 
       - name: Collect + verify the artifact
         run: |

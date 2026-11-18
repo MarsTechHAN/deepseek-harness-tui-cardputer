@@ -77,9 +77,10 @@ git tag vX.Y.Z
 git push origin main --tags
 ```
 
-The deployment script (`tools/deploy/deploy.sh`) is separate and still
-cross-compiles locally with zig; CI release binaries use Ubuntu's cross gcc and
-are meant for download/`scp`, not for the deploy script.
+The deployment script (`tools/deploy/deploy.sh`) cross-compiles locally with a
+zig linker wrapper; CI does the same on the runner (with Ubuntu's cross gcc as a
+fallback), so the downloaded `dst-linux-aarch64` is the same kind of build, just
+published centrally.
 
 ## Making a change
 
