@@ -540,6 +540,37 @@ fn skill_render(_args: &J, v: &J) -> String {
     v.get("body").and_then(|b| b.as_str()).unwrap_or("").to_string()
 }
 
+/// Read-only tools a one-off side-question subagent (`/btw`) may use. These
+/// can look but never change anything: no writes, no shell, no jobs/services,
+/// no skills/apps mutation, no artifact/speak side effects.
+pub const VIEW_TOOL_NAMES: &[&str] = &[
+    "read_file",
+    "read_image",
+    "list_dir",
+    "glob",
+    "grep",
+    "search",
+    "fetch",
+    "ocr",
+    "skill",
+    "memory_read",
+    "memory_search",
+    "todo_read",
+    "get_goal",
+    "job_list",
+    "job_output",
+    "watcher_list",
+];
+
+/// The tool set for a read-only subagent: only viewing tools, and only those
+/// the endpoint actually supports (same capability filtering as the main set).
+pub fn view_registry(caps: crate::config::Capabilities) -> Vec<ToolDef> {
+    registry(caps)
+        .into_iter()
+        .filter(|t| VIEW_TOOL_NAMES.contains(&t.name))
+        .collect()
+}
+
 /// Tools available for this endpoint. Server-side tools (search/fetch/ocr) and
 /// speech only exist on DeepSeek's own API, so a third-party endpoint gets a
 /// smaller, honest tool set instead of tools that always fail.
@@ -1375,6 +1406,47 @@ mod tests {
         let err = read_image_exec(&args).unwrap_err();
         assert!(err.message.contains("JPEG"), "{}", err.message);
         let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
+    fn view_registry_only_contains_read_only_tools() {
+        let caps = crate::config::Capabilities {
+            web_tools: true,
+            speech: true,
+        };
+        let view = view_registry(caps);
+        let names: Vec<&str> = view.iter().map(|t| t.name).collect();
+        for required in ["read_file", "read_image", "list_dir", "glob", "grep"] {
+            assert!(names.contains(&required), "missing {required}");
+        }
+        for forbidden in [
+            "write_file",
+            "edit_file",
+            "bash",
+            "job_start",
+            "watcher_start",
+            "skill_save",
+            "skill_file",
+            "app_run",
+            "app_test",
+            "artifact",
+            "speak",
+            "state_report",
+            "cron",
+            "watch",
+            "memory_write",
+            "todo_write",
+        ] {
+            assert!(!names.contains(&forbidden), "{forbidden} must be excluded");
+        }
+        // Without web/speech the endpoint-specific tools disappear too.
+        let bare = view_registry(crate::config::Capabilities {
+            web_tools: false,
+            speech: false,
+        });
+        let bare_names: Vec<&str> = bare.iter().map(|t| t.name).collect();
+        assert!(!bare_names.contains(&"search"));
+        assert!(bare_names.contains(&"read_file"));
     }
 
     #[test]

@@ -1,0 +1,74 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 15000
+   }
+  },
+  {
+   "send": "my project is called alpha"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Alpha noted.",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 500,
+    "timeout_ms": 15000
+   }
+  },
+  {
+   "send": "/btw what does notes.txt say?"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "btw \u00b7",
+    "timeout_ms": 30000
+   }
+  },
+  {
+   "wait_ms": 350
+  },
+  {
+   "snap": "btw_panel"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 400
+  },
+  {
+   "send": "hi"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Main reply.",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 600,
+    "timeout_ms": 15000
+   },
+   "snap": "after"
+  }
+ ]
+}

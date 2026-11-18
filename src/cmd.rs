@@ -72,6 +72,12 @@ pub const COMMANDS: &[Command] = &[
         input_hint: None,
     },
     Command {
+        name: "btw",
+        category: "cat_info",
+        description: "ask a one-off read-only subagent a side question (answer in a panel)",
+        input_hint: Some("<question>"),
+    },
+    Command {
         name: "image",
         category: "cat_input",
         description: "attach a local image (JPEG/PNG/GIF/WebP) to the next message",
@@ -228,6 +234,8 @@ pub struct Outcome {
     pub image: Option<String>,
     /// Drop every pending image attachment (/image clear).
     pub image_clear: bool,
+    /// Ask a one-off read-only subagent this side question (/btw <question>).
+    pub btw: Option<String>,
 }
 
 impl Outcome {
@@ -248,6 +256,7 @@ impl Outcome {
             model_prompt: None,
             image: None,
             image_clear: false,
+            btw: None,
             compact: false,
         }
     }
@@ -268,6 +277,7 @@ impl Outcome {
             model_prompt: None,
             image: None,
             image_clear: false,
+            btw: None,
             compact: false,
         }
     }
@@ -315,6 +325,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             model_prompt: None,
             image: None,
             image_clear: false,
+            btw: None,
         },
         "model" => {
             if arg.is_empty() {
@@ -334,6 +345,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             model_prompt: None,
             image: None,
             image_clear: false,
+            btw: None,
                     compact: false,
                 }
             } else if arg.len() > 120 {
@@ -407,6 +419,16 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 }
                 lines.push((crate::i18n::t("cmd_config_edit_hint").to_string(), KIND_DIM));
                 Outcome::many(lines)
+            }
+        }
+        "btw" => {
+            if arg.trim().is_empty() {
+                Outcome::many(vec![(crate::i18n::t("cmd_btw_usage").to_string(), KIND_DIM)])
+            } else {
+                let mut out = Outcome::text("", KIND_DIM);
+                out.lines.clear();
+                out.btw = Some(arg.trim().to_string());
+                out
             }
         }
         "image" | "img" | "photo" => {
@@ -493,6 +515,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             model_prompt: None,
             image: None,
             image_clear: false,
+            btw: None,
                     compact: false,
                 }
             }
@@ -507,6 +530,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             model_prompt: None,
             image: None,
             image_clear: false,
+            btw: None,
         },
         "extensions" => Outcome {
             lines: Vec::new(), quit: false, clear: false, login: false,
@@ -517,6 +541,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             model_prompt: None,
             image: None,
             image_clear: false,
+            btw: None,
         },
         "rename" => {
             if arg.is_empty() {
@@ -544,6 +569,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             model_prompt: None,
             image: None,
             image_clear: false,
+            btw: None,
             compact: true,
         },
         "goal" => {
@@ -624,6 +650,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                             model_prompt: None,
                             image: None,
                             image_clear: false,
+                            btw: None,
                             compact: false,
                         },
                     }
@@ -650,6 +677,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             model_prompt: None,
             image: None,
             image_clear: false,
+            btw: None,
                     compact: false,
                 }
             }
@@ -670,6 +698,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             model_prompt: None,
             image: None,
             image_clear: false,
+            btw: None,
             compact: false,
         },
         "quit" | "exit" | "q" => Outcome {
@@ -688,6 +717,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             model_prompt: None,
             image: None,
             image_clear: false,
+            btw: None,
             compact: false,
         },
         "" => usage("/"),

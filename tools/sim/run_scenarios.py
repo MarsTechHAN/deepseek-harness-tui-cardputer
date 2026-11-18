@@ -684,10 +684,14 @@ def check_rewind(screens, reqs, work):
     menu = screens.get("menu", "")
     restored = screens.get("restored", "")
     checks = []
-    checks.append(("Rewind to checkpoint" in menu, "/rewind opens the checkpoint picker"))
-    checks.append(("rewound to checkpoint" in restored, "checkpoint restored the transcript"))
+    checks.append(("Rewind to an earlier message" in menu, "/rewind opens the message picker"))
+    checks.append(("second task" in menu and "first task" in menu,
+                   "the picker lists previous user inputs"))
+    checks.append(("rewound to before:" in restored, "rewound before the chosen message"))
     checks.append(("First work." in restored, "restored transcript contains the earlier turn"))
     checks.append(("Second work." not in restored, "later turn is gone after rewind"))
+    checks.append(("message put back in the prompt" in restored,
+                   "the chosen message is put back in the prompt"))
     return checks
 
 
@@ -2117,6 +2121,94 @@ def check_read_image_tool(screens, reqs, work):
     return checks
 
 
+def check_rewind_prompt(screens, reqs, work):
+    picker = screens.get("picker", "")
+    restored = screens.get("restored", "")
+    resent = screens.get("resent", "")
+    checks = []
+    checks.append(("and gamma" in picker and "remember beta" in picker,
+                   "the picker lists previous user inputs, not opaque turns"))
+    checks.append(("Rewind to an earlier message" in picker,
+                   "the picker explains that it rewinds to a message"))
+    checks.append(("> my project is called alpha" in restored and "and gamma" not in restored,
+                   "restoring cuts the transcript back to before the chosen message"))
+    checks.append(("message put back in the prompt" in restored,
+                   "the chosen message is put back in the prompt for editing"))
+    last_line = [l for l in restored.splitlines() if l.strip().startswith(">")][-1] if ">" in restored else ""
+    checks.append(("remember beta" in last_line,
+                   "the prompt line is pre-filled with that message"))
+    checks.append(("> remember beta" in resent and "Beta re-sent." in resent,
+                   "pressing Enter re-sends the rewound message and renders the answer"))
+    if reqs:
+        last = reqs[-1]
+        texts = [str(m.get("content") or "") for m in (last.get("messages") or [])]
+        joined = "\n".join(texts)
+        checks.append(("gamma" not in joined,
+                       "the abandoned future is gone from the re-sent request"))
+        checks.append((any("remember beta" in t for t in texts),
+                       "the re-sent request carries the rewound message"))
+    return checks
+
+
+WRITE_TOOLS = [
+    "write_file", "edit_file", "bash", "skill_save", "skill_file",
+    "skill_rollback", "app_run", "app_test", "job_start", "watcher_start",
+    "artifact", "speak", "cron", "watch", "memory_write", "todo_write",
+    "create_goal", "update_goal",
+]
+
+
+def check_btw_side_question(screens, reqs, work):
+    panel = screens.get("btw_panel", "")
+    after = screens.get("after", "")
+    btw_req = None
+    for body in reqs:
+        texts = [
+            str(m.get("content") or "")
+            for m in (body.get("messages") or [])
+            if m.get("role") == "system"
+        ]
+        if any("SIDE QUESTION MODE" in t for t in texts):
+            btw_req = body
+            break
+    checks = []
+    checks.append((btw_req is not None, "the /btw side question ran as its own request"))
+    checks.append(("btw" in panel and "It says 42." in panel,
+                   "the subagent's answer is shown in a panel"))
+    checks.append(("Alpha noted." not in panel and "my project is called alpha" not in panel,
+                   "the panel holds only the answer, not the conversation"))
+    if btw_req is not None:
+        names = [
+            (t.get("function") or {}).get("name")
+            for t in (btw_req.get("tools") or [])
+            if isinstance(t, dict)
+        ]
+        bad = [n for n in names if n in WRITE_TOOLS]
+        checks.append((not bad, f"no write tools are available to the subagent ({bad})"))
+        checks.append(("read_file" in names, "read-only tools are available to the subagent"))
+        joined = "\n".join(str(m.get("content") or "") for m in (btw_req.get("messages") or []))
+        checks.append(("my project is called alpha" in joined,
+                       "the subagent sees the current conversation context"))
+        last_user = [
+            str(m.get("content") or "")
+            for m in (btw_req.get("messages") or [])
+            if m.get("role") == "user"
+        ][-1]
+        checks.append(("what does notes.txt say?" in last_user,
+                       "the side question is the last user message"))
+    # The main conversation must be untouched by the side question.
+    if reqs:
+        last = reqs[-1]
+        joined = "\n".join(str(m.get("content") or "") for m in (last.get("messages") or []))
+        checks.append(("SIDE QUESTION MODE" not in joined,
+                       "the btw instructions never enter the main conversation"))
+        checks.append(("It says 42." not in joined and "notes.txt" not in joined,
+                       "the side question and its answer are not persisted"))
+        checks.append(("Alpha noted." in joined and "Main reply." in after,
+                       "the main conversation continues normally after the side question"))
+    return checks
+
+
 CHECKS = {
     "creator_app_flow": check_creator_app_flow,
     "esc_queue": check_esc_queue,
@@ -2161,6 +2253,8 @@ CHECKS = {
     "ux": check_ux,
     "progress": check_progress,
     "image_input": check_image_input,
+    "rewind_prompt": check_rewind_prompt,
+    "btw_side_question": check_btw_side_question,
     "read_image_tool": check_read_image_tool,
     "onboarding_hw": check_onboarding_hw,
     "onboarding_reject": check_onboarding_reject,

@@ -1,0 +1,6 @@
+{"responses": [
+ {"reasoning": "ack", "content": "Alpha noted.", "finish_reason": "stop"},
+ {"reasoning": "ack", "content": "Beta noted.", "finish_reason": "stop"},
+ {"reasoning": "ack", "content": "Gamma noted.", "finish_reason": "stop"},
+ {"reasoning": "ack", "content": "Beta re-sent.", "finish_reason": "stop"}
+]}

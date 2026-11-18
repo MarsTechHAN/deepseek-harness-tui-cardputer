@@ -15,7 +15,7 @@ zero-dependency Rust binary, on a 320×170 handheld.**
 <img src="https://img.shields.io/badge/binary-1.0%20MB-2ea043?style=flat-square" alt="1 MB binary">
 <img src="https://img.shields.io/badge/panel-320%C3%97170%20%C2%B7%2053%C3%9712%20cells-22d3ee?style=flat-square" alt="320x170 panel, 53x12 cells">
 <img src="https://img.shields.io/badge/UI%20languages-6-8b5cf6?style=flat-square" alt="6 UI languages">
-<img src="https://img.shields.io/badge/tests-88%20passing-2ea043?style=flat-square" alt="88 unit tests">
+<img src="https://img.shields.io/badge/tests-92%20passing-2ea043?style=flat-square" alt="92 unit tests">
 <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs welcome"></a>
 
 <a href="#quick-start">Quick start</a> ·
@@ -73,6 +73,8 @@ intelligence, and `curl` for the wire.
 - [Features](#features)
   - [Agent loop](#agent-loop)
   - [Tools](#tools)
+  - [Side questions (`/btw`)](#side-questions-btw)
+  - [Vision input](#vision-input)
   - [Permissions and sandbox](#permissions-and-sandbox)
   - [Goals, context and memory](#goals-context-and-memory)
   - [Interface](#interface)
@@ -96,7 +98,7 @@ intelligence, and `curl` for the wire.
 
 <table>
 <tr>
-<td colspan="2"><a href="docs/demo.webp"><img src="docs/demo.webp" alt="Animated tour: first run, progress row, expanded tool calls, CtrlO, paging, queued message, Esc interrupt, voice interrupt, creator mode, hardware scan, six languages, help, config"></a><br><sub><b>Animated tour (~49 s)</b> — the whole flow and the features that matter on a 12-row screen: the pinned progress row, expanded tool calls, CtrlO during a turn, a locally attached image the model can see, transcript paging, queued messages, Esc/voice interrupts, creator mode building and running a skill package, the first-run hardware scan, and six UI languages. Click to open the full animation.</sub></td>
+<td colspan="2"><a href="docs/demo.webp"><img src="docs/demo.webp" alt="Animated tour: first run, progress row, expanded tool calls, CtrlO, paging, queued message, Esc interrupt, voice interrupt, creator mode, hardware scan, six languages, help, config"></a><br><sub><b>Animated tour (~54 s)</b> — the whole flow and the features that matter on a 12-row screen: the pinned progress row, expanded tool calls, CtrlO during a turn, a locally attached image the model can see, transcript paging, queued messages, Esc/voice interrupts, rewinding to an earlier message, a read-only `/btw` side-question panel, creator mode building and running a skill package, the first-run hardware scan, and six UI languages. Click to open the full animation.</sub></td>
 </tr>
 <tr>
 <td colspan="2"><a href="docs/live-walkthrough.png"><img src="docs/live-walkthrough.png" alt="Twelve-screen walkthrough: startup, progress row, expanded tool call, tool result, scrollback, queued message, recording, help, config, hardware scan, Chinese login, an app running"></a><br><sub><b>Walkthrough</b> — 12 device-fidelity panels: startup, the pinned progress row, an expanded tool call, tool results, scrollback, a queued message, push-to-talk, <code>/help</code>, <code>/config</code>, the hardware scan, the Chinese login screen and an app owning the panel. Click for full size.</sub></td>
@@ -159,6 +161,20 @@ table:
 | creator mode | `app_run`, `app_test`, `skill_save`, `skill_file`, `skill_rollback` |
 
 Any MCP server in `~/.dst/mcp.json` adds its tools as `mcp__<server>__<tool>`.
+
+### Side questions (`/btw`)
+
+`/btw <question>` spins up a **one-off subagent** for a question that does not
+deserve its own turn: "what did that config file say again?", "which port does
+the dev server use?", "summarise this log pattern". It gets the current
+conversation as context, but only **read-only tools** (`read_file`,
+`read_image`, `list_dir`, `glob`, `grep`, `search`, `fetch`, `ocr`, `skill`,
+`memory_read/search`, `todo_read`, `get_goal`, `job_list/output`,
+`watcher_list`) — no writes, no shell, no skills/apps changes, no jobs, no
+artifacts or speech. Its answer opens in the full-screen artifact panel
+(`Esc` closes, `s` saves) and the main transcript, history and session file are
+left exactly as they were, so side questions never pollute the real
+conversation or re-bill later steps. `Esc` while it runs cancels it.
 
 ### Vision input
 
@@ -400,7 +416,8 @@ Commands run locally and are never sent to the model.
 | `/update-hwinfo` | rescan this device's hardware and refresh the shipped `hardware-info` skill |
 | `/extensions` | inspect skill packages (runnable ones tagged `[app]`) and MCP servers |
 | `/resume` | pick a previous session (preview on `→`) |
-| `/rewind` | restore a checkpoint from an earlier turn |
+| `/rewind` | pick one of your earlier messages: the transcript rewinds to before it and the message is put back in the prompt |
+| `/btw <question>` | ask a one-off, read-only subagent a side question; its answer opens as a panel and the conversation is untouched |
 | `/rename <title>` | name the current session |
 | `/clear` | clear the transcript and restart the splash |
 | `/quit` | exit |
@@ -515,7 +532,7 @@ cargo build                       # host binary
 
 cd tools/sim
 python3 run_demo.py               # splash → thinking → tool call → reply + contact sheet
-python3 run_scenarios.py          # 94 feature scenarios, asserts on screens *and* request logs
+python3 run_scenarios.py          # 96 feature scenarios, asserts on screens *and* request logs
 python3 run_live.py               # optional: visual pass against a real endpoint
 python3 check_memory.py           # samples RSS over 20 turns
 ```
@@ -527,7 +544,7 @@ artifacts, sessions across a restart, onboarding, sandbox modes, jobs, watchers,
 searchable resume, push-to-talk with mocked speech, the nine-step WeChat login
 chain, provider failures and recovery, CJK input and the creator-mode scenarios.
 
-Unit tests (host, no network): `cargo test` — 88 tests over the harness, tool
+Unit tests (host, no network): `cargo test` — 92 tests over the harness, tool
 pipeline, compaction budgets, goal state machine, context formatting, config
 round-trip, skill packages, runnable apps, the hardware-info scan/renderer,
 image attachment/base64 handling and the i18n catalogue.

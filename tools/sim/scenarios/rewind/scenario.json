@@ -39,7 +39,7 @@
   },
   {
    "wait_for": {
-    "text": "Rewind to checkpoint",
+    "text": "Rewind to an earlier message",
     "timeout_ms": 15000
    },
    "snap": "menu"

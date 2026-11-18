@@ -262,6 +262,7 @@ fn decode_seq(params: &[u8]) -> Option<KeyEvent> {
 /// font the panel carries (Terminus + CJK fallback), unlike clock glyphs.
 const STATE_ICON: &str = "\u{00bb}";
 
+
 /// Retained transcript lines. The device has 512 MB and a turn can emit
 /// hundreds of tool result lines; an unbounded `Vec` was the largest avoidable
 /// allocation in a long session. Old lines are dropped from the front, which
@@ -1226,7 +1227,7 @@ impl Scr {
             if n == 1 {
                 return Some(b[0]);
             }
-            if t0.elapsed().as_millis() >= 25 {
+            if t0.elapsed().as_millis() >= 60 {
                 return None;
             }
             std::thread::sleep(std::time::Duration::from_millis(2));
@@ -1295,7 +1296,7 @@ impl Scr {
 
     /// Turn an already-read Esc into a key event.
     fn esc_to_event(&self) -> KeyEvent {
-        match self.read_esc_chunk(50) {
+        match self.read_esc_chunk(120) {
             EscChunk::Bare => KeyEvent::Esc,
             EscChunk::Alt(x) => {
                 if x == b'\r' || x == b'\n' {
@@ -1336,7 +1337,7 @@ impl Scr {
         if b != 0x1b {
             return Some(b);
         }
-        match self.read_esc_chunk(50) {
+        match self.read_esc_chunk(120) {
             // Lists understand arrows already, so a page key is replayed as a
             // screenful of Up/Down: paging then works in every menu without a
             // second key contract. The toast screens (pump/edit) use
@@ -1614,7 +1615,7 @@ impl Scr {
                 None => continue,
             };
             if k == 0x1b {
-                match self.read_key_timeout() {
+                match self.read_key_after_esc() {
                     Some(b'[') => match self.read_key_timeout() {
                         Some(b'A') => {
                             sel = sel.saturating_sub(1);
@@ -1819,7 +1820,7 @@ impl Scr {
                 None => continue,
             };
             if k == 0x1b {
-                match self.read_key_timeout() {
+                match self.read_key_after_esc() {
                     Some(b'[') => match self.read_key_timeout() {
                         Some(b'A') => sel = sel.saturating_sub(1),
                         Some(b'B') => sel = (sel + 1).min(self.queue.len().saturating_sub(1)),
@@ -2587,6 +2588,182 @@ task, and again whenever the task changes substantially (new sub-task, \
 different bug, finished phase). The title is what the user picks the session \
 by, so make it a few concrete words about the work, not a greeting or a copy \
 of the message.";
+
+/// Context handed to a one-off `/btw` subagent: the current system prompt with
+/// a side-question contract, a bounded tail of the conversation, then the
+/// question (appended by `run_turn`). Nothing is written back to `msgs`.
+fn btw_context(msgs: &jobs::Msgs, question: &str) -> Vec<json::J> {
+    const MAX_CONTEXT_BYTES: usize = 96 * 1024;
+    let src = msgs.borrow();
+    let base = src
+        .first()
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+    let system = format!(
+        "{base}\n\nSIDE QUESTION MODE\n\
+You are a one-off, read-only subagent answering a side question about this \
+conversation. You may use only read-only tools to look things up (read files, \
+list directories, grep, search the web, read an image); you must not write, \
+edit, run shell commands, change skills/apps, start jobs or services. Answer \
+from the conversation above and, if needed, from what those read-only tools \
+show. The user sees only your reply, in a full-screen panel: keep it under 10 \
+lines of at most 52 characters each, no preamble and no \"based on the context\" \
+filler. If the information is not available, say exactly what is missing.\n\n\
+The side question is: {question}"
+    );
+    let mut out = vec![harness::msg("system", &system)];
+    // Newest last, bounded by bytes; never start the tail with an orphan tool
+    // result (tool messages need their assistant tool_calls before them).
+    let mut start = src.len();
+    let mut used = 0usize;
+    while start > 1 {
+        let len = src[start - 1].dump().len();
+        if used + len > MAX_CONTEXT_BYTES {
+            break;
+        }
+        used += len;
+        start -= 1;
+    }
+    while start < src.len() {
+        let role = src[start].get("role").and_then(|r| r.as_str());
+        if role == Some("tool") {
+            start += 1;
+        } else {
+            break;
+        }
+    }
+    out.extend(src[start..].iter().cloned());
+    out
+}
+
+/// Minimal UI for the `/btw` subagent: a live status line and Esc to cancel.
+/// It deliberately does not write tool cards or streamed text into the
+/// transcript — the side question must leave the main conversation untouched.
+struct BtwUi<'a> {
+    scr: &'a mut Scr,
+    acc: String,
+    note: Option<String>,
+    interrupted: bool,
+}
+
+impl<'a> harness::Ui for BtwUi<'a> {
+    fn on(&mut self, ev: Ev) {
+        match ev {
+            Ev::TurnStart => self.scr.busy = true,
+            Ev::Delta(d) => {
+                self.acc.push_str(&d);
+                self.scr.live = Some((2, tail_chars(&self.acc, 44)));
+                self.scr.draw();
+            }
+            Ev::Thinking { secs, .. } => {
+                self.scr.live = Some((1, format!("{} {secs:.1}s", i18n::t("btw_thinking"))));
+                self.scr.draw();
+            }
+            Ev::ThinkingDone { .. } => {}
+            Ev::Assistant(_) => self.scr.live = None,
+            Ev::ToolCall { name, .. } => {
+                self.scr.live = Some((1, i18n::tf("btw_tool", &[&name])));
+                self.scr.draw();
+            }
+            Ev::ToolResult { .. } => self.scr.live = None,
+            Ev::Note(n) => self.note = Some(n),
+            Ev::Info(n) => {
+                if self.note.is_none() {
+                    self.note = Some(n);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn pump(&mut self) -> Action {
+        loop {
+            match self.scr.read_key_event_now() {
+                Some(KeyEvent::Esc)
+                | Some(KeyEvent::Char(0x03))
+                | Some(KeyEvent::Char(0x04)) => {
+                    self.interrupted = true;
+                    return Action::Cancel;
+                }
+                Some(_) => {}
+                None => break,
+            }
+        }
+        Action::Continue
+    }
+
+    fn confirm(&mut self, _request: &crate::sandbox::Approval) -> bool {
+        // Only read-only tools are registered; nothing may be approved.
+        false
+    }
+
+    fn interrupted(&self) -> bool {
+        self.interrupted
+    }
+}
+
+/// Run one read-only side question and show the answer in a full-screen panel.
+/// The main conversation and session are not modified.
+fn run_btw(
+    scr: &mut Scr,
+    cfg: &Cfg,
+    caps: config::Capabilities,
+    msgs: &jobs::Msgs,
+    question: &str,
+    opts: &harness::RunOpts,
+) {
+    let reg = tools::view_registry(caps);
+    let mut ctx = btw_context(msgs, question);
+    scr.busy = true;
+    scr.live = Some((1, i18n::t("btw_thinking").to_string()));
+    scr.draw();
+    // The subagent polls the keyboard from `pump` (Esc cancels it), so stdin
+    // must be non-blocking for its whole run — the idle editor leaves VMIN=1.
+    poll_mode(true);
+    let (report, note) = {
+        let mut ui = BtwUi {
+            scr: &mut *scr,
+            acc: String::new(),
+            note: None,
+            interrupted: false,
+        };
+        let report = harness::run_turn(cfg, opts, &mut ctx, &reg, question, &[], &mut ui);
+        (report, ui.note.take())
+    };
+    poll_mode(false);
+    scr.busy = false;
+    scr.live = None;
+    if report.cancelled {
+        scr.push(i18n::t("btw_cancelled"), K_DIM);
+    } else if report.text.trim().is_empty() {
+        let why = note.unwrap_or_else(|| i18n::t("btw_empty").to_string());
+        scr.push(&i18n::tf("btw_failed", &[&why]), K_ERR);
+    } else {
+        let answer = report.text.trim();
+        let mut body: Vec<String> = Vec::new();
+        for line in answer.lines() {
+            let mut wrapped = Vec::new();
+            Scr::wrap_into(&mut wrapped, line, scr.cols);
+            if wrapped.is_empty() {
+                body.push(String::new());
+            } else {
+                body.extend(wrapped);
+            }
+        }
+        let flat = question.split_whitespace().collect::<Vec<_>>().join(" ");
+        let title = i18n::tf("btw_title", &[&fit_dots(&flat, 42)]);
+        scr.artifact = Some(Artifact {
+            title,
+            body,
+            scroll: 0,
+            notice: None,
+            submit: false,
+        });
+    }
+    scr.draw();
+}
 
 /// `--once`: the same driver, printing events instead of drawing them.
 struct OnceUi;
@@ -4464,32 +4641,41 @@ fn model_menu(scr: &mut Scr, config_rc: &ConfigRc) {
 
 /// Checkpoint picker: restore the transcript of an earlier turn. Opened by
 /// `/rewind` or by double-Esc.
-fn rewind_menu(scr: &mut Scr, msgs: &jobs::Msgs) {
+/// `/rewind`: pick one of your previous messages; the transcript is restored to
+/// just before it and that message is put back in the prompt for editing or
+/// re-sending (so a wrong turn is a one-line fix, not a restart).
+/// Returns `Some(prompt)` after restoring (empty for automatic/goal rounds),
+/// `None` when the picker was closed without restoring.
+fn rewind_menu(scr: &mut Scr, msgs: &jobs::Msgs) -> Option<String> {
     let mut list = crate::checkpoint::list();
     if list.is_empty() {
         scr.push(i18n::t("rewind_empty"), K_DIM);
-        return;
+        return None;
     }
     list.truncate(20);
+    let now = now_epoch();
     let mut sel = 0usize;
     loop {
         let items: Vec<MenuItem> = list
             .iter()
-            .enumerate()
-            .map(|(i, c)| MenuItem {
-                label: format!(
-                    "{}. {}",
-                    i + 1,
-                    c.label.chars().take(44).collect::<String>()
-                ),
-                value: String::new(),
+            .map(|c| MenuItem {
+                label: format!("\u{203a} {}", c.label.chars().take(46).collect::<String>()),
+                value: rel_time(now, c.created),
             })
             .collect();
         let preview = Some(crate::checkpoint::preview(&list[sel].path));
-        scr.menu = Some(Menu { title: i18n::t("rewind_title").into(), items, sel,
-            hint: i18n::t("rewind_hint").into(), preview });
+        scr.menu = Some(Menu {
+            title: i18n::t("rewind_title").into(),
+            items,
+            sel,
+            hint: i18n::t("rewind_hint").into(),
+            preview,
+        });
         scr.draw();
-        let k = match scr.read_key_timeout() { Some(k) => k, None => continue };
+        let k = match scr.read_key_timeout() {
+            Some(k) => k,
+            None => continue,
+        };
         if k == 0x1b {
             match scr.read_key_after_esc() {
                 Some(b'[') => match scr.read_key_timeout() {
@@ -4497,42 +4683,59 @@ fn rewind_menu(scr: &mut Scr, msgs: &jobs::Msgs) {
                     Some(b'B') => sel = (sel + 1).min(list.len() - 1),
                     _ => {}
                 },
-                _ => { scr.menu = None; scr.draw(); return; }
+                _ => {
+                    scr.menu = None;
+                    scr.draw();
+                    return None;
+                }
             }
             continue;
         }
-        if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return; }
-        if k == 0x0d || k == 0x0a {
-            let path = list[sel].path.clone();
+        if k == 0x03 || k == b'q' {
             scr.menu = None;
-            if let Some((title, messages)) = crate::checkpoint::load(&path) {
-                *msgs.borrow_mut() = messages.clone();
-                scr.lines.clear();
-                scr.scroll = 0;
-                scr.splash_done = true;
-                scr.art_on = false;
-                scr.push(&i18n::tf("ui_rewound", &[&title]), K_DIM);
-                for m in &messages {
-                    let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("");
-                    let text = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                    if text.trim().is_empty() {
-                        continue;
-                    }
-                    match role {
-                        "user" => scr.push(&format!("> {text}"), K_USER),
-                        "assistant" => scr.push_md(text),
-                        _ => {}
-                    }
-                }
-            } else {
-                scr.push(i18n::t("ui_checkpoint_unreadable"), K_ERR);
-            }
             scr.draw();
-            return;
+            return None;
+        }
+        if k == 0x0d || k == 0x0a {
+            let chosen = list[sel].clone();
+            scr.menu = None;
+            let Some((_title, messages)) = crate::checkpoint::load(&chosen.path) else {
+                scr.push(i18n::t("ui_checkpoint_unreadable"), K_ERR);
+                scr.draw();
+                return None;
+            };
+            // Move the restored history in; no clone of a full transcript.
+            *msgs.borrow_mut() = messages;
+            scr.lines.clear();
+            scr.scroll = 0;
+            scr.splash_done = true;
+            scr.art_on = false;
+            scr.attachments.clear();
+            let shown = if chosen.label.is_empty() {
+                i18n::t("rewind_title").to_string()
+            } else {
+                chosen.label.chars().take(46).collect::<String>()
+            };
+            scr.push(&i18n::tf("ui_rewound", &[&shown]), K_DIM);
+            let restored = msgs.borrow();
+            for m in restored.iter() {
+                let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("");
+                let text = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                if text.trim().is_empty() {
+                    continue;
+                }
+                match role {
+                    "user" => scr.push(&format!("> {text}"), K_USER),
+                    "assistant" => scr.push_md(text),
+                    _ => {}
+                }
+            }
+            drop(restored);
+            scr.draw();
+            return Some(chosen.prompt);
         }
     }
 }
-
 /// Skills and MCP inspection menu.
 fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
     let home = std::env::var("HOME").unwrap_or_default();
@@ -6273,7 +6476,19 @@ fn main() {
                     }
                 }
                 if out.rewind_menu {
-                    rewind_menu(&mut scr, &msgs);
+                    if let Some(prompt) = rewind_menu(&mut scr, &msgs) {
+                        if !prompt.trim().is_empty() {
+                            scr.input = prompt.chars().collect();
+                            scr.cursor = scr.input.len();
+                            scr.push(i18n::t("rewind_prefilled"), K_DIM);
+                        }
+                        // Persist the rewound transcript right away: quitting
+                        // here must not leave the old future in the session.
+                        if let Some(p) = &session_path {
+                            save_session(&msgs, &config_rc.borrow(), p);
+                        }
+                        scr.draw();
+                    }
                 }
                 if out.extensions_menu {
                     extensions_menu(&mut scr, &config_rc);
@@ -6389,6 +6604,28 @@ fn main() {
                         }
                     }
                 }
+                if let Some(question) = out.btw {
+                    let question = question.trim().to_string();
+                    if question.is_empty() {
+                        scr.push(i18n::t("cmd_btw_usage"), K_ERR);
+                    } else {
+                        let caps = config_rc.borrow().capabilities();
+                        let now_cfg = api_cfg(&config_rc.borrow());
+                        let mut btw_opts = harness::RunOpts::from_config(
+                            &config_rc.borrow(),
+                            scr.ctx_window,
+                        );
+                        // A side question is a small task: bound it even when
+                        // the user's main limits are unlimited.
+                        btw_opts.max_steps = if btw_opts.max_steps == 0 {
+                            8
+                        } else {
+                            btw_opts.max_steps.min(8)
+                        };
+                        run_btw(&mut scr, &now_cfg, caps, &msgs, &question, &btw_opts);
+                        scr.draw();
+                    }
+                }
                 if let Some(p) = out.model_prompt {
                     // The request is internal: show a short label in the
                     // transcript instead of the whole prompt body.
@@ -6484,7 +6721,10 @@ fn main() {
             }
             {
                 let m = msgs.borrow();
-                crate::checkpoint::save(&m, &session::title());
+                // The prompt this turn is about to run: rewind lists it so the
+                // user picks a real previous message, not a turn number.
+                let stamp_prompt = if label.is_none() { submit.as_str() } else { "" };
+                crate::checkpoint::save(&m, &session::title(), stamp_prompt);
             }
             let in_goal_round = label.is_some();
             goal::set_in_round(in_goal_round);

@@ -1,0 +1,22 @@
+{
+ "steps": [
+  {"wait_for": {"text": "dst", "timeout_ms": 15000}},
+  {"send": "my project is called alpha"}, {"key": "Enter"},
+  {"wait_for": {"text": "Alpha noted.", "timeout_ms": 20000}},
+  {"wait_stable": {"stable_ms": 500, "timeout_ms": 15000}},
+  {"send": "remember beta"}, {"key": "Enter"},
+  {"wait_for": {"text": "Beta noted.", "timeout_ms": 20000}},
+  {"wait_stable": {"stable_ms": 500, "timeout_ms": 15000}},
+  {"send": "and gamma"}, {"key": "Enter"},
+  {"wait_for": {"text": "Gamma noted.", "timeout_ms": 20000}},
+  {"wait_stable": {"stable_ms": 500, "timeout_ms": 15000}, "snap": "three"},
+  {"send": "/rewind"}, {"key": "Enter"},
+  {"wait_for": {"text": "Rewind to an earlier message", "timeout_ms": 10000}},
+  {"wait_ms": 400}, {"snap": "picker"},
+  {"key": "Down"}, {"wait_ms": 250},
+  {"key": "Enter"}, {"wait_ms": 600}, {"snap": "restored"},
+  {"key": "Enter"},
+  {"wait_for": {"text": "Beta re-sent.", "timeout_ms": 20000}},
+  {"wait_stable": {"stable_ms": 600, "timeout_ms": 15000}}, {"snap": "resent"}
+ ]
+}

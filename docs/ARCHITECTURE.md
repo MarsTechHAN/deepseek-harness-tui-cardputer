@@ -162,8 +162,38 @@ its own conventions the way CLAUDE.md / AGENTS.md users expect.
 | usage totals | `~/.dst/usage.json` | after each response |
 | memory fragments | `~/.dst` (via `memory_*` tools) | the model |
 
-`/resume` groups sessions by directory and previews the last exchange;
-`/rewind` restores a checkpoint from an earlier turn.
+`/resume` groups sessions by directory and previews the last exchange.
+`/rewind` restores the transcript to **just before one of your earlier
+messages**: each checkpoint is saved with the prompt the turn is about to run,
+the picker lists those prompts (newest first, with the context before each), and
+choosing one cuts the history back and puts that prompt into the input line for
+editing or re-sending. Checkpoints are non-destructive (the abandoned future
+files remain until the retention cap), and the rewound session is saved
+immediately so quitting cannot restore the old future.
+
+## Side questions (`/btw` subagents)
+
+`/btw <question>` runs a **one-off read-only subagent** without touching the
+main conversation:
+
+1. **Context** — `btw_context` builds a request from the live system prompt
+   (with a `SIDE QUESTION MODE` contract appended), a bounded tail of the
+   current history (96 KB, starting at a user/assistant boundary so no orphan
+   tool result is replayed) and the question as the final user message.
+2. **Tools** — `tools::view_registry` filters the normal registry to an
+   allow-list of pure viewing tools (`read_file`, `read_image`, `list_dir`,
+   `glob`, `grep`, `search`, `fetch`, `ocr`, `skill`, `memory_read/search`,
+   `todo_read`, `get_goal`, `job_list/output`, `watcher_list`). There is no
+   `write_file`/`edit_file`/`bash`/job/skill/app mutation, no `artifact` and no
+   `speak`; the sandbox confirmer always rejects, and the step budget is capped
+   at 8.
+3. **UI** — a dedicated `BtwUi` shows only a live status line (thinking / which
+   tool is being read) and treats `Esc` as cancel. It writes nothing to the
+   transcript.
+4. **Answer** — the settled text is wrapped and shown as a normal artifact
+   panel (`btw · <question>`), dismissed with Esc or saved with `s`. The main
+   `msgs`, the session file and the checkpoint list are not modified, so the
+   side question cannot pollute (or be re-sent with) the real conversation.
 
 ## Images (vision input)
 

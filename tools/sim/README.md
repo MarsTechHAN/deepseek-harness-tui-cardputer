@@ -14,7 +14,7 @@ Two tools, both pure Python (stdlib + `pyte` + `Pillow`):
 | `sample_home/.dst/config.yml` | ready-made dst config pointing at `http://127.0.0.1:8765/v1` |
 | `run_demo.py` | one-command end-to-end demo: starts mock, writes temp HOME, runs simulator, validates, builds contact sheet |
 | `run_scenarios.py` | automated feature checks: `/clear`, `/goal` round driver, compaction, voice, login (asserts on screens **and** the request log) |
-| `make_demo_webp.py` | rebuilds the committed docs images from the simulator: `docs/demo.webp` (49 s animated tour of the whole flow), `docs/live-walkthrough.png`, `docs/live-creator.png` and the six-language login sheet (real `dst` binary, scripted mock model) |
+| `make_demo_webp.py` | rebuilds the committed docs images from the simulator: `docs/demo.webp` (54 s animated tour of the whole flow), `docs/live-walkthrough.png`, `docs/live-creator.png` and the six-language login sheet (real `dst` binary, scripted mock model) |
 | `run_live.py` | optional common-usage visual walkthrough against the real local vLLM endpoint from `~/.dsh/settings.yaml`; only TTS/ASR are mocked (`DST_MOCK_SPEECH=1`) |
 | `scenarios/<name>/` | per-feature `config.yml` + `scenario.json` + `script.json` for `run_scenarios.py` |
 | `screenshots/` | generated evidence from `run_demo.py` (created on first run) |
@@ -548,6 +548,8 @@ request log:
 | `i18n_es` | localisation | Spanish splash/hints, translated config menu and command descriptions |
 | `job_manager` | manual task manager | Down opens bullets for jobs/watchers, Enter shows output, x kills |
 | `onboarding` | first-run flow | an unconfigured start shows a menu (official vs custom endpoint), arrows move, no "type 1 or 2" prompt, Esc cancels |
+| `rewind_prompt` | `/rewind` to an earlier message | the picker lists previous user inputs, restoring cuts the transcript back to before the chosen message, that message is pre-filled in the prompt, and pressing Enter re-sends it (the abandoned future is gone from the next request) |
+| `btw_side_question` | read-only side-question subagent | `/btw` runs its own request with the conversation context and only read-only tools (no write tools in the schema), shows the answer in an artifact panel, and leaves the main request history and session untouched |
 | `read_image_tool` | agent opens an image | the model calls `read_image {"file_path": "~/photo.png"}`, the card shows the path, the tool result carries the DeepSeek `image_url` block so the model describes the picture, and the following request's history has only the `[image read: …]` placeholder |
 | `image_input` | local image attachments | `/image ~/photo.png` attaches a local PNG, one line per attachment plus the live indicator, the chat request carries the DeepSeek `image_url` content block (data URL), the model answers, and the next request's history has only the `[image attached: …]` placeholder (no base64 re-sent) |
 | `onboarding_hw` / `onboarding_reject` | first-run hardware survey + credential test | after a verified configuration the hardware-info scan is offered once (Y writes the measured scan into the shipped skill, `tui.hw_survey_done`); an unusable key is rejected, the device stays unconfigured and no survey runs |
@@ -560,7 +562,7 @@ request log:
 
 ```bash
 cd tools/sim
-python3 run_scenarios.py               # all 94 checked scenarios (~11 min)
+python3 run_scenarios.py               # all 96 checked scenarios (~12 min)
 python3 run_scenarios.py goal compact  # just some
 python3 check_memory.py                # 20-turn session, samples dst RSS
 python3 run_all.py                     # demo + scenarios + memory in one go

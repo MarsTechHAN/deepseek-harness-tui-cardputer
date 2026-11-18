@@ -1,0 +1,10 @@
+{"responses": [
+ {"reasoning": "ack", "content": "Alpha noted.", "finish_reason": "stop"},
+ {"reasoning": "A side question; read the file.", "content": "",
+  "tool_calls": [
+   {"id": "b1", "name": "read_file", "arguments": {"path": "~/notes.txt"}}
+  ],
+  "finish_reason": "tool_calls"},
+ {"reasoning": "Refer to the file.", "content": "It says 42.", "finish_reason": "stop"},
+ {"reasoning": "main", "content": "Main reply.", "finish_reason": "stop"}
+]}
