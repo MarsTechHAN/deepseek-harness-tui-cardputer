@@ -2367,6 +2367,50 @@ def check_new_session(screens, reqs, work):
     return checks
 
 
+def check_todo_plan(screens, reqs, work):
+    plan_panel = screens.get("plan", "")
+    progress = screens.get("progress", "")
+    after = screens.get("next_turn", "")
+    results = "\n".join(str(r.get("content") or "")
+                        for r in request_tool_results(reqs))
+    checks = []
+    checks.append(("t0/2" in plan_panel and "* todo_write" in plan_panel,
+                   "the plan is shown as a done/total badge and a tool card"))
+    checks.append(("0 completed" in results
+                   and "1 pending, 1 in progress" in results,
+                   "the DSH-style result line reports pending/in-progress/completed"))
+    checks.append(("t1/2" in progress,
+                   "updating the whole list moves the badge to 1/2"))
+    def last_tool_names(body):
+        for m in reversed(body.get("messages") or []):
+            if m.get("role") == "assistant":
+                return [(tc.get("function") or {}).get("name")
+                        for tc in (m.get("tool_calls") or [])]
+        return []
+    calls = [last_tool_names(b) for b in reqs]
+    checks.append((len(calls) >= 3 and calls[1] == ["todo_write"]
+                   and calls[2] == ["todo_write"],
+                   "each working step sends one whole-list todo_write"))
+    def todo_args(tc):
+        raw = (tc.get("function") or {}).get("arguments")
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw)
+            except ValueError:
+                return {}
+        return raw if isinstance(raw, dict) else {}
+    todos = [tc for b in reqs for m in (b.get("messages") or [])
+             for tc in (m.get("tool_calls") or [])
+             if (tc.get("function") or {}).get("name") == "todo_write"]
+    checks.append((bool(todos) and all("todos" in todo_args(tc) for tc in todos),
+                   "the model sends the DSH 'todos' array, not legacy strings"))
+    checks.append(("The notes say 42." in screens.get("progress", "")
+                   or "The notes say 42." in after, "the answer renders"))
+    checks.append(("t1/2" not in after and "t0/2" not in after,
+                   "the todo list is cleared when the next turn starts"))
+    return checks
+
+
 CHECKS = {
     "creator_app_flow": check_creator_app_flow,
     "esc_queue": check_esc_queue,
@@ -2417,6 +2461,7 @@ CHECKS = {
     "state_report_steps": check_state_report_steps,
     "usage_ring_reset": check_usage_ring_reset,
     "new_session": check_new_session,
+    "todo_plan": check_todo_plan,
     "read_image_tool": check_read_image_tool,
     "onboarding_hw": check_onboarding_hw,
     "onboarding_reject": check_onboarding_reject,
@@ -2509,8 +2554,11 @@ def main(argv):
         if ok and not os.environ.get("DST_KEEP_WORK"):
             shutil.rmtree(work, ignore_errors=True)
         else:
+            # DST_KEEP_WORK only keeps artifacts for inspection; it must not
+            # turn passing scenarios into failures.
             print(f"  work dir kept: {work}")
-            failures += 1
+            if not ok:
+                failures += 1
     if failures:
         print(f"{failures} scenario(s) failed")
         return 1

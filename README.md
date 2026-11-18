@@ -15,7 +15,7 @@ zero-dependency Rust binary, on a 320×170 handheld.**
 <img src="https://img.shields.io/badge/binary-1.0%20MB-2ea043?style=flat-square" alt="1 MB binary">
 <img src="https://img.shields.io/badge/panel-320%C3%97170%20%C2%B7%2053%C3%9712%20cells-22d3ee?style=flat-square" alt="320x170 panel, 53x12 cells">
 <img src="https://img.shields.io/badge/UI%20languages-6-8b5cf6?style=flat-square" alt="6 UI languages">
-<img src="https://img.shields.io/badge/tests-94%20passing-2ea043?style=flat-square" alt="94 unit tests">
+<img src="https://img.shields.io/badge/tests-100%20passing-2ea043?style=flat-square" alt="100 unit tests">
 <a href="https://github.com/MarsTechHAN/deepseek-harness-tui-cardputer/actions/workflows/ci.yml"><img src="https://github.com/MarsTechHAN/deepseek-harness-tui-cardputer/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
 <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs welcome"></a>
 
@@ -100,7 +100,7 @@ intelligence, and `curl` for the wire.
 
 <table>
 <tr>
-<td colspan="2"><a href="docs/demo.webp"><img src="docs/demo.webp" alt="Animated tour: first run, progress row, expanded tool calls, CtrlO, paging, queued message, Esc interrupt, voice interrupt, creator mode, hardware scan, six languages, help, config"></a><br><sub><b>Animated tour (~54 s)</b> — the whole flow and the features that matter on a 12-row screen: the pinned progress row, expanded tool calls, CtrlO during a turn, a locally attached image the model can see, transcript paging, queued messages, Esc/voice interrupts, rewinding to an earlier message, a read-only `/btw` side-question panel, creator mode building and running a skill package, the first-run hardware scan, and six UI languages. Click to open the full animation.</sub></td>
+<td colspan="2"><a href="docs/demo.webp"><img src="docs/demo.webp" alt="Screen recording of a real dst session on the device-fidelity panel: typing, an image attachment, streamed answer, pinned progress row, CtrlO tool log, /btw panel, /rewind picker, /help menu and /new"></a><br><sub><b>Screen recording (~21 s)</b> — a real `dst` session on the 53×12 panel, recorded frame by frame from the device-fidelity simulator (not a slideshow): typing at a fast-human pace, a locally attached image the model answers about, the pinned progress row, an expanded tool call, CtrlO during a turn, `/usage` mid-turn, a `/btw` side-question panel, `/rewind` to an earlier message, the `/help` menu, and `/new`. The model replies are scripted locally so the capture is deterministic and keyless; the UI, rendering and timing are the real binary. Click to play.</sub></td>
 </tr>
 <tr>
 <td colspan="2"><a href="docs/live-walkthrough.png"><img src="docs/live-walkthrough.png" alt="Twelve-screen walkthrough: startup, progress row, expanded tool call, tool result, scrollback, queued message, recording, help, config, hardware scan, Chinese login, an app running"></a><br><sub><b>Walkthrough</b> — 12 device-fidelity panels: startup, the pinned progress row, an expanded tool call, tool results, scrollback, a queued message, push-to-talk, <code>/help</code>, <code>/config</code>, the hardware scan, the Chinese login screen and an app owning the panel. Click for full size.</sub></td>
@@ -258,6 +258,12 @@ refused.
 - **Paging** — `PgUp`/`PgDn` page the transcript and list menus by a screenful,
   with the scroll clamped at the buffer edges; `Up`/`Down` recall input history
   on an empty prompt.
+- **Planning** — `todo_write` follows DeepSeek Harness's contract (whole-list
+  replacement, `{content, status}` with `pending`/`in_progress`/`completed`,
+  exactly one in progress) and the prompt requires a plan before multi-step
+  work; the list shows as a `done/total` status badge and is cleared when the
+  next turn starts. The pinned `state_report` line says what is happening now,
+  the todo list says what the plan is.
 - **Sessions** — every turn is saved with a title the model keeps current via
   the `rename` tool; `/resume` previews sessions grouped by directory, `/rewind`
   restores a checkpoint.
@@ -570,7 +576,7 @@ cargo build                       # host binary
 
 cd tools/sim
 python3 run_demo.py               # splash → thinking → tool call → reply + contact sheet
-python3 run_scenarios.py          # 100 feature scenarios, asserts on screens *and* request logs
+python3 run_scenarios.py          # 101 feature scenarios, asserts on screens *and* request logs
 python3 run_live.py               # optional: visual pass against a real endpoint
 python3 check_memory.py           # samples RSS over 20 turns
 ```
@@ -582,7 +588,7 @@ artifacts, sessions across a restart, onboarding, sandbox modes, jobs, watchers,
 searchable resume, push-to-talk with mocked speech, the nine-step WeChat login
 chain, provider failures and recovery, CJK input and the creator-mode scenarios.
 
-Unit tests (host, no network): `cargo test` — 94 tests over the harness, tool
+Unit tests (host, no network): `cargo test` — 100 tests over the harness, tool
 pipeline, compaction budgets, goal state machine, context formatting, config
 round-trip, skill packages, runnable apps, the hardware-info scan/renderer,
 image attachment/base64 handling and the i18n catalogue.

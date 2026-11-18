@@ -2334,6 +2334,31 @@ mod inline_tests {
     use super::strip_inline;
 
     #[test]
+    fn the_prompt_teaches_planning_and_per_step_reports() {
+        // The model was rarely calling todo_write/state_report: both must be
+        // spelled out in the prompt, aligned with DSH's todo contract.
+        let cfg = crate::config::Config::default();
+        let prompt = super::build_system_prompt(
+            &cfg,
+            &[],
+            crate::config::Capabilities {
+                web_tools: true,
+                speech: true,
+            },
+        );
+        for needle in [
+            "PROGRESS ROW",
+            "state_report ONCE at the start of every step",
+            "PLANNING",
+            "call todo_write BEFORE you start",
+            "exactly one item 'in_progress'",
+            "Mark each todo 'completed' as soon as it is done",
+        ] {
+            assert!(prompt.contains(needle), "prompt misses {needle:?}");
+        }
+    }
+
+    #[test]
     fn keeps_identifiers_and_math() {
         assert_eq!(strip_inline("system/battery_viewer"), "system/battery_viewer");
         assert_eq!(strip_inline("snake_case_name"), "snake_case_name");
@@ -6171,7 +6196,19 @@ fn build_system_prompt(
     ));
     system_prompt.push_str(&instructions::prompt_section());
     system_prompt.push_str(
-        "\nTODO AND MEMORY\n- Track multi-step work with todo_write; mark items done as you finish them.\n- Save durable user preferences and project conventions with memory_write (scope=project for workspace rules, global for cross-project). Read them with memory_read / memory_search before changing conventions. Never store secrets in memory.\n",
+        "\nPLANNING\n\
+- For multi-step work (more than a couple of steps, several tool calls, or work that spans \
+files), call todo_write BEFORE you start: send the COMPLETE list, one todo per concrete step, \
+with exactly one item 'in_progress'. Update the whole list as steps finish. Mark each todo \
+'completed' as soon as it is done. Skip it for trivial single-step requests.\n\
+- The list appears in the status area as a 'done/total' badge and is cleared when the next \
+turn starts: it is the plan for this turn, not long-term storage (that is memory).\n\
+- The pinned state_report line and the todo list complement each other: the todos say what \
+the plan is, state_report says what you are doing right now.\n\
+\nMEMORY\n\
+- Save durable user preferences and project conventions with memory_write (scope=project for \
+workspace rules, global for cross-project). Read them with memory_read / memory_search \
+before changing conventions. Never store secrets in memory.\n",
     );
     if !caps.web_tools || !caps.speech {
         let mut caps_text = String::from("\nCAPABILITIES\n");
@@ -6579,6 +6616,7 @@ fn main() {
                     session::clear_current();
                     session_path = None;
                     crate::usage::reset_context();
+                    crate::todo::clear();
                 }
                 for (text, kind) in out.lines {
                     scr.push(&text, kind);
@@ -6888,6 +6926,9 @@ fn main() {
                 scr.push(&format!("  {}", a.placeholder()), K_DIM);
             }
             turn_no += 1;
+            // DSH clears its todo projection at every turn/start: a plan is for
+            // the work in front of the model, not a stale cross-turn list.
+            crate::todo::clear();
             scr.turn_tools.clear();
             // A session must exist before the turn so `rename` works inside
             // the very first turn and the file is there for /resume.

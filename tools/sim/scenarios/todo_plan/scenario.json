@@ -1,0 +1,13 @@
+{"steps": [
+ {"wait_for": {"text": "dst", "timeout_ms": 15000}},
+ {"send": "summarise the notes"}, {"key": "Enter"},
+ {"wait_for": {"text": "t0/2", "timeout_ms": 20000}},
+ {"wait_ms": 200, "snap": "plan"},
+ {"wait_for": {"text": "t1/2", "timeout_ms": 20000}},
+ {"wait_ms": 200, "snap": "progress"},
+ {"wait_for": {"text": "The notes say 42.", "timeout_ms": 20000}},
+ {"wait_stable": {"stable_ms": 600, "timeout_ms": 10000}},
+ {"send": "hello again"}, {"key": "Enter"},
+ {"wait_for": {"text": "Cleared.", "timeout_ms": 20000}},
+ {"wait_stable": {"stable_ms": 600, "timeout_ms": 10000}, "snap": "next_turn"}
+]}

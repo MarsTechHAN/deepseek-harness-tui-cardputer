@@ -934,7 +934,7 @@ class PtySim:
                  home=None, cwd=None, env=None, vtime=3, startup_ms=DEFAULT_STARTUP_MS,
                  after_ms=DEFAULT_AFTER_MS, raw_log=None, out_dir=DEFAULT_OUT,
                  renderer=None, text_only=False, startup_timeout_ms=20000,
-                 pid_file=None):
+                 pid_file=None, record_dir=None, record_interval_ms=120):
         self.binary = binary
         self.cols = int(cols)
         self.rows = int(rows)
@@ -966,6 +966,13 @@ class PtySim:
         self._snapshots = []
         self._snap_idx = 0
         self._input_log = []
+        # Frame recording: a real screen recording of the run (PNG per tick),
+        # used by the animated demo instead of a slideshow of snapshots.
+        self.record_dir = record_dir
+        self.record_interval_ms = int(record_interval_ms)
+        self._record_frames = []
+        self._record_idx = 0
+        self._last_record = 0.0
 
     # -- lifecycle --------------------------------------------------------- #
     def start(self):
@@ -974,6 +981,8 @@ class PtySim:
                 f"screen_sim: dst binary not found: {self.binary}\n"
                 f"  build it with: cd {REPO} && cargo build")
         os.makedirs(self.out_dir, exist_ok=True)
+        if self.record_dir:
+            os.makedirs(self.record_dir, exist_ok=True)
         if self.raw_log:
             os.makedirs(os.path.dirname(os.path.abspath(self.raw_log)), exist_ok=True)
             self._raw_fh = open(self.raw_log, "wb")
@@ -1068,6 +1077,7 @@ class PtySim:
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
+                self._record_frame()
                 return
             if self.exited:
                 time.sleep(min(remaining, 0.01))
@@ -1079,6 +1089,7 @@ class PtySim:
                 return
             if not r:
                 self._reap_nonblocking()
+                self._record_frame()
                 continue
             try:
                 data = os.read(self.master, 65536)
@@ -1089,6 +1100,50 @@ class PtySim:
                 self._mark_exited()
                 return
             self._feed(data)
+            self._record_frame()
+
+    def _record_frame(self, force: bool = False):
+        """Save the current screen as a recording frame (rate-limited)."""
+        if not self.record_dir or self.renderer is None:
+            return
+        now = time.time()
+        if not force and (now - self._last_record) * 1000.0 < self.record_interval_ms:
+            return
+        self._last_record = now
+        path = os.path.join(self.record_dir, f"frame_{self._record_idx:05d}.png")
+        try:
+            self.renderer.png(self.screen, path)
+        except Exception as exc:  # a bad frame must not lose the recording
+            log(f"record frame render failed (skipped): {exc!r}")
+            return
+        self._record_frames.append({
+            "t_ms": int((now - self._start_time) * 1000),
+            "path": path,
+        })
+        self._record_idx += 1
+
+    def flush_recording(self):
+        if not self.record_dir:
+            return
+        self._record_frame(force=True)
+        index = {
+            "frames": self._record_frames,
+            "cols": self.cols,
+            "rows": self.rows,
+            "duration_ms": self._record_frames[-1]["t_ms"] if self._record_frames else 0,
+        }
+        with open(os.path.join(self.record_dir, "frames.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump(index, fh)
+        log(f"recorded {len(self._record_frames)} frames "
+            f"({index['duration_ms'] / 1000.0:.1f}s) -> {self.record_dir}")
+
+    def type_text(self, text: str, per_key_ms: int = 60):
+        """Type like a (fast) human: one character per write, pumping between
+        characters so the recording shows the prompt filling in."""
+        for ch in text:
+            self.write(ch.encode("utf-8"))
+            self.pump(max(10, per_key_ms))
 
     def _feed(self, data: bytes):
         self.total_bytes += len(data)
@@ -1365,6 +1420,15 @@ def normalize_steps(steps):
         if "send_line" in step:
             ops.append({"op": "send_line", "text": str(step["send_line"])})
             produced = True
+        if "type" in step or "type_line" in step:
+            key = "type" if "type" in step else "type_line"
+            ops.append({
+                "op": "type",
+                "text": str(step[key]),
+                "per_key_ms": int(step.get("per_key_ms", 55)),
+                "enter": key == "type_line",
+            })
+            produced = True
         if "key" in step:
             keys = step["key"]
             if isinstance(keys, list):
@@ -1471,6 +1535,11 @@ def run_ops(sim: PtySim, ops):
             sim.pump(max(30, sim.after_ms // 2))
             sim.write(b"\r")
             sim.pump(sim.after_ms)
+        elif kind == "type":
+            sim.type_text(op["text"], op.get("per_key_ms", 55))
+            if op.get("enter"):
+                sim.write(b"\r")
+                sim.pump(sim.after_ms)
         elif kind == "key":
             sim.send_key(op["key"])
             sim.pump(sim.after_ms)
@@ -1575,6 +1644,10 @@ def build_parser():
     p.add_argument("--cjk-font", help="override CJK font path (PingFang SC etc.)")
     p.add_argument("--symbol-font", help="override symbol font path (Apple Symbols)")
     p.add_argument("--text-only", action="store_true", help="skip PNG rendering")
+    p.add_argument("--record-dir", default=None,
+                   help="record every rendered frame here (PNG + frames.json)")
+    p.add_argument("--record-interval-ms", type=int, default=120,
+                   help="minimum time between recorded frames (default 120)")
     p.add_argument("--raw-log", help="also write the raw pty byte stream here")
     p.add_argument("--quit-timeout-ms", type=int, default=DEFAULT_QUIT_TIMEOUT_MS,
                    help="how long to wait for a clean Ctrl-C exit (default 2000)")
@@ -1696,7 +1769,8 @@ def main(argv=None):
         home=args.home, cwd=args.cwd, env=extra_env,
         vtime=args.vtime, startup_ms=args.startup_ms, after_ms=args.after_ms,
         raw_log=args.raw_log, out_dir=args.out, renderer=renderer,
-        text_only=args.text_only)
+        text_only=args.text_only, record_dir=args.record_dir,
+        record_interval_ms=args.record_interval_ms)
     sim.start()
     log(f"spawned dst pid={sim.pid} pty={args.cols}x{args.rows} "
         f"HOME={sim.home or '(inherited)'} cwd={sim.cwd}")
@@ -1708,6 +1782,7 @@ def main(argv=None):
         if ops:
             run_ops(sim, ops)
         final_text = sim.capture("final", final=True)
+        sim.flush_recording()
     except SystemExit:
         raise
     except BaseException as exc:

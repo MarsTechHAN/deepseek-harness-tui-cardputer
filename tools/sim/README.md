@@ -14,7 +14,7 @@ Two tools, both pure Python (stdlib + `pyte` + `Pillow`):
 | `sample_home/.dst/config.yml` | ready-made dst config pointing at `http://127.0.0.1:8765/v1` |
 | `run_demo.py` | one-command end-to-end demo: starts mock, writes temp HOME, runs simulator, validates, builds contact sheet |
 | `run_scenarios.py` | automated feature checks: `/clear`, `/goal` round driver, compaction, voice, login (asserts on screens **and** the request log) |
-| `make_demo_webp.py` | rebuilds the committed docs images from the simulator: `docs/demo.webp` (54 s animated tour of the whole flow), `docs/live-walkthrough.png`, `docs/live-creator.png` and the six-language login sheet (real `dst` binary, scripted mock model) |
+| `make_demo_webp.py` | rebuilds the committed docs images from the simulator: `docs/demo.webp` (21 s screen recording of a real session: screen_sim records every ~110 ms frame, dedupes, and encodes a timed WebP), `docs/live-walkthrough.png`, `docs/live-creator.png` and the six-language login sheet (real `dst` binary, scripted mock model) |
 | `run_live.py` | optional common-usage visual walkthrough against the real local vLLM endpoint from `~/.dsh/settings.yaml`; only TTS/ASR are mocked (`DST_MOCK_SPEECH=1`) |
 | `scenarios/<name>/` | per-feature `config.yml` + `scenario.json` + `script.json` for `run_scenarios.py` |
 | `screenshots/` | generated evidence from `run_demo.py` (created on first run) |
@@ -553,6 +553,7 @@ request log:
 | `busy_commands` | the three input classes during a turn | `/usage` runs immediately, `/model` is refused, `/btw` runs as a separate read-only request with its answer in a panel, plain chat queues, and no command ever enters the model context |
 | `state_report_steps` | one report per working step | each tool step starts with `state_report`, the pinned row survives tool cards/text and is replaced by the next report, then joins the transcript when the turn ends |
 | `usage_ring_reset` | fresh-start context ring | a `usage.json` carrying a large previous-run context starts at `○ 0%`, not the old value |
+| `todo_plan` | DSH-style todo plan | `todo_write` sends the whole `{content,status}` list, the `done/total` badge moves 0/2 → 1/2, the result line is DSH's, and the list is cleared when the next turn starts |
 | `new_session` | `/clear` and `/new` | both reset the conversation (the next request is system+user only), restart the splash and zero the ring |
 | `read_image_tool` | agent opens an image | the model calls `read_image {"file_path": "~/photo.png"}`, the card shows the path, the tool result carries the DeepSeek `image_url` block so the model describes the picture, and the following request's history has only the `[image read: …]` placeholder |
 | `image_input` | local image attachments | `/image ~/photo.png` attaches a local PNG, one line per attachment plus the live indicator, the chat request carries the DeepSeek `image_url` content block (data URL), the model answers, and the next request's history has only the `[image attached: …]` placeholder (no base64 re-sent) |
@@ -566,7 +567,7 @@ request log:
 
 ```bash
 cd tools/sim
-python3 run_scenarios.py               # all 100 checked scenarios (~13 min)
+python3 run_scenarios.py               # all 101 checked scenarios (~13 min)
 python3 run_scenarios.py goal compact  # just some
 python3 check_memory.py                # 20-turn session, samples dst RSS
 python3 run_all.py                     # demo + scenarios + memory in one go

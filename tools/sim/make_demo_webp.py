@@ -1,65 +1,47 @@
 #!/usr/bin/env python3
-"""make_demo_webp.py -- build the animated tour shown in the README.
+"""make_demo_webp.py -- record the animated tour shown in the README.
 
-It drives a curated set of simulator scenarios through the real `dst` binary
-(scripted mock API, device-fidelity renderer at 640x340), collects the named
-panel snapshots, overlays a caption and writes:
+`docs/demo.webp` is a screen recording, not a slideshow: screen_sim.py runs the
+real `dst` binary with a scripted (local, deterministic) model and records one
+rendered frame every ~110 ms, including the typing, the streaming answer, the
+pinned progress row, the CtrlO panel and the side-question panel. Frames are
+deduplicated, timed from the real wall clock and encoded as an animated WebP.
 
-    docs/demo.webp               animated tour (whole flow + key features)
-    docs/live-walkthrough.png    refreshed 12-panel contact sheet
-    docs/live-creator.png        refreshed creator-mode contact sheet
-    docs/login-i18n-sheet.png    refreshed six-language login sheet
+Also refreshes the contact sheets:
 
-The images are simulator renders, not photos of the device: same binary, same
-53x12 cell renderer and same fonts as the panel, but the model replies are
-scripted so the demo is deterministic and needs no API.
+    docs/demo.webp               screen recording of a real session
+    docs/live-walkthrough.png    12-panel contact sheet
+    docs/live-creator.png        creator-mode contact sheet
+    docs/login-i18n-sheet.png    six-language login sheet
 
-    python3 make_demo_webp.py            # ~2 min, writes docs/
-    python3 make_demo_webp.py --frames   # only print the frame list
+    python3 make_demo_webp.py               # record + sheets (~4 min)
+    python3 make_demo_webp.py --record-only # only docs/demo.webp (~1 min)
 """
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 
 import run_scenarios as rs
 from run_demo import REPO as ROOT
+from run_demo import SIM, start_mock, stop_mock
 DOCS = os.path.join(ROOT, "docs")
 BIN = os.path.join(ROOT, "target", "debug", "dst")
 
-# Every frame must share one size for the WebP animation: 640x340 panel render
-# plus a caption bar (as in the contact sheets).
-FRAME_W, FRAME_H = 672, 396
+# The recording scenario: a real dst session, typed like a (fast) human.
+TOUR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenarios", "demo_tour")
+RECORD_INTERVAL_MS = 110
+# WebP animation limits: a frame should never linger longer than this.
+MAX_FRAME_MS = 700
+MIN_FRAME_MS = 50
 
-# (scenario, snapshot, caption, duration_ms)
-FRAMES = [
-    ("tips", "tips", "First run: it lives on the panel, 53x12", 2200),
-    ("progress", "pinned", "state_report pins the current stage on top", 2000),
-    ("progress", "running", "Tool calls expand their arguments as they run", 2000),
-    ("progress", "ctrlo", "CtrlO opens the tool log during a turn", 2000),
-    ("ux", "done", "Results land in the transcript as tool cards", 2000),
-    ("read_image_tool", "reply", "The agent opens an image itself with read_image", 2200),
-    ("image_input", "reply", "Or you attach one with /image: the model sees it", 2200),
-    ("paging", "page2", "PgUp/PgDn page the transcript without blanking", 2000),
-    ("esc_queue", "queued", "Typing during a turn queues the next message", 2000),
-    ("progress", "interrupted", "Esc stops the whole turn, not just one tool", 2000),
-    ("rewind_prompt", "picker", "Rewind to an earlier message, then edit it", 2200),
-    ("voice_interrupt", "recording", "Tab interrupts everything and records at once", 2200),
-    ("voice_interrupt", "transcribed", "The take becomes the prompt (send or edit)", 2000),
-    ("creator_build", "built", "Creator mode: the skill package is the unit", 2200),
-    ("creator_app_flow", "list", "/apps lists runnable skill packages", 2000),
-    ("creator_app_flow", "running", "An app owns the whole panel, long-Esc returns", 2400),
-    ("onboarding_hw", "asked", "First setup offers a real hardware scan", 2200),
-    ("update_hwinfo", "updated", "/update-hwinfo refreshes the hardware skill", 2200),
-    ("btw_side_question", "btw_panel", "/btw: a read-only subagent answers in a panel", 2400),
-    ("login_i18n_zh", "menu", "Every screen exists in en/zh/es/ja/de/it", 2000),
-    ("ux", "help_menu", "/help is a real command menu with previews", 2000),
-    ("config_menu", "menu", "/config edits the same keys as config.yml", 2000),
-    ("progress", "next", "Then the conversation simply continues", 1800),
-]
 
 # Contact sheets: (doc path, title, cols, [(scenario, snapshot, label)])
 SHEETS = {
@@ -149,50 +131,109 @@ def _collect(wanted):
     return cache
 
 
-def _frame(png_path, caption, index, total):
-    from PIL import Image, ImageDraw
+def _dedupe_frames(frames):
+    """Drop frames identical to their predecessor and derive real durations.
 
-    im = Image.open(png_path).convert("RGB")
-    pad, bar = 16, 40
-    w, h = im.width + 2 * pad, im.height + bar + pad
-    if (w, h) != (FRAME_W, FRAME_H):
-        # Run at --scale 2 for 640x340; resize defensively so every animation
-        # frame has identical dimensions.
-        im = im.resize((FRAME_W - 2 * pad, FRAME_H - bar - pad), Image.LANCZOS)
-        w, h = FRAME_W, FRAME_H
-    out = Image.new("RGB", (w, h), (13, 17, 23))
-    draw = ImageDraw.Draw(out)
-    # panel drop shadow / border
-    draw.rectangle([pad - 1, bar - 1, pad + im.width, bar + im.height], fill=(40, 48, 60))
-    out.paste(im, (pad, bar))
-    title = _font(19)
-    small = _font(15)
-    counter = f"{index}/{total}"
-    counter_w = draw.textlength(counter, font=small)
-    room = w - 2 * pad - counter_w - 14
-    shown = caption
-    while shown and draw.textlength(shown, font=title) > room:
-        shown = shown[:-1]
-    if shown != caption:
-        shown = shown[:-1] + "\u2026"
-    draw.text((pad, 9), shown, font=title, fill=(226, 234, 243))
-    draw.text((w - pad - counter_w, 12), counter, font=small, fill=(110, 160, 210))
-    return out
+    Returns [(PIL image, duration_ms)]. The recording ticks at a fixed rate, so
+    the time between two kept frames is exactly how long the first one was on
+    the panel — that keeps typing/streaming motion while idle pauses stay cheap.
+    """
+    from PIL import Image
+
+    def blank(image):
+        """True for the pre-first-paint frame (nothing but the cursor)."""
+        hist = image.convert("L").histogram()
+        lit = sum(hist[48:])
+        return lit < image.width * image.height * 0.002
+
+    kept = []
+    prev_hash = None
+    started = False
+    for frame in frames:
+        with open(frame["path"], "rb") as fh:
+            raw = fh.read()
+        digest = hashlib.sha1(raw).hexdigest()
+        if digest == prev_hash:
+            continue
+        prev_hash = digest
+        image = Image.open(io.BytesIO(raw)).convert("RGB")
+        if not started:
+            # A recording that opens on an empty frame looks like a broken
+            # slideshow: start at the first real paint (splash frame 1).
+            if blank(image):
+                continue
+            started = True
+        kept.append((frame["t_ms"], image))
+    if not kept:
+        raise SystemExit("recording produced no frames")
+    images, durations = [], []
+    for i, (_t, image) in enumerate(kept):
+        if i + 1 < len(kept):
+            ms = kept[i + 1][0] - kept[i][0]
+        else:
+            ms = 600
+        durations.append(max(MIN_FRAME_MS, min(MAX_FRAME_MS, int(ms))))
+        images.append(image)
+    return images, durations
 
 
-def _title_card(lines):
-    from PIL import Image, ImageDraw
+def build_recording():
+    """Record a real dst session and write docs/demo.webp."""
+    from PIL import Image
 
-    im = Image.new("RGB", (FRAME_W, FRAME_H), (11, 18, 27))
-    draw = ImageDraw.Draw(im)
-    # accent line, echoing the splash
-    draw.rectangle([48, 104, 48 + 112, 108], fill=(80, 180, 235))
-    y = 122
-    for text, font, fill in lines:
-        draw.text((48, y), text, font=font, fill=fill)
-        # crude step by glyph height so title/subtitle spacing stays even
-        y += int(font.size * 1.35)
-    return im
+    work = tempfile.mkdtemp(prefix="dst-demo-")
+    home = os.path.join(work, "home")
+    frames_dir = os.path.join(work, "frames")
+    out = os.path.join(work, "out")
+    os.makedirs(os.path.join(home, ".dst"), exist_ok=True)
+    os.makedirs(frames_dir, exist_ok=True)
+    os.makedirs(out, exist_ok=True)
+    overlay = os.path.join(TOUR_DIR, "home")
+    if os.path.isdir(overlay):
+        shutil.copytree(overlay, home, dirs_exist_ok=True)
+    script = os.path.join(TOUR_DIR, "script.json")
+    scenario = os.path.join(TOUR_DIR, "scenario.json")
+    log_path = os.path.join(work, "requests.jsonl")
+    env = dict(os.environ)
+    mock, url, _state = start_mock(0, script, log_path, env)
+    try:
+        cfg = open(os.path.join(TOUR_DIR, "config.yml"), encoding="utf-8").read()
+        cfg = cfg.replace("  key: test", f"  base: {url}\n  key: test")
+        cfg_path = os.path.join(home, ".dst", "config.yml")
+        with open(cfg_path, "w", encoding="utf-8") as fh:
+            fh.write(cfg)
+        os.chmod(cfg_path, 0o600)
+        cmd = [
+            sys.executable, SIM, "--bin", BIN, "--home", home, "--cwd", work,
+            "--out", out, "--scenario", scenario, "--scale", "2",
+            "--record-dir", frames_dir,
+            "--record-interval-ms", str(RECORD_INTERVAL_MS),
+        ]
+        print("  recording demo_tour with the real dst binary ...", flush=True)
+        proc = subprocess.run(cmd, cwd=os.path.dirname(os.path.abspath(__file__)))
+        if proc.returncode != 0:
+            raise SystemExit(f"screen_sim failed while recording (exit {proc.returncode})")
+        with open(os.path.join(frames_dir, "frames.json"), encoding="utf-8") as fh:
+            recorded = json.load(fh)
+    finally:
+        stop_mock(mock)
+    frames, durations = _dedupe_frames(recorded["frames"])
+    total_ms = sum(durations)
+    path = os.path.join(DOCS, "demo.webp")
+    frames[0].save(
+        path,
+        "WEBP",
+        save_all=True,
+        append_images=frames[1:],
+        duration=durations,
+        loop=0,
+        quality=72,
+        method=4,
+    )
+    kb = os.path.getsize(path) / 1024
+    print(f"  wrote {os.path.relpath(path, ROOT)} "
+          f"({len(frames)} frames, {kb:.0f} KB, {total_ms / 1000.0:.1f}s)")
+    return work
 
 
 def _sheet(path, title, cols, entries, cache):
@@ -289,23 +330,27 @@ def build_webp(cache):
 
 
 def main(argv):
-    if "--frames" in argv:
-        for i, (scen, snap, caption, ms) in enumerate(FRAMES, 1):
-            print(f"{i:02d} {scen:18s} {snap:18s} {ms:5d}ms  {caption}")
-        return 0
     if not os.path.exists(BIN):
         raise SystemExit(f"build dst first: cargo build ({BIN} missing)")
     os.makedirs(DOCS, exist_ok=True)
-    print("collecting simulator snapshots (real dst binary, scripted API)")
-    wanted = [(s, snap) for s, snap, _, _ in FRAMES]
+    if "--storyboard" in argv:
+        with open(os.path.join(TOUR_DIR, "scenario.json"), encoding="utf-8") as fh:
+            for i, step in enumerate(json.load(fh)["steps"], 1):
+                print(f"{i:02d} {json.dumps(step, ensure_ascii=False)}")
+        return 0
+    if "--sheets-only" not in argv:
+        print("recording the animated tour (real dst binary, scripted API)")
+        build_recording()
+    if "--record-only" in argv:
+        return 0
+    print("collecting contact-sheet snapshots")
+    wanted = []
     for _name, (_t, _c, entries) in SHEETS.items():
         wanted += [(s, snap) for s, snap, _ in entries]
     wanted += [(f"login_i18n_{lang}", "menu") for lang in LOGIN_LANGS]
     cache = _collect(wanted)
     print("writing contact sheets")
     build_sheets(cache)
-    print("writing animated webp")
-    build_webp(cache)
     return 0
 
 

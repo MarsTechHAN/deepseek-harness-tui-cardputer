@@ -1,0 +1,16 @@
+{"responses": [
+ {"reasoning": "Plan the work.", "content": "",
+  "tool_calls": [
+   {"id": "p1", "name": "todo_write", "arguments": {"todos": [
+     {"content": "read the notes", "status": "in_progress"},
+     {"content": "summarise", "status": "pending"}]}}
+  ], "finish_reason": "tool_calls"},
+ {"reasoning": "First step done, next in progress.", "content": "",
+  "tool_calls": [
+   {"id": "p2", "name": "todo_write", "arguments": {"todos": [
+     {"content": "read the notes", "status": "completed"},
+     {"content": "summarise", "status": "in_progress"}]}}
+  ], "finish_reason": "tool_calls"},
+ {"reasoning": "Done.", "content": "The notes say 42.", "finish_reason": "stop"},
+ {"reasoning": "Fresh turn.", "content": "Cleared.", "finish_reason": "stop"}
+]}

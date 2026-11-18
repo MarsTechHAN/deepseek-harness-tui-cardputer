@@ -195,6 +195,26 @@ main conversation:
    `msgs`, the session file and the checkpoint list are not modified, so the
    side question cannot pollute (or be re-sent with) the real conversation.
 
+## Planning (`todo_write`) and the prompt contract
+
+The model-facing todo tool follows DeepSeek Harness's `dsh-tool-todo` contract
+rather than a bespoke list API: parameter `todos` is the **complete** list of
+`{content, status}` items (`pending` / `in_progress` / `completed`), every call
+replaces the whole list, exactly one item is `in_progress` while work remains,
+and the tool result is the stable DSH line `Updated todo list: N pending, N in
+progress, N completed.` (`src/todo.rs`). Legacy shorthand (`items: ["[x] …"]`,
+`{text, done}`) is accepted for old scripts but never advertised.
+
+The list is a per-turn plan, not storage: DSH clears its todo projection at
+`turn/start`, so dst calls `todo::clear()` before every turn (and on `/clear`);
+the status area shows the `done/total` badge meanwhile, and `todo_read` returns
+the current list. The system prompt has a matching `PLANNING` section (plan
+before multi-step work, skip trivial requests, keep one item in progress, mark
+completed immediately) and explains that `state_report` complements it — the
+pinned row is *now*, the todo list is *the plan*. The prompt also requires one
+`state_report` at the start of every working step. Both requirements are
+asserted by unit tests, so the prompt cannot silently lose them again.
+
 ## Images (vision input)
 
 `deepseek-flash` accepts images in Chat Completions when `content` is an array of

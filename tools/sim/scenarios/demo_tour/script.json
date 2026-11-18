@@ -1,0 +1,22 @@
+{"responses": [
+ {"reasoning": "The user attached a picture; describe what is on it.",
+  "content": "I can see a blue panel with a yellow top edge.",
+  "initial_delay_ms": 300, "reasoning_delay_ms": 80, "content_delay_ms": 90,
+  "finish_reason": "stop"},
+ {"reasoning": "Report the current stage and check the panel.",
+  "content": "",
+  "initial_delay_ms": 250, "reasoning_delay_ms": 60, "tool_delay_ms": 40,
+  "tool_calls": [
+   {"id": "d0", "name": "state_report", "arguments": {"text": "reading the panel"}},
+   {"id": "d1", "name": "bash", "arguments": {"command": "sleep 2; echo panel-ok", "timeout_s": 30}}
+  ],
+  "finish_reason": "tool_calls"},
+ {"reasoning": "Panel checked.",
+  "content": "The panel is 53x12 cells and the job echoed panel-ok.",
+  "initial_delay_ms": 300, "reasoning_delay_ms": 70, "content_delay_ms": 100,
+  "finish_reason": "stop"},
+ {"reasoning": "Answer the side question from the panel context.",
+  "content": "It is 53x12 cells, a 320x170 pixel panel.",
+  "initial_delay_ms": 250, "content_delay_ms": 90,
+  "finish_reason": "stop"}
+]}
