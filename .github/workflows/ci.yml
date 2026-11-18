@@ -67,12 +67,12 @@ jobs:
       - name: Simulator demo (device-fidelity renderer)
         run: |
           cd tools/sim
-          python3 run_demo.py
+          timeout 300 python3 run_demo.py
 
       - name: Simulator smoke scenarios
         run: |
           cd tools/sim
-          python3 run_scenarios.py \
+          DST_SCENARIO_TIMEOUT=120 timeout 900 python3 run_scenarios.py \
             progress job_manager rewind rewind_prompt btw_side_question \
             image_input read_image_tool creator_build update_hwinfo
 
@@ -114,7 +114,7 @@ jobs:
         run: |
           cd tools/sim
           set +e
-          python3 run_scenarios.py 2>&1 | tee /tmp/scen.log
+          DST_SCENARIO_TIMEOUT=120 timeout 2100 python3 run_scenarios.py 2>&1 | tee /tmp/scen.log
           exit 0
 
       - name: Scenario summary

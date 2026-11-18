@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -125,10 +126,19 @@ def start_mock_login(work, env):
     return proc, log_file
 
 
-def run_scenario(name, binary, timeout=120):
+def _phase_timeout() -> int:
+    try:
+        return max(30, int(os.environ.get("DST_SCENARIO_TIMEOUT", "150")))
+    except ValueError:
+        return 150
+
+
+def run_scenario(name, binary, timeout=None):
     base = os.path.join(SCEN_DIR, name)
     scenario = os.path.join(base, "scenario.json")
     script = os.path.join(base, "script.json")
+    if timeout is None:
+        timeout = _phase_timeout()
     work = tempfile.mkdtemp(prefix=f"dst-scen-{name}-")
     home = os.path.join(work, "home")
     out = os.path.join(work, "out")
@@ -200,10 +210,50 @@ def run_scenario(name, binary, timeout=120):
             # used by make_demo_webp.py for a compact animated demo.
             if os.environ.get("DST_SIM_SCALE"):
                 cmd += ["--scale", str(os.environ["DST_SIM_SCALE"])]
-            r = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True,
-                               text=True, timeout=timeout)
-            if r.returncode != 0:
-                raise AssertionError(f"simulator failed: {r.stderr[-800:]}")
+            # Do NOT use capture_output=True: the simulator starts dst and dst
+            # may leave background children holding the inherited stdout/stderr
+            # pipes. subprocess.run(timeout=) would then kill the child and
+            # block forever waiting for EOF from those grandchildren (this hung
+            # a CI run). Logs go to a file, and a timeout kills the session.
+            sim_log = os.path.join(work, f"sim-phase-{_i}.log")
+            with open(sim_log, "w", encoding="utf-8") as logfh:
+                proc_sim = subprocess.Popen(
+                    cmd,
+                    cwd=ROOT,
+                    env=env,
+                    stdout=logfh,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+                try:
+                    returncode = proc_sim.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    for sig in (signal.SIGTERM, signal.SIGKILL):
+                        try:
+                            os.killpg(proc_sim.pid, sig)
+                        except OSError:
+                            pass
+                        try:
+                            proc_sim.wait(timeout=2)
+                            break
+                        except subprocess.TimeoutExpired:
+                            continue
+                    tail = ""
+                    try:
+                        with open(sim_log, encoding="utf-8", errors="replace") as fh:
+                            tail = "".join(fh.readlines()[-10:])
+                    except OSError:
+                        pass
+                    raise AssertionError(
+                        f"simulator timed out after {timeout}s; last output:\n{tail}"
+                    )
+            if returncode != 0:
+                try:
+                    with open(sim_log, encoding="utf-8", errors="replace") as fh:
+                        tail = "".join(fh.readlines()[-25:])
+                except OSError:
+                    tail = ""
+                raise AssertionError(f"simulator failed (exit {returncode}):\n{tail}")
     finally:
         stop_mock(proc)
         if login_mock is not None:
@@ -2306,6 +2356,14 @@ for _lang_ in LOGIN_I18N_EXPECT:
     CHECKS[f"login_i18n_{_lang_}"] = make_login_i18n_check(_lang_)
 
 
+class _ScenarioTimeout(Exception):
+    pass
+
+
+def _alarm_handler(_signum, _frame):
+    raise _ScenarioTimeout("scenario exceeded its watchdog")
+
+
 def main(argv):
     names = argv or sorted(CHECKS)
     binary = os.environ.get("DST_BIN", DEFAULT_BIN)
@@ -2316,12 +2374,21 @@ def main(argv):
             return 2
         log(f"scenario: {name}")
         t0 = time.time()
+        # Watchdog: even a hung simulator teardown cannot stall the whole run.
+        watchdog_s = _phase_timeout() + 60
+        alarm_armed = hasattr(signal, "SIGALRM")
+        if alarm_armed:
+            signal.signal(signal.SIGALRM, _alarm_handler)
+            signal.alarm(watchdog_s)
         try:
             screens, reqs, work = run_scenario(name, binary)
-        except Exception as exc:  # noqa: BLE001 - report and continue
+        except (Exception, _ScenarioTimeout) as exc:  # noqa: BLE001
             print(f"[FAIL] {name}: {exc}")
             failures += 1
             continue
+        finally:
+            if alarm_armed:
+                signal.alarm(0)
         checks = CHECKS[name](screens, reqs, work)
         ok = all(c[0] for c in checks)
         for passed, label in checks:
