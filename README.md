@@ -15,7 +15,7 @@ zero-dependency Rust binary, on a 320×170 handheld.**
 <img src="https://img.shields.io/badge/binary-1.0%20MB-2ea043?style=flat-square" alt="1 MB binary">
 <img src="https://img.shields.io/badge/panel-320%C3%97170%20%C2%B7%2053%C3%9712%20cells-22d3ee?style=flat-square" alt="320x170 panel, 53x12 cells">
 <img src="https://img.shields.io/badge/UI%20languages-6-8b5cf6?style=flat-square" alt="6 UI languages">
-<img src="https://img.shields.io/badge/tests-70%20passing-2ea043?style=flat-square" alt="70 unit tests">
+<img src="https://img.shields.io/badge/tests-75%20passing-2ea043?style=flat-square" alt="75 unit tests">
 <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs welcome"></a>
 
 <a href="#quick-start">Quick start</a> ·
@@ -96,10 +96,13 @@ intelligence, and `curl` for the wire.
 
 <table>
 <tr>
-<td colspan="2"><a href="docs/live-walkthrough.png"><img src="docs/live-walkthrough.png" alt="Twelve-screen live walkthrough: startup, streaming, reply, tool call, push-to-talk, help, config, resume, login"></a><br><sub><b>Live walkthrough</b> — 12 real screens against a local model: streaming, a folded reasoning line, a tool card, push-to-talk, <code>/help</code>, <code>/config</code>, <code>/resume</code>, <code>/login</code>. Click for full size.</sub></td>
+<td colspan="2"><a href="docs/demo.webp"><img src="docs/demo.webp" alt="Animated tour: first run, progress row, expanded tool calls, CtrlO, paging, queued message, Esc interrupt, voice interrupt, creator mode, hardware scan, six languages, help, config"></a><br><sub><b>Animated tour (43 s)</b> — the whole flow and the features that matter on a 12-row screen: the pinned progress row, expanded tool calls, CtrlO during a turn, transcript paging, queued messages, Esc/voice interrupts, creator mode building and running a skill package, the first-run hardware scan, and six UI languages. Click to open the full animation.</sub></td>
 </tr>
 <tr>
-<td width="50%"><a href="docs/live-creator.png"><img src="docs/live-creator.png" alt="Creator mode: the model builds a battery readout as a skill package and /apps lists it"></a><br><sub><b>Creator mode</b> — the model builds a battery readout as a skill package (<code>SKILL.md</code> + <code>run.sh</code> + <code>meta.json</code>); <code>/apps</code> lists it and runs it full-screen.</sub></td>
+<td colspan="2"><a href="docs/live-walkthrough.png"><img src="docs/live-walkthrough.png" alt="Twelve-screen walkthrough: startup, progress row, expanded tool call, tool result, scrollback, queued message, recording, help, config, hardware scan, Chinese login, an app running"></a><br><sub><b>Walkthrough</b> — 12 device-fidelity panels: startup, the pinned progress row, an expanded tool call, tool results, scrollback, a queued message, push-to-talk, <code>/help</code>, <code>/config</code>, the hardware scan, the Chinese login screen and an app owning the panel. Click for full size.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="docs/live-creator.png"><img src="docs/live-creator.png" alt="Creator mode: a skill package is written, SKILL.md opens in /apps, the launcher lists it and the app runs full-screen"></a><br><sub><b>Creator mode</b> — a skill package is written (<code>SKILL.md</code> + <code>run.sh</code> + <code>meta.json</code>), read in <code>/apps</code>, listed and run full-screen. The package format is the skill library; there is no separate app store.</sub></td>
 <td width="50%"><img src="docs/splash.gif" alt="Animated splash: the DeepSeek whale breaches out of a night sea on the device pixel grid"><br><sub><b>Splash</b> — a 14-frame whale breach on the device pixel grid, deterministic so snapshots reproduce.</sub></td>
 </tr>
 <tr>
@@ -109,8 +112,16 @@ intelligence, and `curl` for the wire.
 </table>
 
 <div align="center">
-<sub><a href="docs/splash-frames.png">splash frame sheet</a> · <a href="docs/login-page.png">phone login page</a> · <a href="docs/live-walkthrough.png">walkthrough at full size</a></sub>
+<sub><a href="docs/demo.webp">animated tour</a> · <a href="docs/splash-frames.png">splash frame sheet</a> · <a href="docs/login-page.png">phone login page</a> · <a href="docs/live-walkthrough.png">walkthrough at full size</a></sub>
 </div>
+
+The images above are rendered by the device-fidelity simulator
+([`tools/sim`](tools/sim/README.md)) using the real `dst` binary: same 53×12 cell
+renderer, fonts and colours as the panel, with scripted model replies so they
+are deterministic. `python3 tools/sim/make_demo_webp.py` rebuilds
+`docs/demo.webp` and the contact sheets; the optional live passes
+(`run_live.py`, `live_creator_check.py`) need a real OpenAI-compatible endpoint
+and are documented in [`docs/UX-LIVE.md`](docs/UX-LIVE.md).
 
 ---
 
@@ -476,7 +487,7 @@ cargo build                       # host binary
 cd tools/sim
 python3 run_demo.py               # splash → thinking → tool call → reply + contact sheet
 python3 run_scenarios.py          # feature scenarios, asserts on screens *and* request logs
-python3 run_live.py               # visual walkthrough against a real local endpoint
+python3 run_live.py               # optional: visual pass against a real endpoint
 python3 check_memory.py           # samples RSS over 20 turns
 ```
 
@@ -487,9 +498,19 @@ artifacts, sessions across a restart, onboarding, sandbox modes, jobs, watchers,
 searchable resume, push-to-talk with mocked speech, the nine-step WeChat login
 chain, provider failures and recovery, CJK input and the creator-mode scenarios.
 
-Unit tests (host, no network): `cargo test` — 70 tests over the harness, tool
+Unit tests (host, no network): `cargo test` — 75 tests over the harness, tool
 pipeline, compaction budgets, goal state machine, context formatting, config
-round-trip, skill packages, runnable apps and the i18n catalogue.
+round-trip, skill packages, runnable apps, the hardware-info scan/renderer and
+the i18n catalogue.
+
+The committed screenshots and the animated tour are rebuilt from the simulator
+with one command (real `dst` binary, device-fidelity renderer, scripted model):
+
+```sh
+cd tools/sim
+python3 make_demo_webp.py         # docs/demo.webp + contact sheets (~2 min)
+python3 run_all.py                # every offline check (scenarios, login, memory)
+```
 
 ---
 
@@ -547,9 +568,9 @@ Other overrides: `DST_CARGO_TARGET_DIR`, `DST_ZIG_CC`, `DST_JOBS`,
 | [`docs/CREATOR.md`](docs/CREATOR.md) | creator mode: skill packages, `meta.json` runnable apps, `/apps`, prompt and takeover contract |
 | [`docs/LOGIN.md`](docs/LOGIN.md) | DeepSeek sign-in: states, requirements, troubleshooting — [中文](docs/LOGIN.zh.md) · [ES](docs/LOGIN.es.md) · [日本語](docs/LOGIN.ja.md) · [DE](docs/LOGIN.de.md) · [IT](docs/LOGIN.it.md) |
 | [`docs/UX-AUDIT.md`](docs/UX-AUDIT.md) | screen-by-screen UX audit checklist and known limits |
-| [`docs/UX-LIVE.md`](docs/UX-LIVE.md) | the common-usage walkthrough behind the screenshots |
+| [`docs/UX-LIVE.md`](docs/UX-LIVE.md) | what the committed screenshots show, how to rebuild them, and the optional real-endpoint pass |
 | [`docs/SPLASH-STORYBOARD.md`](docs/SPLASH-STORYBOARD.md) | splash frame storyboard and reference analysis |
-| [`tools/sim/README.md`](tools/sim/README.md) | simulator, mock API, scenario DSL, screenshot pipeline |
+| [`tools/sim/README.md`](tools/sim/README.md) | simulator, mock API, scenario DSL, screenshot pipeline (`make_demo_webp.py` builds the committed images + animated tour) |
 
 ## Contributing
 

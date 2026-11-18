@@ -14,7 +14,8 @@ Two tools, both pure Python (stdlib + `pyte` + `Pillow`):
 | `sample_home/.dst/config.yml` | ready-made dst config pointing at `http://127.0.0.1:8765/v1` |
 | `run_demo.py` | one-command end-to-end demo: starts mock, writes temp HOME, runs simulator, validates, builds contact sheet |
 | `run_scenarios.py` | automated feature checks: `/clear`, `/goal` round driver, compaction, voice, login (asserts on screens **and** the request log) |
-| `run_live.py` | common-usage visual walkthrough against the real local vLLM endpoint from `~/.dsh/settings.yaml`; only TTS/ASR are mocked (`DST_MOCK_SPEECH=1`), writes a 12-screen PNG contact sheet |
+| `make_demo_webp.py` | rebuilds the committed docs images from the simulator: `docs/demo.webp` (43 s animated tour of the whole flow), `docs/live-walkthrough.png`, `docs/live-creator.png` and the six-language login sheet (real `dst` binary, scripted mock model) |
+| `run_live.py` | optional common-usage visual walkthrough against the real local vLLM endpoint from `~/.dsh/settings.yaml`; only TTS/ASR are mocked (`DST_MOCK_SPEECH=1`) |
 | `scenarios/<name>/` | per-feature `config.yml` + `scenario.json` + `script.json` for `run_scenarios.py` |
 | `screenshots/` | generated evidence from `run_demo.py` (created on first run) |
 
@@ -547,10 +548,17 @@ request log:
 | `i18n_es` | localisation | Spanish splash/hints, translated config menu and command descriptions |
 | `job_manager` | manual task manager | Down opens bullets for jobs/watchers, Enter shows output, x kills |
 | `onboarding` | first-run flow | an unconfigured start shows a menu (official vs custom endpoint), arrows move, no "type 1 or 2" prompt, Esc cancels |
+| `onboarding_hw` / `onboarding_reject` | first-run hardware survey + credential test | after a verified configuration the hardware-info scan is offered once (Y writes the measured scan into the shipped skill, `tui.hw_survey_done`); an unusable key is rejected, the device stays unconfigured and no survey runs |
+| `update_hwinfo` / `update_hwinfo_creator` | `/update-hwinfo` | normal mode rescans locally and reports subsystems/size/version; creator mode also queues one model turn that reads the refreshed skill and refines it |
+| `progress` | progress row, tool expansion, CtrlO, interrupts | `state_report` pinned to the top row, expanded tool-call arguments, CtrlO during a turn, PgUp while busy, Esc cancelling the whole turn and the next message being sent |
+| `paging` | transcript paging | PgUp/PgDn move a screenful with the scroll clamped (never scrolls into blankness), End returns to the newest lines |
+| `esc_queue` | interrupt + queued message | typing during a turn queues the message; Esc stops the turn and the queued text is sent next (exactly two agent requests) |
+| `voice_interrupt` / `voice_interrupt_send` | voice interrupt | Tab during a turn stops it at once and starts recording; the take is left in the prompt (`auto_send_voice: false`) or auto-sent (`true`) |
+| `creator_app_flow` | real build-and-run flow | scripted model writes a sh package (battery viewer) plus a prompt package, `app_test` runs it, `/apps` lists both, Enter runs the viewer full-screen (`Battery: 87%`), the prompt package is previewed and submitted |
 
 ```bash
 cd tools/sim
-python3 run_scenarios.py               # all 29 scenarios (~3 min)
+python3 run_scenarios.py               # all 92 checked scenarios (~11 min)
 python3 run_scenarios.py goal compact  # just some
 python3 check_memory.py                # 20-turn session, samples dst RSS
 python3 run_all.py                     # demo + scenarios + memory in one go

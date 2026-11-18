@@ -215,6 +215,33 @@ modules. Both are documented per language in `docs/LOGIN*.md`.
 | context overflow | force one compaction, retry once |
 | non-TLS endpoint | refused |
 
+## Bounded memory and resources
+
+The device has 446 MB of visible RAM, a slow microSD and no swap worth using,
+and dst is meant to stay up for days. Every unbounded-looking structure has an
+explicit bound; the caps below are enforced in code, not only in the prompt.
+
+| Where | Bound | Why |
+| --- | --- | --- |
+| transcript (`Scr::lines`) | 400 rows | a long turn must not retain hundreds of MB of tool output |
+| tool log (CtrlO) | 20 entries, 6000 chars each | full args/result for recent calls only |
+| tool capture | `bash`/`grep`: 64 KB stdout + 16 KB stderr, drained concurrently; `read_file` streams the requested range; `edit_file` refuses files >8 MB | `Command::output()` on `cat big.log` would allocate the whole stream before truncation |
+| history (`msgs`) | compaction (token budget) **plus** an absolute 16 MB cap that trims the oldest tail | compaction can be disabled/failing and some endpoints report no context window |
+| scheduler turns (cron/watchers) | same compaction settings + a 600-message cap | unattended turns write into the shared history with no human in the loop |
+| prompt/queue | 4 KB text, 16 queued messages | paste floods and endless queueing |
+| voice take | 60 s (48 kHz mono, ~6 MB) | an interrupt take can stay open for a long turn |
+| background jobs | 24 retained (finished ones pruned), 8 KB per line, own process group, reaped on the idle tick | `job_start` in a long session must not keep every command and tail |
+| MCP servers | killed and reaped on every exit path (`ShutdownOnDrop`) | a dropped `Child` is not waited for and would outlive dst |
+| app run/test | own process group, bounded reader joins (2 s), group kill | a daemonized helper must not block the UI on a pipe |
+| sessions / checkpoints | newest 40 session files, newest 20 checkpoints, atomic writes; `/resume` refuses >24 MB and moves instead of clones | one full-history file per launch and two writes per turn would grow the SD card and peak at ~10x a large session |
+| logs | `voice.log`/`mcp.log` rotate at 256 KB | append-only logs written per keypress/take |
+| scratch | `~/.dst/tmp` swept at startup (7 days) | artifact exports, job dumps and app-test logs accumulate |
+| hardware scan | 20 s total, 2.5 s per probe, 64 KB per stream, raw capture capped; `.history/` keeps 5 versions | onboarding must never hang on a wedged bus |
+
+`tools/sim/check_memory.py` drives a 20-turn session and asserts the peak RSS
+stays far below the device budget; `run_all.py` runs it together with the 92
+scenarios.
+
 ## Test seams
 
 The simulator (`tools/sim`) drives the real binary through a pty and asserts on

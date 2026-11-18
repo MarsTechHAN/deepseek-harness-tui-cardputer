@@ -1,11 +1,13 @@
 # dst UX audit (12-row panel, 53 columns)
 
 Method: every screen is exercised through the pty simulator, captured as text
-+ PNG, and reviewed at the real cell size. Two passes feed this catalogue:
-`run_scenarios.py` (scripted mock API, deterministic assertions) and
-`run_live.py` (the real local vLLM endpoint, only TTS/ASR mocked) for the
-common-usage walkthrough; see `docs/UX-LIVE.md` and
-`docs/live-walkthrough.png`. All rows were inspected visually, not only
++ PNG, and reviewed at the real cell size. The committed images (including the
+animated `docs/demo.webp`) are device-fidelity simulator renders of the real
+`dst` binary with scripted model replies, rebuilt by
+`python3 tools/sim/make_demo_webp.py`; `run_scenarios.py` supplies the
+deterministic assertions (92 checked scenarios). An optional real-endpoint pass
+(`run_live.py`, `live_creator_check.py`) can be re-run when an endpoint is
+available. See `docs/UX-LIVE.md`. All rows were inspected visually, not only
 asserted in code.
 
 ## Screens reviewed
@@ -21,6 +23,9 @@ asserted in code.
 | Tools | expanded call card, result row, CtrlO list (also during a turn), artifact viewer | fixed: a call card now expands the call's arguments while it runs — indented, folded to the panel width, capped at five rows with `… more: CtrlO` — and the settled row is a one-line `└ N.Ns ok`/`x` plus an ellipsised `↳` preview; the full args and result stay in CtrlO, which opens over the live transcript during a turn. Failed calls carry an ASCII `x` marker in the CtrlO list because rows cannot be coloured individually (`tool_log_multi` scenario) |
 | Progress row | `state_report` pinned top line | ok: one short line in bright magenta with a `»` icon owns the top row while a turn runs; a newer report replaces it, the line joins the transcript when the next row appears, and a report over 50 display cells (CJK counts as 2) is rejected, so the 53-cell row can never wrap |
 | Paging & interrupts | transcript/list paging, Esc and Tab during a turn | ok: `PgUp`/`PgDn` move the transcript by a screenful with the scroll clamped at both ends, and are replayed as a screenful of arrows in list menus; `Up`/`Down` recall history on an empty prompt; `Esc` stops the whole turn at once and typed text becomes the next message; `Tab` during a turn interrupts, starts the microphone immediately, then sends the transcript when `auto_send_voice` is on (or leaves it in the prompt when off) |
+| Hardware notebook | first-run survey prompt, `/update-hwinfo`, shipped `hardware-info` skill | ok: after a verified first-run configuration dst asks once whether to scan the device (`tui.hw_survey_done` records the answer either way); Y runs a bounded read-only scan (<=20 s, per-probe timeout) and rewrites the measured section of the shipped `~/.dst/skills/hardware-info/SKILL.md` between `<!-- hw-scan:begin/end -->`, keeping the reference sections and any user notes, bumping the version only when the measured hardware changes, and storing the raw capture in `state/scan-latest.txt`; the summary survives the first-run tips screen. `/update-hwinfo` re-runs it any time (normal mode: local scan only; creator mode: also asks the model to read the refreshed skill and refine it with `skill_save`). The scan reports subsystems, size and version (`hardware-info updated: 13 subsystems, 23 KB, v2`) and is covered by `onboarding_hw`, `onboarding_reject`, `update_hwinfo` and `update_hwinfo_creator` |
+| Credentials | login/first-run key test | ok: a credential is tested before it is accepted — a DSH token with one tiny completion on the login platform, an API key with `GET /v1/models` (HTTPS or loopback only); a key that cannot answer is rejected, the previous working credentials are restored and the transcript says why (`key rejected: ... (previous credentials kept)`), so a device never looks configured while it cannot chat |
+| Resources | long-session RAM, child processes, disk | ok: bounded by design — transcript 400 rows, tool log 20 entries, tool captures capped (64 KB stdout / 16 KB stderr, drained so the child cannot block), `read_file` streams only the requested range and `edit_file` refuses >8 MB, voice takes capped at 60 s, background jobs pruned to 24 with 8 KB lines and own process groups (killed, not orphaned), app run/test in own process groups with bounded joins, MCP servers killed on every exit path, history has an absolute 16 MB cap independent of compaction, sessions pruned to 40 / tmp older than 7 days swept, voice+mcp logs rotate at 256 KB, `/resume` rejects >24 MB and no longer clones the transcript on save/load; `check_memory.py` (20 turns) stays under its 80 MB peak budget and `run_all.py` passes |
 | Permissions | strict approval (bash + edit diff) | fixed: `-`/`+` diff lines are coloured red/green; human summary, keys |
 | Usage | `/usage` report | fixed: the report heading was duplicated (one extra row, now one `usage · N requests` header with a localized request count); labels localize in all six languages (`usage_zh` scenario) |
 | Commands | palette, help menu, previews, 1/N position | fixed: `/help` dropped a redundant footer row (8 commands visible, was 7) and its hint now reads `Enter run/complete`. Palette name matches rank above description matches, and an exactly typed command wins over the highlighted row: in Chinese `/resume` also fuzzy-matched `/rename` (whose description mentions `/resume`) and Enter used to complete `/rename` instead of running `/resume` |
@@ -136,12 +141,15 @@ asserted in code.
 - `python3 tools/sim/run_all.py` — demo, all simulator scenarios (including the
   `creator_*` ones), login page i18n, login cancel, QR scanability,
   six-language login layout, long memory session.
-- `python3 tools/sim/run_live.py` — common-usage walkthrough against the real
-  local vLLM endpoint (only TTS/ASR mocked) with a 12-screen contact sheet.
-- `python3 tools/sim/live_creator_check.py` — creator mode with the real model:
-  it must save a runnable skill package (`SKILL.md` + `meta.json` + entry) and
-  `/apps` must show it (`docs/live-creator.png`; the committed contact sheet was
-  captured before the skill-package refactor — regenerate it in the next pass).
+- `python3 tools/sim/make_demo_webp.py` — rebuilds the committed images from
+  the simulator: `docs/demo.webp` (43 s animated tour), the 12-panel
+  `docs/live-walkthrough.png`, the creator sheet `docs/live-creator.png` and the
+  six-language login sheet.
+- `python3 tools/sim/run_live.py` (optional, needs an endpoint) — common-usage
+  walkthrough against a real OpenAI-compatible endpoint (only TTS/ASR mocked).
+- `python3 tools/sim/live_creator_check.py` (optional, needs an endpoint) —
+  creator mode with the real model: it must save a runnable skill package
+  (`SKILL.md` + `meta.json` + entry) and `/apps` must show it.
 - `dst --dsh-login-test` — runs the real nine-step login against
   `tools/sim/mock_login.py` (or the live platform with no mock env).
 - `dst --qr-ppm <jpeg> <out.ppm>` + `node tools/sim/qr_scan.js` — decodes the
@@ -173,10 +181,10 @@ asserted in code.
   `skill_save`/`skill_file` validate paths and cap sizes, but a running app is
   bounded by the launch contract (ulimits, scrubbed environment, cwd/state in the
   package), not by a filesystem sandbox.
-- The committed creator-mode live screenshot predates the skill-package
-  refactor; regenerate it in the next live pass. The screens the refactor
-  touched (pinned progress row, expanded tool cards, `/apps` rows and detail
-  panel) need a fresh visual pass with that run.
+- The committed creator-mode and walkthrough images are simulator renders
+  rebuilt after the skill-package refactor, so they show the current UI; a
+  fresh *real-model* live pass is only worthwhile for generation quality, not
+  layout (it needs an endpoint, see `docs/UX-LIVE.md`).
 - Hardware-only checks (physical keyboard/audio/reset double-press, boot time,
   TTS playback interruption, long-press Esc key repeat rate) remain for the
   device regression run.

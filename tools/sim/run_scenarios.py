@@ -196,6 +196,10 @@ def run_scenario(name, binary, timeout=120):
             # needed when a contact sheet is being produced.
             if not os.environ.get("DST_SCENARIO_PNG"):
                 cmd.append("--text-only")
+            # DST_SIM_SCALE=2 renders 640x340 PNGs (3 = the 960x510 default),
+            # used by make_demo_webp.py for a compact animated demo.
+            if os.environ.get("DST_SIM_SCALE"):
+                cmd += ["--scale", str(os.environ["DST_SIM_SCALE"])]
             r = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True,
                                text=True, timeout=timeout)
             if r.returncode != 0:
