@@ -296,12 +296,16 @@ fn scan() -> Vec<Block> {
 
     // ---- cpu / memory ----
     let mut b = section("CPU and memory");
-    let cpu = probe!(
-        "cpu",
-        "grep -m1 -E 'model name|Hardware' /proc/cpuinfo; grep -c ^processor /proc/cpuinfo"
+    let cpu_model = probe!(
+        "cpuinfo",
+        "grep -m1 -E 'model name|Hardware' /proc/cpuinfo 2>/dev/null | cut -d: -f2-"
     );
-    for line in cpu.lines().take(4) {
-        push(&mut b, format!("- {line}"));
+    if !cpu_model.trim().is_empty() {
+        push(&mut b, format!("- cpu: {}", cpu_model.trim()));
+    }
+    let cores = probe!("nproc", "nproc 2>/dev/null");
+    if !cores.trim().is_empty() {
+        push(&mut b, format!("- cores: {}", cores.trim()));
     }
     let freq = read_text("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq");
     if !freq.is_empty() {
@@ -352,7 +356,19 @@ fn scan() -> Vec<Block> {
          done; ls /dev/fb* 2>/dev/null | tr '\\n' ' '"
     );
     for line in fbs.lines() {
-        push(&mut b, format!("- {line}"));
+        let empty = line
+            .split_once(':')
+            .map(|(_, rest)| {
+                rest.trim()
+                    .trim_end_matches("bpp")
+                    .split_whitespace()
+                    .next()
+                    .is_none()
+            })
+            .unwrap_or(false);
+        if !empty {
+            push(&mut b, format!("- {line}"));
+        }
     }
     // Cardputer Zero images name the panel /dev/fb_lcd; /dev/fb0 can be HDMI.
     let lcd = read_text("/sys/class/graphics/fb_lcd/virtual_size");
@@ -366,10 +382,10 @@ fn scan() -> Vec<Block> {
             320, 170, 53, 12
         ),
     );
-    push(
-        &mut b,
-        format!("- terminal service: {}", probe!("cpzterm", "systemctl is-active cpzterm.service 2>/dev/null")),
-    );
+    let svc = probe!("cpzterm", "systemctl is-active cpzterm.service 2>/dev/null");
+    if !svc.trim().is_empty() {
+        push(&mut b, format!("- terminal service: {svc}"));
+    }
     blocks.push(b);
 
     // ---- audio ----
@@ -409,10 +425,10 @@ fn scan() -> Vec<Block> {
     let mut b = section("Network");
     push(&mut b, format!("- links: {}", probe!("links", "ip -br link 2>/dev/null")));
     push(&mut b, format!("- addresses: {}", probe!("addrs", "ip -br addr 2>/dev/null")));
-    push(
-        &mut b,
-        format!("- wifi: {}", probe!("wifi", "iw dev 2>/dev/null | head -12; iwconfig 2>/dev/null | head -8")),
-    );
+    let wifi = probe!("wifi", "iw dev 2>/dev/null | head -12; iwconfig 2>/dev/null | head -8");
+    if !wifi.trim().is_empty() {
+        push(&mut b, format!("- wifi: {wifi}"));
+    }
     blocks.push(b);
 
     // ---- battery / power ----
