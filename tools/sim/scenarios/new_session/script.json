@@ -1,0 +1,5 @@
+{"responses": [
+ {"reasoning": "a", "content": "Hello one.", "finish_reason": "stop"},
+ {"reasoning": "b", "content": "Hello two.", "finish_reason": "stop"},
+ {"reasoning": "c", "content": "Hello three.", "finish_reason": "stop"}
+]}

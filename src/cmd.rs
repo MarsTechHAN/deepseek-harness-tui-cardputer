@@ -144,6 +144,12 @@ pub const COMMANDS: &[Command] = &[
         input_hint: None,
     },
     Command {
+        name: "new",
+        category: "cat_session",
+        description: "start a new conversation (same as /clear)",
+        input_hint: None,
+    },
+    Command {
         name: "quit",
         category: "cat_core",
         description: "exit dst",
@@ -201,6 +207,55 @@ pub fn palette(input: &str) -> Vec<(&'static str, String, Option<&'static str>, 
         .into_iter()
         .map(|c| (c.name, describe(c.name), c.input_hint, c.category))
         .collect()
+}
+
+/// How a `/` command may run while a model turn is already in flight.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BusyPolicy {
+    /// Run right away: no model call and no state the running turn relies on.
+    Immediate,
+    /// Needs a stopped session: changes the model/endpoint/history or takes
+    /// over the screen. Refused instead of queued (only chat input queues).
+    Refuse,
+}
+
+/// Commands that may run in the middle of a turn. Everything else is refused
+/// with a notice: commands are never queued as if they were chat messages.
+pub const IMMEDIATE_WHILE_BUSY: &[&str] = &[
+    "usage",
+    "btw",
+    "image",
+    "rename",
+    "update-hwinfo",
+    "goal",
+    "quit",
+];
+
+/// Canonical command name for a typed `/` line, aliases included. `None` when
+/// the line is not a command.
+pub fn command_name(input: &str) -> Option<&'static str> {
+    let body = input.trim().strip_prefix('/')?;
+    let raw = body.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+    let canonical = match raw.as_str() {
+        "?" => "help",
+        "img" | "photo" => "image",
+        "update_hwinfo" | "hwinfo" => "update-hwinfo",
+        "exit" | "q" => "quit",
+        "new" => "clear",
+        other => other,
+    };
+    COMMANDS
+        .iter()
+        .find(|c| c.name == canonical)
+        .map(|c| c.name)
+}
+
+/// Classify the line the user pressed Enter on while the model is busy.
+pub fn busy_policy(input: &str) -> BusyPolicy {
+    match command_name(input) {
+        Some(name) if IMMEDIATE_WHILE_BUSY.contains(&name) => BusyPolicy::Immediate,
+        _ => BusyPolicy::Refuse,
+    }
 }
 
 pub struct Outcome {
@@ -682,7 +737,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 }
             }
         }
-        "clear" => Outcome {
+        "clear" | "new" => Outcome {
             lines: Vec::new(),
             quit: false,
             clear: true,
@@ -838,5 +893,56 @@ mod tests {
         c.creator = true;
         let out = evaluate("/apps", &mut c, false).unwrap();
         assert!(out.apps_menu, "creator mode opens the launcher");
+    }
+
+    #[test]
+    fn busy_commands_are_classified() {
+        // Safe to run mid-turn: no model turn, no history/model mutation.
+        for line in [
+            "/usage",
+            "/btw what is in notes.txt",
+            "/img ~/photo.png",
+            "/image clear",
+            "/rename a better title",
+            "/update-hwinfo",
+            "/goal pause",
+            "/quit",
+        ] {
+            assert_eq!(busy_policy(line), BusyPolicy::Immediate, "{line}");
+        }
+        // Must wait for the turn to stop: model/endpoint changes, history,
+        // screen-owning menus.
+        for line in [
+            "/model deepseek-v4-pro",
+            "/effort high",
+            "/config",
+            "/key sk-test",
+            "/login",
+            "/clear",
+            "/compact",
+            "/resume",
+            "/rewind",
+            "/apps",
+            "/extensions",
+            "/help",
+            "/not-a-command",
+        ] {
+            assert_eq!(busy_policy(line), BusyPolicy::Refuse, "{line}");
+        }
+        assert_eq!(command_name("not a command"), None);
+        assert_eq!(command_name("/IMG"), Some("image"));
+        assert_eq!(command_name("/q"), Some("quit"));
+        // Every immediate command must actually be registered and dispatchable.
+        for name in IMMEDIATE_WHILE_BUSY {
+            assert!(
+                COMMANDS.iter().any(|c| c.name == *name),
+                "{name} is not registered"
+            );
+            let mut cfg = cfg();
+            assert!(
+                evaluate(&format!("/{name}"), &mut cfg, false).is_some(),
+                "{name} does not dispatch"
+            );
+        }
     }
 }

@@ -1,0 +1,41 @@
+{
+ "responses": [
+  {
+   "reasoning": "Start the slow job and report it.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "s0",
+     "name": "state_report",
+     "arguments": {
+      "text": "starting the slow job"
+     }
+    },
+    {
+     "id": "s1",
+     "name": "bash",
+     "arguments": {
+      "command": "sleep 4; echo job-done",
+      "timeout_s": 30
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "Side question: the job is sleeping.",
+   "content": "The job is sleeping for two seconds.",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "The job finished.",
+   "content": "Job done.",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "Queued follow-up.",
+   "content": "Answer to follow up.",
+   "finish_reason": "stop"
+  }
+ ]
+}

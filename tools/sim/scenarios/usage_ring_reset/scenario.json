@@ -1,0 +1,4 @@
+{"steps": [
+ {"wait_for": {"text": "dst", "timeout_ms": 15000}},
+ {"wait_ms": 500, "snap": "startup"}
+]}

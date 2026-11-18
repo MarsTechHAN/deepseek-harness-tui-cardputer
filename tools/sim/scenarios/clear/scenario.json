@@ -1,7 +1,10 @@
-{"steps":[
- {"wait_for":{"text":"dst","timeout_ms":10000}},
- {"send":"hello"},{"key":"Enter"},
- {"wait_ms":900,"snap":"thinking"},
- {"send":"/clear"},{"key":"Enter"},
- {"wait_ms":900,"snap":"cleared"}
+{"steps": [
+ {"wait_for": {"text": "dst", "timeout_ms": 10000}},
+ {"send": "hello"}, {"key": "Enter"},
+ {"wait_ms": 900, "snap": "thinking"},
+ {"wait_for": {"text": "Hello from the mock API.", "timeout_ms": 20000}},
+ {"wait_stable": {"stable_ms": 500, "timeout_ms": 10000}},
+ {"send": "/clear"}, {"key": "Enter"},
+ {"wait_for": {"text": "hold Tab", "timeout_ms": 8000}},
+ {"wait_ms": 300, "snap": "cleared"}
 ]}

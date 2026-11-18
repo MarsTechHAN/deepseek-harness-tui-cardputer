@@ -1,0 +1,12 @@
+{
+ "steps": [
+  {"wait_for": {"text": "dst", "timeout_ms": 15000}},
+  {"send": "what do the notes say?"}, {"key": "Enter"},
+  {"wait_for": {"text": "» reading the notes", "timeout_ms": 15000}},
+  {"wait_ms": 200, "snap": "first_pin"},
+  {"wait_for": {"text": "» writing the summary", "timeout_ms": 15000}},
+  {"wait_ms": 200, "snap": "second_pin"},
+  {"wait_for": {"text": "The notes say 42.", "timeout_ms": 20000}},
+  {"wait_stable": {"stable_ms": 700, "timeout_ms": 15000}, "snap": "after_turn"}
+ ]
+}

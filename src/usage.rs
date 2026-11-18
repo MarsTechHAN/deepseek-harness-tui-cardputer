@@ -36,22 +36,50 @@ fn path() -> std::path::PathBuf {
     crate::config::home().join("usage.json")
 }
 
+/// Restore the persisted counters. `last_prompt`/`last_completion` are
+/// deliberately NOT restored: they describe the conversation that was just
+/// loaded, so restoring them made a fresh start show the previous run's
+/// context pressure in the bottom-right ring. A resumed session seeds them via
+/// `seed_context`.
+fn stats_from(v: &J) -> Stats {
+    let num = |k: &str| v.get(k).and_then(|x| x.as_num()).unwrap_or(0.0) as u64;
+    Stats {
+        requests: num("requests"),
+        prompt: num("prompt"),
+        completion: num("completion"),
+        cache_hit: num("cache_hit"),
+        cache_miss: num("cache_miss"),
+        last_prompt: 0,
+        last_completion: 0,
+    }
+}
+
 pub fn load() {
     if let Ok(t) = std::fs::read_to_string(path()) {
         if let Some(v) = parse(&t) {
-            let num = |k: &str| v.get(k).and_then(|x| x.as_num()).unwrap_or(0.0) as u64;
             if let Ok(mut g) = STATS.lock() {
-                *g = Stats {
-                    requests: num("requests"),
-                    prompt: num("prompt"),
-                    completion: num("completion"),
-                    cache_hit: num("cache_hit"),
-                    cache_miss: num("cache_miss"),
-                    last_prompt: num("last_prompt"),
-                    last_completion: num("last_completion"),
-                };
+                *g = stats_from(&v);
             }
         }
+    }
+}
+
+/// A new conversation started: the context ring goes back to 0%.
+pub fn reset_context() {
+    if let Ok(mut g) = STATS.lock() {
+        g.last_prompt = 0;
+        g.last_completion = 0;
+        save(&g);
+    }
+}
+
+/// An existing conversation was loaded (`/resume`, `/rewind`): seed the next
+/// request size from its token estimate so the ring reflects the real context.
+pub fn seed_context(tokens: u64) {
+    if let Ok(mut g) = STATS.lock() {
+        g.last_prompt = tokens;
+        g.last_completion = 0;
+        save(&g);
     }
 }
 
@@ -221,5 +249,26 @@ pub fn ring(pct: f64) -> &'static str {
         2 => "◑",
         3 => "◕",
         _ => "●",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_fresh_run_does_not_inherit_the_previous_context_size() {
+        let doc = parse(
+            r#"{"requests":9,"prompt":12000,"completion":800,
+                "cache_hit":9000,"cache_miss":3000,
+                "last_prompt":7000,"last_completion":900}"#,
+        )
+        .unwrap();
+        let st = stats_from(&doc);
+        assert_eq!(st.requests, 9);
+        assert_eq!(st.prompt, 12000);
+        assert_eq!(st.cache_hit, 9000);
+        assert_eq!(st.last_prompt, 0, "stale context must not leak into a new run");
+        assert_eq!(st.last_completion, 0);
     }
 }

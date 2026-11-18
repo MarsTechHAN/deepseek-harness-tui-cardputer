@@ -23,7 +23,7 @@ git clone git@github.com:MarsTechHAN/deepseek-harness-tui-cardputer.git
 cd deepseek-harness-tui-cardputer
 
 cargo build            # host binary: target/debug/dst
-cargo test             # 92 unit tests, no network
+cargo test             # 94 unit tests, no network
 tools/deploy/deploy.sh --build-only   # optional: aarch64 cross build + ELF check
 ```
 
@@ -48,7 +48,7 @@ device-fidelity renderer, scripted model; ~2 min). If you change the UI, include
 the regenerated images in the PR. A real-endpoint pass (`run_live.py`) is
 optional and documented in `docs/UX-LIVE.md`.
 
-`python3 tools/sim/run_all.py` runs everything offline: demo, 96 feature
+`python3 tools/sim/run_all.py` runs everything offline: demo, 100 feature
 scenarios, login-page checks and the 20-turn memory check.
 
 ## CI and releases

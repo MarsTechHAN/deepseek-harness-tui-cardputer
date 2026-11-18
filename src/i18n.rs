@@ -466,6 +466,8 @@ const EN: &[(&str, &str)] = &[
     ("btw_failed", "btw failed: {}"),
     ("btw_cancelled", "btw cancelled"),
     ("btw_empty", "btw returned no answer"),
+    ("ui_cmd_busy_refused", "{} needs a stopped turn — press Esc first, then run it"),
+    ("cmd_new", "start a new conversation (same as /clear)"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -845,6 +847,8 @@ const ZH: &[(&str, &str)] = &[
     ("btw_failed", "旁支失败: {}"),
     ("btw_cancelled", "已取消旁支问题"),
     ("btw_empty", "旁支没有返回答案"),
+    ("ui_cmd_busy_refused", "{} 需要先停止当前轮次 —— 按 Esc 后再执行"),
+    ("cmd_new", "开始新会话（等同 /clear）"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -1223,6 +1227,8 @@ const ES: &[(&str, &str)] = &[
     ("btw_failed", "btw falló: {}"),
     ("btw_cancelled", "btw cancelado"),
     ("btw_empty", "btw no devolvió respuesta"),
+    ("ui_cmd_busy_refused", "{} necesita el turno detenido: pulsa Esc y vuelve a ejecutarlo"),
+    ("cmd_new", "empezar una conversación nueva (igual que /clear)"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -1602,6 +1608,8 @@ const JA: &[(&str, &str)] = &[
     ("btw_failed", "btw 失敗: {}"),
     ("btw_cancelled", "btw をキャンセルしました"),
     ("btw_empty", "btw は回答を返しませんでした"),
+    ("ui_cmd_busy_refused", "{} はターンを止めてから実行できます — 先に Esc を押してください"),
+    ("cmd_new", "新しい会話を始める（/clear と同じ）"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -1981,6 +1989,8 @@ const DE: &[(&str, &str)] = &[
     ("btw_failed", "btw fehlgeschlagen: {}"),
     ("btw_cancelled", "btw abgebrochen"),
     ("btw_empty", "btw lieferte keine Antwort"),
+    ("ui_cmd_busy_refused", "{} braucht ein gestopptes Turn — zuerst Esc drücken, dann ausführen"),
+    ("cmd_new", "eine neue Unterhaltung beginnen (wie /clear)"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -2360,6 +2370,8 @@ const IT: &[(&str, &str)] = &[
     ("btw_failed", "btw fallito: {}"),
     ("btw_cancelled", "btw annullato"),
     ("btw_empty", "btw non ha restituito risposte"),
+    ("ui_cmd_busy_refused", "{} richiede il turno fermo — premi Esc e riprova"),
+    ("cmd_new", "inizia una nuova conversazione (come /clear)"),
 ];
 
 

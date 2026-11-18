@@ -15,7 +15,7 @@ zero-dependency Rust binary, on a 320×170 handheld.**
 <img src="https://img.shields.io/badge/binary-1.0%20MB-2ea043?style=flat-square" alt="1 MB binary">
 <img src="https://img.shields.io/badge/panel-320%C3%97170%20%C2%B7%2053%C3%9712%20cells-22d3ee?style=flat-square" alt="320x170 panel, 53x12 cells">
 <img src="https://img.shields.io/badge/UI%20languages-6-8b5cf6?style=flat-square" alt="6 UI languages">
-<img src="https://img.shields.io/badge/tests-92%20passing-2ea043?style=flat-square" alt="92 unit tests">
+<img src="https://img.shields.io/badge/tests-94%20passing-2ea043?style=flat-square" alt="94 unit tests">
 <a href="https://github.com/MarsTechHAN/deepseek-harness-tui-cardputer/actions/workflows/ci.yml"><img src="https://github.com/MarsTechHAN/deepseek-harness-tui-cardputer/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
 <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs welcome"></a>
 
@@ -249,10 +249,12 @@ refused.
   argument hint; menus are menuconfig-style with right-aligned values.
 - **Full-screen artifacts** — the model can take over the panel with tables,
   code or checklists; `Esc` dismisses, `PgUp`/`PgDn` scroll.
-- **Pinned progress row** — `state_report` pins one short line to the top row
-  (bright magenta `»`) while a turn runs; a newer report replaces it and the
-  line joins the transcript as history. Reports over 50 display cells are
-  rejected, so the row can never wrap on the 53-cell panel.
+- **Pinned progress row** — the model calls `state_report` once at the start of
+  every working step (and when the stage changes). That one short line pins to
+  the top row (bright magenta `»`) and stays there while tool cards and answer
+  text stream in — only the next report replaces it — so the screen never shows
+  a frozen or stale stage. It joins the transcript when the turn ends; reports
+  over 50 display cells are rejected so the row can never wrap.
 - **Paging** — `PgUp`/`PgDn` page the transcript and list menus by a screenful,
   with the scroll clamped at the buffer edges; `Up`/`Down` recall input history
   on an empty prompt.
@@ -264,11 +266,17 @@ refused.
 - **Tool output viewer** (`CtrlO`) — recent tool calls with their expanded
   arguments and full results in a scrollable panel; it also opens during a turn,
   Enter shows one call + result, `s` saves the text under `~/.dst/tmp/`.
-- **Queueing and interrupts** — typing during a turn queues by default;
-  `Shift+Enter` steers at the next step; `Esc` stops the whole turn at once and
-  text already typed becomes the next message; `Tab` during a turn interrupts,
-  starts recording immediately and sends the transcript (`auto_send_voice` on)
-  or leaves it in the prompt (off).
+- **Queueing and interrupts** — during a turn there are exactly three input
+  classes: chat text queues (and only chat text); side-effect-free commands
+  (`/usage`, `/btw`, `/image`, `/rename`, `/update-hwinfo`, `/goal`, `/quit`)
+  run immediately in the middle of the turn; commands that change the model,
+  endpoint or conversation (`/config`, `/model`, `/effort`, `/key`, `/login`,
+  `/clear`, `/new`, `/compact`, `/resume`, `/rewind`, `/extensions`, `/help`,
+  `/apps`) are refused with "press Esc first" instead of being queued or sent
+  as chat. `Shift+Enter` steers chat text at the next step; `Esc` stops the
+  whole turn at once and text already typed becomes the next message; `Tab`
+  during a turn interrupts, starts recording immediately and sends the
+  transcript (`auto_send_voice` on) or leaves it in the prompt (off).
 - **Animated splash** — a deterministic whale breach, frame-scheduled rather
   than constant-rate; typing pauses it, the first message ends it, `/clear`
   brings it back.
@@ -448,7 +456,8 @@ Commands run locally and are never sent to the model.
 | `/rewind` | pick one of your earlier messages: the transcript rewinds to before it and the message is put back in the prompt |
 | `/btw <question>` | ask a one-off, read-only subagent a side question; its answer opens as a panel and the conversation is untouched |
 | `/rename <title>` | name the current session |
-| `/clear` | clear the transcript and restart the splash |
+| `/clear` | start a new conversation: reset the history, context ring and session, restart the splash |
+| `/new` | same as `/clear` (an explicit "new conversation") |
 | `/quit` | exit |
 
 ## Key bindings
@@ -561,7 +570,7 @@ cargo build                       # host binary
 
 cd tools/sim
 python3 run_demo.py               # splash → thinking → tool call → reply + contact sheet
-python3 run_scenarios.py          # 96 feature scenarios, asserts on screens *and* request logs
+python3 run_scenarios.py          # 100 feature scenarios, asserts on screens *and* request logs
 python3 run_live.py               # optional: visual pass against a real endpoint
 python3 check_memory.py           # samples RSS over 20 turns
 ```
@@ -573,7 +582,7 @@ artifacts, sessions across a restart, onboarding, sandbox modes, jobs, watchers,
 searchable resume, push-to-talk with mocked speech, the nine-step WeChat login
 chain, provider failures and recovery, CJK input and the creator-mode scenarios.
 
-Unit tests (host, no network): `cargo test` — 92 tests over the harness, tool
+Unit tests (host, no network): `cargo test` — 94 tests over the harness, tool
 pipeline, compaction budgets, goal state machine, context formatting, config
 round-trip, skill packages, runnable apps, the hardware-info scan/renderer,
 image attachment/base64 handling and the i18n catalogue.

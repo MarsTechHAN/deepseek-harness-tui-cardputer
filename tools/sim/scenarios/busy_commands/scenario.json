@@ -1,0 +1,114 @@
+{
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 15000
+   }
+  },
+  {
+   "send": "start a slow job"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "bash running",
+    "timeout_ms": 15000
+   }
+  },
+  {
+   "wait_ms": 200
+  },
+  {
+   "send": "/usage"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "cache hit rate",
+    "timeout_ms": 4000
+   }
+  },
+  {
+   "wait_ms": 150,
+   "snap": "usage_busy"
+  },
+  {
+   "send": "/model deepseek-v9"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "needs a stopped turn",
+    "timeout_ms": 4000
+   }
+  },
+  {
+   "wait_ms": 150,
+   "snap": "refused"
+  },
+  {
+   "send": "/btw what is the job doing?"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "btw \u00b7",
+    "timeout_ms": 15000
+   }
+  },
+  {
+   "wait_ms": 200,
+   "snap": "btw_panel"
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_ms": 300
+  },
+  {
+   "send": "queued follow up"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "queued (1)",
+    "timeout_ms": 4000
+   }
+  },
+  {
+   "wait_ms": 150,
+   "snap": "queued"
+  },
+  {
+   "wait_for": {
+    "text": "Job done.",
+    "timeout_ms": 25000
+   }
+  },
+  {
+   "wait_for": {
+    "text": "Answer to follow up.",
+    "timeout_ms": 20000
+   }
+  },
+  {
+   "wait_stable": {
+    "stable_ms": 600,
+    "timeout_ms": 15000
+   },
+   "snap": "after"
+  }
+ ]
+}

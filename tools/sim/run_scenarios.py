@@ -2259,6 +2259,114 @@ def check_btw_side_question(screens, reqs, work):
     return checks
 
 
+def check_busy_commands(screens, reqs, work):
+    usage = screens.get("usage_busy", "")
+    refused = screens.get("refused", "")
+    panel = screens.get("btw_panel", "")
+    queued = screens.get("queued", "")
+    after = screens.get("after", "")
+    cfg_text = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+    checks = []
+    checks.append(("cache hit rate" in usage and "bash running" in usage,
+                   "commands that need no model run immediately during a turn"))
+    checks.append(("needs a stopped turn" in refused and "/model" in refused,
+                   "model-changing commands are refused while a turn runs"))
+    checks.append(("model: deepseek-flash" in cfg_text and "deepseek-v9" not in cfg_text,
+                   "the refused /model did not change the config"))
+    checks.append(("btw \u00b7" in panel and "The job is sleeping" in panel,
+                   "/btw runs immediately and shows its answer in a panel"))
+    checks.append(("queued (1)" in queued,
+                   "plain chat input is the only thing that queues"))
+    checks.append(("Job done." in after and "Answer to follow up." in after,
+                   "the turn and the queued follow-up both complete"))
+    texts = "\n".join(str(m.get("content") or "")
+                       for body in reqs for m in (body.get("messages") or []))
+    checks.append(("/usage" not in texts and "/model" not in texts and "/btw" not in texts,
+                   "commands are never sent to the model as chat"))
+    btw_req = [b for b in reqs
+               if any("SIDE QUESTION MODE" in str(m.get("content") or "")
+                      for m in (b.get("messages") or []))]
+    checks.append((len(btw_req) == 1,
+                   "the side question is one separate read-only request"))
+    last_user = [str(m.get("content") or "")
+                 for m in ((reqs[-1].get("messages") or []) if reqs else [])
+                 if m.get("role") == "user"]
+    checks.append((bool(last_user) and "queued follow up" in last_user[-1],
+                   "the queued chat message is sent after the turn"))
+    checks.append((len(reqs) == 4, f"exactly four model requests ({len(reqs)})"))
+    return checks
+
+
+def check_state_report_steps(screens, reqs, work):
+    first = screens.get("first_pin", "")
+    second = screens.get("second_pin", "")
+    after = screens.get("after_turn", "")
+    checks = []
+    first_line = first.splitlines()[0] if first.splitlines() else ""
+    checks.append((first_line.startswith("\u00bb reading the notes"),
+                   "each step's state_report is pinned to the top row"))
+    second_line = second.splitlines()[0] if second.splitlines() else ""
+    checks.append((second_line.startswith("\u00bb writing the summary"),
+                   "a newer report replaces the pinned row"))
+    checks.append(("read_file" in second,
+                   "the pinned row survives later tool cards and text"))
+    checks.append(("The notes say 42." in after, "the answer renders"))
+    checks.append(("\u00bb writing the summary" in after,
+                   "the last report joins the transcript when the turn ends"))
+    after_first = after.splitlines()[0] if after.splitlines() else ""
+    checks.append((not after_first.startswith("\u00bb"),
+                   "the pinned row is cleared when the turn ends"))
+    def last_tool_names(body):
+        for m in reversed(body.get("messages") or []):
+            if m.get("role") == "assistant":
+                return [(tc.get("function") or {}).get("name")
+                        for tc in (m.get("tool_calls") or [])]
+        return []
+    steps = [last_tool_names(b) for b in reqs]
+    checks.append((len(steps) >= 3 and "state_report" in steps[1]
+                   and "state_report" in steps[2],
+                   "every working step starts with a state_report call"))
+    return checks
+
+
+def check_usage_ring_reset(screens, reqs, work):
+    startup = screens.get("startup", "")
+    ring_line = [l for l in startup.splitlines() if "%" in l]
+    checks = []
+    checks.append((bool(startup), "the startup screen renders"))
+    checks.append((any("\u25cb 0%" in l for l in ring_line),
+                   "the context ring starts at 0%, not the previous session's value"))
+    checks.append((len(reqs) == 0, "no model request is needed for a fresh start"))
+    return checks
+
+
+def check_new_session(screens, reqs, work):
+    cleared = screens.get("cleared", "")
+    after = screens.get("after", "")
+    checks = []
+    checks.append(("hold Tab" in cleared and "%" in cleared,
+                   "/clear returns to the splash and resets the context ring"))
+    cleared_pct = [l for l in cleared.splitlines() if "%" in l]
+    checks.append((any("\u25cb 0%" in l for l in cleared_pct),
+                   "/clear leaves the ring at 0%"))
+    checks.append((("hold Tab" in screens.get("new_session", "")),
+                   "/new behaves like /clear"))
+    checks.append(("Hello three." in after, "the conversation continues after /new"))
+    def users(body):
+        return [str(m.get("content") or "") for m in (body.get("messages") or [])
+                if m.get("role") == "user"]
+    if len(reqs) >= 3:
+        checks.append((users(reqs[1]) == ["second message"],
+                       "/clear starts a fresh history (no old user message is re-sent)"))
+        checks.append((users(reqs[2]) == ["third message"],
+                       "/new starts a fresh history again"))
+        checks.append((reqs[1].get("messages") and len(reqs[1]["messages"]) == 2,
+                       "/clear requests are only system+user"))
+    else:
+        checks.append((False, "expected three model requests"))
+    return checks
+
+
 CHECKS = {
     "creator_app_flow": check_creator_app_flow,
     "esc_queue": check_esc_queue,
@@ -2305,6 +2413,10 @@ CHECKS = {
     "image_input": check_image_input,
     "rewind_prompt": check_rewind_prompt,
     "btw_side_question": check_btw_side_question,
+    "busy_commands": check_busy_commands,
+    "state_report_steps": check_state_report_steps,
+    "usage_ring_reset": check_usage_ring_reset,
+    "new_session": check_new_session,
     "read_image_tool": check_read_image_tool,
     "onboarding_hw": check_onboarding_hw,
     "onboarding_reject": check_onboarding_reject,

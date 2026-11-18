@@ -551,7 +551,9 @@ impl Scr {
     }
 
     pub fn push(&mut self, text: &str, kind: u8) {
-        self.flush_state();
+        // The pinned `state_report` row is live status: tool cards and answer
+        // text must not wipe it. It is replaced by the next report, and only
+        // committed to the log when the turn ends (Ev::TurnEnd) or on /clear.
         let mut wrapped = Vec::new();
         let shown = tidy(text);
         Self::wrap_into(&mut wrapped, &shown, self.cols.min(PANEL_COLS));
@@ -2550,13 +2552,18 @@ STYLE
   the interrupted work unless asked.
 
 PROGRESS ROW
-- Call state_report with ONE short line when a long task changes stage (\"reading
-  /proc\", \"writing run.sh\", \"testing it\"). The line is pinned to the top row of
-  the panel while you work, so the user can see what is happening. It must fit
-  in one row: 50 display cells at most (CJK counts as 2), or the call is
-  rejected. Do not report every step and never put secrets in it.
-- The report is replaced by the next one and joins the log when the next line
-  appears; write it as the current activity, not as a conclusion.
+- Call state_report ONCE at the start of every step that does work (every
+  assistant step whose reply includes tool calls), and again whenever the stage
+  changes: \"reading /proc\", \"writing run.sh\", \"testing it\". Each report
+  replaces the previous one on the pinned top row, so the user always sees the
+  current stage while you work instead of a frozen screen.
+- One short line, 50 display cells at most (CJK counts as 2), in the user's
+  language; longer reports are rejected, so keep it to a few words. It must be
+  the current activity, not a conclusion. Never put secrets in it and do not
+  repeat the same report back-to-back.
+- The pinned row is not transcript: it stays on screen while tool cards and
+  answer text stream in, and only changes when you send the next state_report.
+  If you skip a step's report the user is left looking at a stale stage.
 
 RULES
 - Never claim a file changed or a command ran unless a tool result shows it.
@@ -2589,33 +2596,11 @@ different bug, finished phase). The title is what the user picks the session \
 by, so make it a few concrete words about the work, not a greeting or a copy \
 of the message.";
 
-/// Context handed to a one-off `/btw` subagent: the current system prompt with
-/// a side-question contract, a bounded tail of the conversation, then the
-/// question (appended by `run_turn`). Nothing is written back to `msgs`.
-fn btw_context(msgs: &jobs::Msgs, question: &str) -> Vec<json::J> {
+/// Bounded conversation tail handed to a one-off `/btw` subagent: newest
+/// messages last, at most 96 KB, never starting with an orphan tool result
+/// (tool messages need their assistant tool_calls before them).
+fn btw_tail(src: &[json::J]) -> Vec<json::J> {
     const MAX_CONTEXT_BYTES: usize = 96 * 1024;
-    let src = msgs.borrow();
-    let base = src
-        .first()
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .to_string();
-    let system = format!(
-        "{base}\n\nSIDE QUESTION MODE\n\
-You are a one-off, read-only subagent answering a side question about this \
-conversation. You may use only read-only tools to look things up (read files, \
-list directories, grep, search the web, read an image); you must not write, \
-edit, run shell commands, change skills/apps, start jobs or services. Answer \
-from the conversation above and, if needed, from what those read-only tools \
-show. The user sees only your reply, in a full-screen panel: keep it under 10 \
-lines of at most 52 characters each, no preamble and no \"based on the context\" \
-filler. If the information is not available, say exactly what is missing.\n\n\
-The side question is: {question}"
-    );
-    let mut out = vec![harness::msg("system", &system)];
-    // Newest last, bounded by bytes; never start the tail with an orphan tool
-    // result (tool messages need their assistant tool_calls before them).
     let mut start = src.len();
     let mut used = 0usize;
     while start > 1 {
@@ -2634,7 +2619,50 @@ The side question is: {question}"
             break;
         }
     }
-    out.extend(src[start..].iter().cloned());
+    src[start..].to_vec()
+}
+
+/// A bounded pre-turn context snapshot the busy-time `/btw` can use without
+/// borrowing the live `msgs` (the turn holds a mutable borrow of it).
+fn btw_snapshot(msgs: &[json::J]) -> jobs::Msgs {
+    let base = msgs
+        .first()
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    let mut v = vec![harness::msg("system", base)];
+    v.extend(btw_tail(msgs));
+    std::rc::Rc::new(std::cell::RefCell::new(v))
+}
+
+/// The side-question contract appended to the live system prompt.
+fn btw_contract(base: &str, question: &str) -> String {
+    format!(
+        "{base}\n\nSIDE QUESTION MODE\n\
+You are a one-off, read-only subagent answering a side question about this \
+conversation. You may use only read-only tools to look things up (read files, \
+list directories, grep, search the web, read an image); you must not write, \
+edit, run shell commands, change skills/apps, start jobs or services. Answer \
+from the conversation above and, if needed, from what those read-only tools \
+show. The user sees only your reply, in a full-screen panel: keep it under 10 \
+lines of at most 52 characters each, no preamble and no \"based on the context\" \
+filler. If the information is not available, say exactly what is missing.\n\n\
+The side question is: {question}"
+    )
+}
+
+/// Context handed to a one-off `/btw` subagent: the current system prompt with
+/// a side-question contract, a bounded tail of the conversation, then the
+/// question (appended by `run_turn`). Nothing is written back to `msgs`.
+fn btw_context(msgs: &jobs::Msgs, question: &str) -> Vec<json::J> {
+    let src = msgs.borrow();
+    let base = src
+        .first()
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    let mut out = vec![harness::msg("system", &btw_contract(base, question))];
+    out.extend(btw_tail(&src));
     out
 }
 
@@ -2838,6 +2866,10 @@ struct TermUi<'a> {
     spin: usize,
     /// The user asked the whole turn to stop (Esc / voice interrupt).
     interrupted: bool,
+    /// Config handle for commands that may run while the model is busy.
+    cfg_rc: std::rc::Rc<std::cell::RefCell<config::Config>>,
+    /// Bounded pre-turn context snapshot used by a mid-turn `/btw`.
+    btw_ctx: jobs::Msgs,
 }
 
 impl<'a> TermUi<'a> {
@@ -3180,28 +3212,41 @@ impl<'a> harness::Ui for TermUi<'a> {
                 }
                 KeyEvent::Esc => {
                     // Esc stops the whole turn at once: the driver abandons the
-                    // step instead of only cancelling the tool in flight. Typed
-                    // text becomes the next message and anything already queued
-                    // is sent right after this turn ends.
+                    // step instead of only cancelling the tool in flight. Chat
+                    // text typed so far becomes the next message; a command is
+                    // executed/refused with the same busy-time rules.
                     crate::voice::request_stop();
-                    if !self.scr.input.is_empty() {
-                        self.force_now();
-                    }
-                    self.interrupted = true;
-                    return Action::Cancel;
-                }
-                KeyEvent::ShiftEnter => {
-                    // Steering: deliver at the next step boundary.
                     let line: String = self.scr.input.iter().collect();
                     let line = line.trim().to_string();
                     if !line.is_empty() {
                         self.scr.input.clear();
                         self.scr.cursor = 0;
-                        self.scr.push(
-                            &format!("\u{21b3} {}", i18n::tf("ui_steer", &[&line])),
-                            K_DIM,
-                        );
-                        self.steer.push(line);
+                        if line.starts_with('/') {
+                            self.submit_busy_line(&line);
+                        } else {
+                            self.force_now_line(&line);
+                        }
+                    }
+                    self.interrupted = true;
+                    return Action::Cancel;
+                }
+                KeyEvent::ShiftEnter => {
+                    // Steering: deliver chat text at the next step boundary.
+                    // A command is not chat: it takes the busy-time path.
+                    let line: String = self.scr.input.iter().collect();
+                    let line = line.trim().to_string();
+                    if !line.is_empty() {
+                        self.scr.input.clear();
+                        self.scr.cursor = 0;
+                        if line.starts_with('/') {
+                            self.submit_busy_line(&line);
+                        } else {
+                            self.scr.push(
+                                &format!("\u{21b3} {}", i18n::tf("ui_steer", &[&line])),
+                                K_DIM,
+                            );
+                            self.steer.push(line);
+                        }
                     }
                 }
                 KeyEvent::Char(0x0d) | KeyEvent::Char(0x0a) => {
@@ -3209,20 +3254,10 @@ impl<'a> harness::Ui for TermUi<'a> {
                     if !line.trim().is_empty() {
                         self.scr.input.clear();
                         self.scr.cursor = 0;
-                        if self.scr.queue.len() >= MAX_QUEUE {
-                            let n = self.scr.queue.len().to_string();
-                            self.scr.push(&i18n::tf("ui_queue_full", &[&n]), K_ERR);
-                        } else {
-                            self.scr.queue.push(line.clone());
-                            let n = self.scr.queue.len();
-                            self.scr.push(
-                                &format!(
-                                    "\u{23ce} {}",
-                                    i18n::tf("ui_queued", &[&n.to_string(), &line])
-                                ),
-                                K_DIM,
-                            );
-                        }
+                        self.submit_busy_line(&line);
+                    }
+                    if self.scr.quit {
+                        return Action::Cancel;
                     }
                     changed = true;
                 }
@@ -3325,19 +3360,150 @@ impl<'a> harness::Ui for TermUi<'a> {
 }
 
 impl<'a> TermUi<'a> {
-    /// Queue the currently typed text ahead of everything else, so it runs as
-    /// soon as the interrupted turn winds down.
-    fn force_now(&mut self) {
-        let line: String = self.scr.input.iter().collect();
+    fn force_now_line(&mut self, line: &str) {
         let line = line.trim().to_string();
         if line.is_empty() {
             return;
         }
-        self.scr.input.clear();
-        self.scr.cursor = 0;
         self.scr.queue.insert(0, line.clone());
         self.scr
             .push(&i18n::tf("force_sent", &[&line]), K_TOOL);
+    }
+
+    /// Enter while the model is working. Three classes:
+    ///  * direct chat input queues (the only thing that queues);
+    ///  * side-effect-free commands run right away (/usage, /btw, ...);
+    ///  * commands that change the model, endpoint or history are refused with
+    ///    a notice instead of being queued and replayed later.
+    fn submit_busy_line(&mut self, line: &str) {
+        let line = line.trim().to_string();
+        if line.is_empty() {
+            return;
+        }
+        if line.starts_with('/') {
+            match cmd::busy_policy(&line) {
+                cmd::BusyPolicy::Immediate => self.run_command_now(&line),
+                cmd::BusyPolicy::Refuse => {
+                    let shown = cmd::command_name(&line)
+                        .map(|n| format!("/{n}"))
+                        .unwrap_or_else(|| {
+                            line.split_whitespace().next().unwrap_or("/").to_string()
+                        });
+                    self.scr
+                        .push(&i18n::tf("ui_cmd_busy_refused", &[&shown]), K_ERR);
+                    self.scr.draw();
+                }
+            }
+            return;
+        }
+        if self.scr.queue.len() >= MAX_QUEUE {
+            let n = self.scr.queue.len().to_string();
+            self.scr.push(&i18n::tf("ui_queue_full", &[&n]), K_ERR);
+        } else {
+            let n = self.scr.queue.len() + 1;
+            self.scr.queue.push(line.clone());
+            self.scr.push(
+                &format!(
+                    "\u{23ce} {}",
+                    i18n::tf("ui_queued", &[&n.to_string(), &line])
+                ),
+                K_DIM,
+            );
+        }
+        self.scr.draw();
+    }
+
+    /// Run one command while the model is busy. The dispatcher is the same as
+    /// on the idle path; only the outcomes that are safe mid-turn are acted on
+    /// (text, /btw, /image, rename, goal, /update-hwinfo's local scan, quit).
+    fn run_command_now(&mut self, line: &str) {
+        self.scr.history_push(line);
+        self.scr.push(&format!("> {line}"), K_USER);
+        let dispatched = {
+            let mut guard = self.cfg_rc.borrow_mut();
+            cmd::dispatch(line, &mut guard)
+        };
+        let Some(out) = dispatched else {
+            self.scr.draw();
+            return;
+        };
+        for (text, kind) in &out.lines {
+            self.scr.push(text, *kind);
+        }
+        if out.image_clear {
+            self.scr.attachments.clear();
+            self.scr.push(i18n::t("ui_image_cleared"), K_DIM);
+        }
+        if let Some(arg) = out.image {
+            let max = crate::vision::MAX_PER_MESSAGE;
+            if self.scr.attachments.len() >= max {
+                self.scr
+                    .push(&i18n::tf("ui_image_too_many", &[&max.to_string()]), K_ERR);
+            } else {
+                match crate::vision::Attachment::load(&arg) {
+                    Ok(a) => {
+                        self.scr
+                            .push(&i18n::tf("ui_image_added", &[&a.label()]), K_NORM);
+                        self.scr.attachments.push(a);
+                    }
+                    Err(e) => self.scr.push(&i18n::tf("ui_image_failed", &[&e]), K_ERR),
+                }
+            }
+        }
+        if let Some(question) = out.btw {
+            let question = question.trim().to_string();
+            if question.is_empty() {
+                self.scr.push(i18n::t("cmd_btw_usage"), K_ERR);
+            } else {
+                let caps = self.cfg_rc.borrow().capabilities();
+                let now_cfg = api_cfg(&self.cfg_rc.borrow());
+                let mut opts =
+                    harness::RunOpts::from_config(&self.cfg_rc.borrow(), self.scr.ctx_window);
+                opts.max_steps = if opts.max_steps == 0 {
+                    8
+                } else {
+                    opts.max_steps.min(8)
+                };
+                let ctx = self.btw_ctx.clone();
+                run_btw(&mut self.scr, &now_cfg, caps, &ctx, &question, &opts);
+                // run_btw owns the screen for a moment; hand it back to the
+                // running turn (the answer stays in the artifact panel and the
+                // next pump() call shows it until Esc).
+                self.scr.busy = true;
+                poll_mode(true);
+            }
+        }
+        if out.model_prompt.is_some() {
+            // Creator-mode /update-hwinfo wants a model turn: not while busy.
+            let shown = line.split_whitespace().next().unwrap_or("/").to_string();
+            self.scr
+                .push(&i18n::tf("ui_cmd_busy_refused", &[&shown]), K_ERR);
+        }
+        if out.quit {
+            crate::voice::request_stop();
+            self.scr.quit = true;
+            self.interrupted = true;
+        }
+        // Anything that owns the screen or rewrites history is never allowed
+        // here (classification should prevent it; this is the belt-and-braces
+        // path for future commands that forgot to declare themselves).
+        if out.clear
+            || out.login
+            || out.config_wizard
+            || out.resume_menu
+            || out.model_menu
+            || out.rewind_menu
+            || out.extensions_menu
+            || out.help_menu
+            || out.apps_menu
+            || out.compact
+            || out.run_app.is_some()
+        {
+            let shown = line.split_whitespace().next().unwrap_or("/").to_string();
+            self.scr
+                .push(&i18n::tf("ui_cmd_busy_refused", &[&shown]), K_ERR);
+        }
+        self.scr.draw();
     }
 }
 
@@ -6398,7 +6564,21 @@ fn main() {
             if let Some(out) = dispatched {
                 scr.push(&format!("> {line}"), K_USER);
                 if out.clear {
+                    // /clear and /new start a new conversation, not just a new
+                    // screen: fresh system prompt, no session file, zero
+                    // context pressure. The old session stays on disk for
+                    // /resume.
                     scr.seed_splash(&config_rc.borrow().model.clone());
+                    let fresh = {
+                        let c = config_rc.borrow();
+                        let caps = c.capabilities();
+                        let prompt = build_system_prompt(&c, &skill_list, caps);
+                        vec![harness::msg("system", &prompt)]
+                    };
+                    *msgs.borrow_mut() = fresh;
+                    session::clear_current();
+                    session_path = None;
+                    crate::usage::reset_context();
                 }
                 for (text, kind) in out.lines {
                     scr.push(&text, kind);
@@ -6420,6 +6600,7 @@ fn main() {
                     let defs = tool::definitions(&reg);
                     let window = scr.ctx_window;
                     let result = {
+                        let btw_ctx = btw_snapshot(&msgs.borrow());
                         let mut m = msgs.borrow_mut();
                         let mut ui = TermUi {
                             scr: &mut scr,
@@ -6430,6 +6611,8 @@ fn main() {
                             tools: std::collections::HashMap::new(),
                             spin: 0,
                             interrupted: false,
+                            cfg_rc: config_rc.clone(),
+                            btw_ctx,
                         };
                         crate::compact::compact(&cfg, &manual, &mut m, window, &defs, &mut ui)
                     };
@@ -6496,6 +6679,9 @@ fn main() {
                         }
                         // Persist the rewound transcript right away: quitting
                         // here must not leave the old future in the session.
+                        crate::usage::seed_context(crate::compact::estimate_tokens(
+                            &msgs.borrow(),
+                        ));
                         if let Some(p) = &session_path {
                             save_session(&msgs, &config_rc.borrow(), p);
                         }
@@ -6509,6 +6695,9 @@ fn main() {
                     if let Some(path) = resume_menu(&mut scr) {
                         if let Some(p) = resume_session_path(&mut scr, &msgs, &path) {
                             session_path = Some(p);
+                            crate::usage::seed_context(crate::compact::estimate_tokens(
+                                &msgs.borrow(),
+                            ));
                         }
                     }
                 }
@@ -6743,6 +6932,9 @@ fn main() {
             scr.busy = true;
             poll_mode(true);
             {
+                // Snapshot before the mutable borrow: a mid-turn /btw answers
+                // from the conversation as it stood when the turn started.
+                let btw_ctx = btw_snapshot(&msgs.borrow());
                 let mut m = msgs.borrow_mut();
                 let mut ui = TermUi {
                     scr: &mut scr,
@@ -6753,6 +6945,8 @@ fn main() {
                     tools: std::collections::HashMap::new(),
                     spin: 0,
                     interrupted: false,
+                    cfg_rc: config_rc.clone(),
+                    btw_ctx,
                 };
                 last_report = Some(harness::run_turn(
                     &cfg, &opts, &mut m, &reg, &submit, &images, &mut ui,

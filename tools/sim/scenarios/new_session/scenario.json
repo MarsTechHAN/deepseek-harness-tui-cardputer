@@ -1,0 +1,18 @@
+{"steps": [
+ {"wait_for": {"text": "dst", "timeout_ms": 15000}},
+ {"send": "first message"}, {"key": "Enter"},
+ {"wait_for": {"text": "Hello one.", "timeout_ms": 20000}},
+ {"wait_stable": {"stable_ms": 500, "timeout_ms": 10000}},
+ {"send": "/clear"}, {"key": "Enter"},
+ {"wait_for": {"text": "hold Tab", "timeout_ms": 8000}},
+ {"wait_ms": 300, "snap": "cleared"},
+ {"send": "second message"}, {"key": "Enter"},
+ {"wait_for": {"text": "Hello two.", "timeout_ms": 20000}},
+ {"wait_stable": {"stable_ms": 500, "timeout_ms": 10000}},
+ {"send": "/new"}, {"key": "Enter"},
+ {"wait_for": {"text": "hold Tab", "timeout_ms": 8000}},
+ {"wait_ms": 300, "snap": "new_session"},
+ {"send": "third message"}, {"key": "Enter"},
+ {"wait_for": {"text": "Hello three.", "timeout_ms": 20000}},
+ {"wait_stable": {"stable_ms": 600, "timeout_ms": 10000}, "snap": "after"}
+]}

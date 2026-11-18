@@ -1,0 +1,52 @@
+{
+ "responses": [
+  {
+   "reasoning": "Read the notes.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "r0",
+     "name": "state_report",
+     "arguments": {
+      "text": "reading the notes"
+     }
+    },
+    {
+     "id": "r1",
+     "name": "read_file",
+     "arguments": {
+      "path": "."
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "Check the result and report the next stage.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "r2",
+     "name": "state_report",
+     "arguments": {
+      "text": "writing the summary"
+     }
+    },
+    {
+     "id": "r3",
+     "name": "list_dir",
+     "arguments": {
+      "path": "home"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "Answer.",
+   "content": "The notes say 42.",
+   "finish_reason": "stop",
+   "initial_delay_ms": 1500
+  }
+ ]
+}

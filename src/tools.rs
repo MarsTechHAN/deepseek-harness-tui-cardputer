@@ -413,12 +413,12 @@ code, diagrams, step lists, comparisons. It stays up until the user dismisses it
         ToolDef {
             name: "state_report",
             description: "Report in one short line what you are doing right now, e.g. \
-\"reading the battery files\" or \"writing run.sh\". The line is pinned to the top row \
-of the panel while the turn runs, so the user sees the current stage instead of a \
-frozen screen. Use it at stage boundaries of a long or multi-step task (before a \
-batch of work, when switching to a different sub-problem), not for every call. \
-The text must fit in one panel row: longer reports are rejected, so keep it to a \
-few words.",
+\"reading the battery files\" or \"writing run.sh\". Call it once at the START of \
+every step that runs tools (and again when the stage changes): the line is pinned \
+to the top row of the panel while the turn runs and is replaced by the next report, \
+so the user sees the current stage instead of a frozen screen. Never skip a working \
+step. The text must fit in one panel row: longer reports are rejected, so keep it to \
+a few words in the user's language.",
             params: vec![Param::req(
                 "text",
                 "string",
