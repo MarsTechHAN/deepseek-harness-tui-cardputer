@@ -387,7 +387,94 @@ code, diagrams, step lists, comparisons. It stays up until the user dismisses it
             present: |a| format!("artifact {}", short(&str_arg(a, "title").unwrap_or_default(), 40)),
             post: None,
         },
+        ToolDef {
+            name: "state_report",
+            description: "Report in one short line what you are doing right now, e.g. \
+\"reading the battery files\" or \"writing run.sh\". The line is pinned to the top row \
+of the panel while the turn runs, so the user sees the current stage instead of a \
+frozen screen. Use it at stage boundaries of a long or multi-step task (before a \
+batch of work, when switching to a different sub-problem), not for every call. \
+The text must fit in one panel row: longer reports are rejected, so keep it to a \
+few words.",
+            params: vec![Param::req(
+                "text",
+                "string",
+                "One line, no newlines, at most 50 display cells (CJK counts as 2). \
+Say what is happening now, in the user's language: \"scanning /proc\".",
+            )],
+            concurrency_safe: true,
+            timeout_ms: 5_000,
+            execute: state_report_exec,
+            schema_override: None,
+            dynamic: None,
+            render: state_report_render,
+            present: |a| format!("state {}", short(&str_arg(a, "text").unwrap_or_default(), 30)),
+            post: None,
+        },
     ]
+}
+
+/// Panel width, installed by the TUI at startup. `state_report` enforces it so
+/// a report can never be cut off: it must fit on the row, or it is rejected.
+static PANEL_COLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(53);
+
+pub fn set_panel_cols(cols: usize) {
+    PANEL_COLS.store(cols.clamp(20, 200), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn panel_cols() -> usize {
+    PANEL_COLS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Display cells on the 6x13 cell grid: CJK/full-width glyphs take two.
+fn text_cells(s: &str) -> usize {
+    s.chars()
+        .map(|c| {
+            let u = c as u32;
+            if (0x1100..=0x115F).contains(&u)
+                || (0x2E80..=0xA4CF).contains(&u)
+                || (0xAC00..=0xD7A3).contains(&u)
+                || (0xF900..=0xFAFF).contains(&u)
+                || (0xFE30..=0xFE6F).contains(&u)
+                || (0xFF00..=0xFF60).contains(&u)
+                || (0xFFE0..=0xFFE6).contains(&u)
+                || (0x1F300..=0x1FAFF).contains(&u)
+            {
+                2
+            } else {
+                1
+            }
+        })
+        .sum()
+}
+
+fn state_report_exec(args: &J) -> Result<J, Fail> {
+    let raw = str_arg(args, "text").ok_or_else(|| Fail::new("missing 'text'"))?;
+    // One row means one line: fold any stray newline/tab run into spaces.
+    let text = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.is_empty() {
+        return Err(Fail::new("state_report text must not be empty"));
+    }
+    let cols = panel_cols();
+    // The panel draws the icon and one space before the text.
+    let limit = cols.saturating_sub(3);
+    let cells = text_cells(&text);
+    if cells > limit {
+        return Err(Fail::new(format!(
+            "state_report must fit on one {cols}-cell row (at most {limit} cells, \
+CJK counts as 2): this one is {cells} cells. Shorten it, e.g. \"reading /proc\"."
+        )));
+    }
+    Ok(obj(vec![
+        ("text", J::s(&text)),
+        ("cells", J::Num(cells as f64)),
+        ("limit", J::Num(limit as f64)),
+    ]))
+}
+
+fn state_report_render(_args: &J, v: &J) -> String {
+    let text = v.get("text").and_then(|t| t.as_str()).unwrap_or("");
+    format!("noted: {text}")
 }
 
 static SKILLS: std::sync::RwLock<Option<Vec<crate::skills::Skill>>> =

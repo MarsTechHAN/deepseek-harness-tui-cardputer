@@ -1738,6 +1738,90 @@ def check_creator_requires(screens, reqs, work):
     return checks
 
 
+def agent_requests(reqs):
+    """Chat requests made by the agent itself (not sandbox-judge calls)."""
+    out = []
+    for r in reqs:
+        msgs = r.get("messages") or []
+        if msgs and str(msgs[0].get("content") or "").startswith("You are dst"):
+            out.append(r)
+    return out
+
+
+def check_progress(screens, reqs, work):
+    pinned = screens.get("pinned", "")
+    running = screens.get("running", "")
+    ctrlo = screens.get("ctrlo", "")
+    scrolled = screens.get("scrolled_busy", "")
+    interrupted = screens.get("interrupted", "")
+    nxt = screens.get("next", "")
+    agents = agent_requests(reqs)
+    checks = []
+    first = pinned.splitlines()[0] if pinned.splitlines() else ""
+    checks.append((first.startswith("\u00bb reading /proc"),
+                   "state_report is pinned to the very top row"))
+    checks.append(("* bash" in running and "command: sleep 5" in running,
+                   "the running tool call is expanded with its arguments"))
+    checks.append(("Tool output" in ctrlo and "quick-done" in ctrlo,
+                   "CtrlO opens the tool log during a running turn"))
+    checks.append(("lines \u00b7 End" in scrolled and "filler" in scrolled,
+                   "PgUp pages the transcript while a turn is running"))
+    checks.append(("cancelled" in interrupted, "Esc cancels the whole turn"))
+    # Two filler turns + two steps of the big turn + the follow-up: one more
+    # request would mean the driver kept the interrupted turn alive.
+    checks.append((len(agents) == 5,
+                   f"no extra model step after the interrupt ({len(agents)} requests)"))
+    checks.append((len(agents) == 5
+                   and "now answer shortly"
+                   in json.dumps(agents[-1], ensure_ascii=False),
+                   "the follow-up message is what was sent next"))
+    checks.append(("Follow-up answer." in nxt, "the next turn works normally"))
+    return checks
+
+
+def check_paging(screens, reqs, work):
+    bottom = screens.get("bottom", "")
+    back = screens.get("back", "")
+    checks = []
+    checks.append(("Third reply line B." in bottom, "newest output is at the bottom"))
+    # Every page up must still show transcript content: scrolling past the top
+    # used to blank the panel because the window was not clamped.
+    for i in range(1, 5):
+        page = screens.get(f"page{i}", "")
+        checks.append(("lines \u00b7 End" in page and ">" in page,
+                       f"PgUp page {i} shows scrollback, not a blank screen"))
+    checks.append(("first question" in screens.get("page4", "")
+                   or "first question" in screens.get("page3", ""),
+                   "paging reaches the first prompt"))
+    checks.append(("Third reply line B." in back and "lines \u00b7 End" not in back,
+                   "End returns to the newest lines"))
+    return checks
+
+
+def check_voice_interrupt(screens, reqs, work):
+    busy = screens.get("busy", "")
+    rec = screens.get("recording", "")
+    typed = screens.get("transcribed", "")
+    reply = screens.get("reply", "")
+    voice_log = read_file(os.path.join(work, "home", ".dst", "logs", "voice.log"))
+    agents = agent_requests(reqs)
+    checks = []
+    checks.append(("sleep 5" in busy, "a long tool call is running"))
+    checks.append(("REC" in rec, "Tab during the turn interrupts and records at once"))
+    checks.append(("stop and take this" in typed,
+                   "the take is transcribed into the prompt (auto_send off)"))
+    checks.append(("start the slow job" in typed or "REC" in rec,
+                   "the interrupted turn is no longer on screen"))
+    checks.append(("stop requested" in voice_log, "the voice layer got the stop signal"))
+    checks.append(("armed (interrupt)" in voice_log,
+                   "the interrupt take skips the tap debounce"))
+    checks.append((len(agents) == 2,
+                   f"the interrupted turn stopped at once ({len(agents)} requests)"))
+    checks.append(("Heard the voice interrupt." in reply,
+                   "Enter sends the transcribed prompt and the reply renders"))
+    return checks
+
+
 CHECKS = {
     "creator_requires": check_creator_requires,
     "creator_tty_test": check_creator_tty_test,
@@ -1769,6 +1853,7 @@ CHECKS = {
     "extensions_toggle": check_extensions_toggle,
     "usage_zh": check_usage_zh,
     "voice_input": check_voice_input,
+    "voice_interrupt": check_voice_interrupt,
     "voice_speak": check_voice_speak,
     "queue_edit": check_queue_edit,
     "sandbox_es": check_sandbox_es,
@@ -1777,6 +1862,8 @@ CHECKS = {
     "sandbox_diff": check_sandbox_diff,
     "tips": check_tips,
     "ux": check_ux,
+    "progress": check_progress,
+    "paging": check_paging,
     "ux2": check_ux2,
     "new_tools": check_new_tools,
     "rewind": check_rewind,

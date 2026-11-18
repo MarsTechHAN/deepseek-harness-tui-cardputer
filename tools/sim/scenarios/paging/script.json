@@ -1,0 +1,5 @@
+{"responses": [
+ {"reasoning": "first", "content": "First reply line A.\nFirst reply line B.", "finish_reason": "stop"},
+ {"reasoning": "second", "content": "Second reply line A.\nSecond reply line B.", "finish_reason": "stop"},
+ {"reasoning": "third", "content": "Third reply line A.\nThird reply line B.", "finish_reason": "stop"}
+]}

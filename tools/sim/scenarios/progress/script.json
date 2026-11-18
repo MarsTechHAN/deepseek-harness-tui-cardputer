@@ -1,0 +1,56 @@
+{
+ "responses": [
+  {
+   "reasoning": "filler one",
+   "content": "Filler one answer.\nSecond filler line.",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "filler two",
+   "content": "Filler two answer.\nSecond filler line.",
+   "finish_reason": "stop"
+  },
+  {
+   "reasoning": "Report the stage, then continue.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "p1",
+     "name": "state_report",
+     "arguments": {
+      "text": "reading /proc"
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "Now a quick check and the long step.",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "p2",
+     "name": "bash",
+     "arguments": {
+      "command": "echo quick-done",
+      "timeout_s": 10
+     }
+    },
+    {
+     "id": "p3",
+     "name": "bash",
+     "arguments": {
+      "command": "sleep 5; echo long-step-done",
+      "timeout_s": 30
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "follow-up",
+   "content": "Follow-up answer.",
+   "finish_reason": "stop"
+  }
+ ]
+}

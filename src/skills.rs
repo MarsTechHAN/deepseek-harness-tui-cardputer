@@ -47,6 +47,13 @@ impl Skill {
     }
 }
 
+/// Split a skill file's YAML frontmatter into (key/value pairs, body).
+/// The apps layer reuses this so SKILL.md stays the one place the human title
+/// and description live.
+pub fn split_frontmatter(text: &str) -> (Vec<(String, String)>, String) {
+    frontmatter(text)
+}
+
 fn frontmatter(text: &str) -> (Vec<(String, String)>, String) {
     let mut meta = Vec::new();
     if !text.starts_with("---") {
@@ -150,6 +157,17 @@ fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
 
 /// Static list of skills saved during this turn, for the transcript notice.
 static SAVED: std::sync::Mutex<Vec<(String, String, u32)>> = std::sync::Mutex::new(Vec::new());
+/// Packages that became (or stayed) runnable this turn: a skill_file call
+/// wrote meta.json, which is what turns a skill folder into an app.
+static SAVED_APPS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Drain the packages that gained a meta.json this turn (creator-mode notice).
+pub fn take_saved_apps() -> Vec<String> {
+    match SAVED_APPS.lock() {
+        Ok(mut g) => std::mem::take(&mut *g),
+        Err(_) => Vec::new(),
+    }
+}
 
 pub fn take_saved() -> Vec<(String, String, u32)> {
     match SAVED.lock() {
@@ -272,6 +290,15 @@ pub fn write_file(name: &str, path: &str, content: &str) -> Result<(Skill, Strin
         return Err(format!("skill package would exceed {MAX_TOTAL} bytes"));
     }
     std::fs::write(&dest, content).map_err(|e| format!("{}: {e}", dest.display()))?;
+    // meta.json is the app manifest: writing it is the moment a skill becomes
+    // a runnable package, so it is announced separately from a skill save.
+    if rel.eq_ignore_ascii_case("meta.json") {
+        if let Ok(mut g) = SAVED_APPS.lock() {
+            if !g.iter().any(|n| n == &want) {
+                g.push(want.clone());
+            }
+        }
+    }
     let sk = Skill {
         name: want,
         description: String::new(),
@@ -481,12 +508,13 @@ pub fn tool_defs() -> Vec<crate::tool::ToolDef> {
     vec![
         ToolDef {
             name: "skill_save",
-            description: "Create or update one of your own reusable skills. Use this for a systematic, \
-self-contained engineering package you worked out (a procedure with steps, formats, checklists, \
-required files) that will be useful again. NOT for short facts or preferences (use memory_write) \
-and NOT for runnable device programs (use app_save). Updating keeps the previous body under \
-.history/vN.md and bumps the version; the skill joins the SKILLS catalog on your next turn and \
-is loaded with the skill tool.",
+            description: "Create or update a package in the skill library (~/.dst/skills/<name>/): \
+SKILL.md with name/description frontmatter plus the instructions. Use it for a systematic, \
+self-contained engineering package you worked out (a procedure with steps, formats, checklists) \
+and for anything you want to persist for the device. NOT for short facts (use memory_write). \
+A package becomes a runnable APP when you also write meta.json into it with skill_file. \
+Updating keeps the previous body under .history/vN.md and bumps the version; the package joins \
+the SKILLS catalog on your next turn.",
             params: vec![
                 Param::req("name", "string", "Slug: lowercase letters/digits/_/-, unique."),
                 Param::req("description", "string", "One line: when the model should use this skill (max 200 chars)."),
@@ -522,7 +550,9 @@ becomes a new version, so a rollback is reversible. Omit 'version' to go back on
         ToolDef {
             name: "skill_file",
             description: "Write one supporting file inside a saved skill package (~/.dst/skills/<name>/). \
-Use it for templates, scripts or reference data the instructions point at.",
+Use it for the entry program (run.sh), templates, reference data — and for meta.json, which is \
+what turns the package into a runnable app: {\"title\", \"kind\": sh|python|binary|prompt|doc, \
+\"entry\": \"run.sh\", \"requires\": [...], \"default_args\", \"capture\"}.",
             params: vec![
                 Param::req("name", "string", "Skill name."),
                 Param::req("path", "string", "Relative path inside the skill dir."),
@@ -625,13 +655,23 @@ pub fn catalog_prompt(skills: &[Skill]) -> String {
     }
     let mut s = String::from(
         "\nSKILLS\nThese packaged instructions are available on demand. When a task matches \
-one, call the `skill` tool with its name before acting; do not guess at its contents.\n",
+one, call the `skill` tool with its name before acting; do not guess at its contents.\nA \
+package that also has meta.json is a runnable APP: its line carries [kind:entry], /apps lists \
+it, and app_run/app_test execute it.\n",
     );
     for sk in skills {
+        // Runnable packages are announced with their entry so the model knows
+        // which file to fix without opening meta.json first.
+        let run = crate::apps::run_marker(&sk.dir)
+            .map(|m| format!(" [{m}]"))
+            .unwrap_or_default();
         if sk.version > 1 {
-            s.push_str(&format!("- {} (v{}): {}\n", sk.name, sk.version, sk.description));
+            s.push_str(&format!(
+                "- {} (v{}){}: {}\n",
+                sk.name, sk.version, run, sk.description
+            ));
         } else {
-            s.push_str(&format!("- {}: {}\n", sk.name, sk.description));
+            s.push_str(&format!("- {}{}: {}\n", sk.name, run, sk.description));
         }
     }
     s

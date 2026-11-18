@@ -14,7 +14,7 @@
   },
   {
    "wait_for": {
-    "text": "step 3:",
+    "text": "s save",
     "timeout_ms": 15000
    },
    "snap": "top"

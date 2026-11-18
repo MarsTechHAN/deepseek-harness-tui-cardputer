@@ -1,21 +1,43 @@
-//! Creator mode: persistent app packages + full-screen app runtime.
+//! Apps are skills that can run.
 //!
-//! The design lives in `docs/CREATOR.md`. In short: in creator mode the model
-//! owns the device, so every piece of work it builds is saved as an *app
-//! package* under `~/.dst/apps/<category>/<name>/`:
+//! Creator mode has one unit: the **skill package** under
+//! `~/.dst/skills/<name>/`. A skill becomes runnable by adding `meta.json`
+//! next to its `SKILL.md`:
 //!
 //! ```text
-//! app.json    machine manifest (name, title, description, kind, entry, version)
-//! APP.md      short annotation written for the user who opens /apps later
-//! run.sh      entry program and any supporting files
+//! ~/.dst/skills/battery-viewer/
+//!     SKILL.md        catalog entry: name/description frontmatter + instructions
+//!     meta.json       optional manifest: makes the package runnable
+//!     run.sh          entry program (kind=sh)
+//!     state/          runtime state written by the app ($DST_APP_STATE)
 //! ```
 //!
-//! The catalog (name/title/description/kind) is injected into the system
-//! prompt each turn, exactly like the skills catalog: cheap one-line entries,
-//! detail read on demand with `read_file`. `app_run` hands the panel to a saved
-//! app: the runner forwards the keyboard over a pipe and keeps one platform
-//! invariant that no app can break - a long-press of Esc always kills the app
-//! and gives the screen back to the chat.
+//! `meta.json`:
+//!
+//! ```json
+//! {
+//!   "title": "Battery viewer",
+//!   "kind": "sh",
+//!   "entry": "run.sh",
+//!   "requires": ["sh"],
+//!   "default_args": "--fast",
+//!   "capture": false,
+//!   "version": 1,
+//!   "updated": "2026-11-17T15:00:00+08:00",
+//!   "last_run": {"at": "2026-11-17T15:01:00+08:00", "secs": 1.2, "outcome": "exit 0"}
+//! }
+//! ```
+//!
+//! There is no separate app store and no app-writing tool: the model creates
+//! the package with `skill_save` + `skill_file` (writing `meta.json` is the
+//! step that makes it an app), and this module only *reads* the folder to
+//! list/run/test it. Discovery is file-based, so the SKILLS catalog in the
+//! prompt, the `/apps` launcher and the model's own `read_file` all see the
+//! same thing.
+//!
+//! What stays here is the part that needs the platform: the screen-takeover
+//! runner (long-press Esc + timeout + ulimits + scrubbed env), the headless
+//! tester the model uses to verify behaviour, and the run/test history.
 
 use crate::json::J;
 use crate::tool::{num_arg, obj, str_arg, Fail, Param, ToolDef};
@@ -24,20 +46,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
-/// Hard bounds so a bad turn cannot fill the microSD through the tools.
 pub const MAX_APPS: usize = 200;
-pub const MAX_INDEX: usize = 40;
-pub const MAX_FILE_BYTES: usize = 32 * 1024;
-pub const MAX_APP_BYTES: usize = 256 * 1024;
-pub const MAX_ANNOTATION: usize = 4000;
-pub const MAX_TITLE: usize = 60;
-pub const MAX_DESC: usize = 160;
 pub const DEFAULT_TIMEOUT_S: u64 = 60;
 pub const MAX_TIMEOUT_S: u64 = 600;
 /// User-initiated runs from /apps: long-press Esc is the exit, not a timer.
 pub const DIRECT_TIMEOUT_S: u64 = 3_600;
 
-/// One recorded run/test of an app (written back into app.json).
+/// One recorded run/test of an app (written back into meta.json).
 #[derive(Clone, Debug, Default)]
 pub struct RunStamp {
     pub at: String,
@@ -46,16 +61,15 @@ pub struct RunStamp {
     pub outcome: String,
 }
 
-/// A saved app package, loaded from `<root>/<category>/<name>/app.json`.
+/// A runnable skill package, loaded from `<skills>/<name>/meta.json`.
 #[derive(Clone, Debug)]
 pub struct App {
     pub name: String,
     pub title: String,
-    pub category: String,
     pub description: String,
-    /// `sh` | `python` | `doc`
+    /// `sh` | `python` | `binary` | `prompt` | `doc`
     pub kind: String,
-    /// Relative entry file inside the app dir ("" for `doc`).
+    /// Relative entry file inside the skill dir ("" for `doc`/`prompt`).
     pub entry: String,
     pub version: u32,
     pub created: String,
@@ -76,8 +90,9 @@ pub struct App {
 }
 
 impl App {
+    /// Display label. Skills are flat, so the name is the label.
     pub fn label(&self) -> String {
-        format!("{}/{}", self.category, self.name)
+        self.name.clone()
     }
     /// Model-facing and UI-facing absolute path.
     pub fn path(&self) -> String {
@@ -85,8 +100,9 @@ impl App {
     }
 }
 
+/// Runnable packages live in the skill library: one package format, one place.
 pub fn apps_dir() -> PathBuf {
-    crate::config::home().join("apps")
+    crate::config::skills_dir()
 }
 
 pub(crate) fn now_stamp() -> String {
@@ -108,38 +124,12 @@ pub(crate) fn now_stamp() -> String {
     }
 }
 
-/// Valid slug: lowercase ascii + digits + `_`/`-`, starts alphanumeric.
-pub fn valid_slug(s: &str) -> bool {
-    let mut it = s.chars();
-    match it.next() {
-        Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit() => {}
-        _ => return false,
+fn short(s: &str, n: usize) -> String {
+    let mut out: String = s.chars().take(n).collect();
+    if s.chars().count() > n {
+        out.push_str("...");
     }
-    s.len() <= 32 && it.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
-}
-
-/// A file path inside an app dir: relative, no `..`, no empty segments.
-fn safe_rel_path(p: &str) -> Option<String> {
-    let p = p.trim();
-    if p.is_empty() || p.chars().count() > 120 || p.starts_with('/') || p.contains('\\') {
-        return None;
-    }
-    let mut parts: Vec<&str> = Vec::new();
-    for seg in p.split('/') {
-        if seg.is_empty() || seg == "." || seg == ".." {
-            return None;
-        }
-        if seg.chars().any(|c| c.is_control()) {
-            return None;
-        }
-        parts.push(seg);
-    }
-    Some(parts.join("/"))
-}
-
-fn reserved_name(path: &str) -> bool {
-    let p = path.to_ascii_lowercase();
-    p == "app.json" || p == "app.md" || p == "prompt.md"
+    out.replace('\n', " ")
 }
 
 fn stamp_json(r: &RunStamp) -> J {
@@ -151,9 +141,11 @@ fn stamp_json(r: &RunStamp) -> J {
 }
 
 fn parse_stamp(v: &J) -> Option<RunStamp> {
-    let at = v.get("at")?.as_str()?.to_string();
+    if !matches!(v, J::Obj(_)) {
+        return None;
+    }
     Some(RunStamp {
-        at,
+        at: v.get("at").and_then(|x| x.as_str()).unwrap_or("").to_string(),
         secs: v.get("secs").and_then(|x| x.as_num()).unwrap_or(0.0) as f32,
         outcome: v
             .get("outcome")
@@ -163,141 +155,76 @@ fn parse_stamp(v: &J) -> Option<RunStamp> {
     })
 }
 
-fn manifest_json(a: &App) -> J {
-    let mut pairs = vec![
-        ("name", J::s(&a.name)),
+fn str_vec(v: Option<&J>) -> Vec<String> {
+    v.and_then(|x| x.as_arr())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .take(8)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Canonical `meta.json` value for an app (used when a run/test stamp is
+/// written back; the model owns the other fields).
+fn meta_json(a: &App) -> J {
+    let mut v = obj(vec![
         ("title", J::s(&a.title)),
-        ("category", J::s(&a.category)),
-        ("description", J::s(&a.description)),
         ("kind", J::s(&a.kind)),
         ("entry", J::s(&a.entry)),
+        ("requires", J::Arr(a.requires.iter().map(|r| J::s(r)).collect())),
+        ("default_args", J::s(&a.default_args)),
+        ("capture", J::Bool(a.capture)),
         ("version", J::Num(a.version as f64)),
         ("created", J::s(&a.created)),
         ("updated", J::s(&a.updated)),
-    ];
+    ]);
     if let Some(r) = &a.last_run {
-        pairs.push(("last_run", stamp_json(r)));
+        v.set("last_run", stamp_json(r));
     }
-    if let Some(r) = &a.last_test {
-        pairs.push(("last_test", stamp_json(r)));
+    if let Some(t) = &a.last_test {
+        v.set("last_test", stamp_json(t));
     }
-    if !a.requires.is_empty() {
-        pairs.push((
-            "requires",
-            J::Arr(a.requires.iter().map(|r| J::s(r)).collect()),
-        ));
-    }
-    if !a.default_args.is_empty() {
-        pairs.push(("default_args", J::s(&a.default_args)));
-    }
-    if a.capture {
-        pairs.push(("capture", J::Bool(true)));
-    }
-    obj(pairs)
+    v
 }
 
-fn parse_manifest(dir: &Path) -> Option<App> {
-    let text = std::fs::read_to_string(dir.join("app.json")).ok()?;
-    let v = crate::json::parse(&text)?;
-    let name = v.get("name")?.as_str()?.trim().to_string();
-    let category = v
-        .get("category")
-        .and_then(|x| x.as_str())
-        .unwrap_or("apps")
-        .trim()
-        .to_string();
-    if !valid_slug(&name) || !valid_slug(&category) {
-        return None;
-    }
-    let kind = v.get("kind").and_then(|x| x.as_str()).unwrap_or("doc").to_string();
-    if !matches!(kind.as_str(), "sh" | "python" | "binary" | "doc" | "prompt") {
-        return None;
-    }
-    Some(App {
-        name,
-        title: v
-            .get("title")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .trim()
-            .to_string(),
-        category,
-        description: v
-            .get("description")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .trim()
-            .to_string(),
-        entry: v
-            .get("entry")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .trim()
-            .to_string(),
-        kind,
-        version: v.get("version").and_then(|x| x.as_num()).unwrap_or(1.0).max(1.0) as u32,
-        created: v.get("created").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-        updated: v.get("updated").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-        dir: dir.to_path_buf(),
-        last_run: v.get("last_run").and_then(parse_stamp),
-        last_test: v.get("last_test").and_then(parse_stamp),
-        capture: v
-            .get("capture")
-            .map(|b| matches!(b, J::Bool(true)))
-            .unwrap_or(false),
-        default_args: v
-            .get("default_args")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .trim()
-            .to_string(),
-        requires: v
-            .get("requires")
-            .and_then(|x| x.as_arr())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|x| x.as_str())
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default(),
-    })
+/// Read the human title/description from SKILL.md (the app manifest only holds
+/// machine fields, so the catalog text stays in one place).
+fn skill_meta(dir: &Path) -> (String, String) {
+    let text = std::fs::read_to_string(dir.join("SKILL.md")).unwrap_or_default();
+    let (meta, _body) = crate::skills::split_frontmatter(&text);
+    let get = |k: &str| {
+        meta.iter()
+            .find(|(key, _)| key == k)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+    (get("name"), get("description"))
 }
 
-/// Every well-formed app package under `root`, sorted by category then name.
+/// Every runnable package under `root` (skill dir + meta.json), sorted by name.
 pub fn load_at(root: &Path) -> Vec<App> {
     let mut out = Vec::new();
-    let cats = match std::fs::read_dir(root) {
+    let rd = match std::fs::read_dir(root) {
         Ok(r) => r,
         Err(_) => return out,
     };
-    for cat in cats.flatten() {
-        let cdir = cat.path();
-        if !cdir.is_dir() {
+    for entry in rd.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() || dir.file_name().map(|n| n.to_string_lossy().starts_with('.')).unwrap_or(true) {
             continue;
         }
-        let names = match std::fs::read_dir(&cdir) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        for entry in names.flatten() {
-            let dir = entry.path();
-            if !dir.is_dir() {
-                continue;
+        if let Some(app) = parse_meta(&dir) {
+            out.push(app);
+            if out.len() >= MAX_APPS {
+                break;
             }
-            if let Some(app) = parse_manifest(&dir) {
-                out.push(app);
-                if out.len() >= MAX_APPS {
-                    break;
-                }
-            }
-        }
-        if out.len() >= MAX_APPS {
-            break;
         }
     }
-    out.sort_by(|a, b| (a.category.as_str(), a.name.as_str()).cmp(&(b.category.as_str(), b.name.as_str())));
+    out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
 
@@ -305,23 +232,100 @@ pub fn load() -> Vec<App> {
     load_at(&apps_dir())
 }
 
-/// Resolve `name` or `category/name` against the loaded apps.
+/// Resolve `name` (or a legacy `category/name`) against the loaded apps.
 pub fn find(name: &str) -> Option<App> {
+    find_at(&apps_dir(), name)
+}
+
+pub fn find_at(root: &Path, name: &str) -> Option<App> {
     let want = name.trim();
     if want.is_empty() {
         return None;
     }
-    let apps = load();
-    if let Some((cat, n)) = want.split_once('/') {
-        return apps
-            .into_iter()
-            .find(|a| a.category.eq_ignore_ascii_case(cat) && a.name.eq_ignore_ascii_case(n));
+    let want = want.rsplit('/').next().unwrap_or(want);
+    load_at(root)
+        .into_iter()
+        .find(|a| a.name.eq_ignore_ascii_case(want))
+}
+
+fn parse_meta(dir: &Path) -> Option<App> {
+    let name = dir.file_name()?.to_string_lossy().to_string();
+    let text = std::fs::read_to_string(dir.join("meta.json")).ok()?;
+    let v = match crate::json::parse(&text)? {
+        J::Obj(_) => crate::json::parse(&text).unwrap(),
+        _ => return None,
+    };
+    let get = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let kind = {
+        let k = get("kind");
+        if k.is_empty() { "sh".to_string() } else { k }
+    };
+    if !matches!(kind.as_str(), "sh" | "python" | "binary" | "prompt" | "doc") {
+        return None;
     }
-    apps.into_iter().find(|a| a.name.eq_ignore_ascii_case(want))
+    let entry = get("entry");
+    if !matches!(kind.as_str(), "doc" | "prompt") && entry.is_empty() {
+        return None;
+    }
+    let (_, skill_desc) = skill_meta(dir);
+    let title = {
+        let t = get("title");
+        if t.is_empty() {
+            name.replace(['-', '_'], " ")
+        } else {
+            t
+        }
+    };
+    Some(App {
+        name,
+        title,
+        description: {
+            let d = get("description");
+            if d.is_empty() { skill_desc } else { d }
+        },
+        version: v.get("version").and_then(|x| x.as_num()).unwrap_or(1.0) as u32,
+        created: get("created"),
+        updated: get("updated"),
+        kind,
+        entry,
+        dir: dir.to_path_buf(),
+        last_run: v.get("last_run").and_then(parse_stamp),
+        last_test: v.get("last_test").and_then(parse_stamp),
+        requires: str_vec(v.get("requires")),
+        default_args: get("default_args"),
+        capture: matches!(v.get("capture"), Some(J::Bool(true))),
+    })
+}
+
+/// Catalog marker for a runnable skill: "sh:run.sh", plus the failure of the
+/// last run/test when there is one. None when the package has no meta.json
+/// (a plain skill, not an app).
+pub fn run_marker(dir: &Path) -> Option<String> {
+    let app = parse_meta(dir)?;
+    let mut m = if app.entry.is_empty() {
+        app.kind.clone()
+    } else {
+        format!("{}:{}", app.kind, app.entry)
+    };
+    for (label, stamp) in [("last run", &app.last_run), ("last test", &app.last_test)] {
+        if let Some(st) = stamp {
+            let bad = !(st.outcome.is_empty() || st.outcome == "exit 0" || st.outcome == "esc");
+            if bad {
+                m.push_str(&format!(" (!{label}: {})", st.outcome));
+                break;
+            }
+        }
+    }
+    Some(m)
+}
+
+/// Whether a directory is a runnable package (has meta.json).
+pub fn meta_exists(dir: &Path) -> bool {
+    dir.join("meta.json").is_file()
 }
 
 /// Compact "HH:MM" from an ISO stamp (only the time of a run matters in the
-/// 12-row panel; the full timestamp stays in app.json).
+/// 12-row panel; the full timestamp stays in meta.json).
 pub fn stamp_hhmm(at: &str) -> String {
     let idx = at.find('T').map(|i| i + 1).unwrap_or(0);
     at[idx..].chars().take(5).collect()
@@ -331,9 +335,7 @@ pub fn stamp_hhmm(at: &str) -> String {
 pub fn is_broken(app: &App) -> bool {
     [&app.last_run, &app.last_test].iter().any(|st| {
         st.as_ref()
-            .map(|r| {
-                !(r.outcome.is_empty() || r.outcome == "exit 0" || r.outcome == "esc")
-            })
+            .map(|r| !(r.outcome.is_empty() || r.outcome == "exit 0" || r.outcome == "esc"))
             .unwrap_or(false)
     })
 }
@@ -356,57 +358,51 @@ pub fn last_used_hhmm(app: &App) -> Option<String> {
     last_activity(app).map(stamp_hhmm)
 }
 
-/// The request body of a prompt app (never the generated APP.md header).
+/// The request body of a prompt app: PROMPT.md when present, else the skill
+/// instructions.
 pub fn prompt_body(app: &App) -> String {
     let body = std::fs::read_to_string(app.dir.join("PROMPT.md"))
         .unwrap_or_else(|_| annotation(app));
     body.trim().to_string()
 }
 
+/// The skill instructions (SKILL.md body): what the user reads in /apps and
+/// what the model follows for `kind=prompt`.
 pub fn annotation(app: &App) -> String {
-    std::fs::read_to_string(app.dir.join("APP.md")).unwrap_or_default()
+    let text = std::fs::read_to_string(app.dir.join("SKILL.md")).unwrap_or_default();
+    crate::skills::split_frontmatter(&text).1.trim().to_string()
 }
 
-/// Files in the app dir with their sizes, sorted, excluding the manifest.
+/// Files in the package with their sizes, sorted, for the /apps detail panel.
 pub fn files(app: &App) -> Vec<(String, u64)> {
     let mut out = Vec::new();
-    let rd = match std::fs::read_dir(&app.dir) {
-        Ok(r) => r,
-        Err(_) => return out,
-    };
-    for e in rd.flatten() {
-        let p = e.path();
-        if !p.is_file() {
-            continue;
-        }
-        let name = match p.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
+    fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, u64)>) {
+        let rd = match std::fs::read_dir(dir) {
+            Ok(r) => r,
+            Err(_) => return,
         };
-        if name == "app.json" || name.starts_with('.') {
-            continue;
+        for e in rd.flatten() {
+            let p = e.path();
+            let rel = p
+                .strip_prefix(base)
+                .map(|x| x.display().to_string())
+                .unwrap_or_default();
+            if rel.starts_with(".history") || rel.starts_with("state/") {
+                continue;
+            }
+            match e.metadata() {
+                Ok(m) if m.is_dir() => walk(base, &p, out),
+                Ok(m) if m.is_file() => out.push((rel, m.len())),
+                _ => {}
+            }
+            if out.len() > 40 {
+                return;
+            }
         }
-        let size = e.metadata().map(|m| m.len()).unwrap_or(0);
-        out.push((name, size));
     }
+    walk(&app.dir, &app.dir, &mut out);
     out.sort();
     out
-}
-
-fn dir_bytes(dir: &Path) -> u64 {
-    let mut total = 0u64;
-    let rd = match std::fs::read_dir(dir) {
-        Ok(r) => r,
-        Err(_) => return 0,
-    };
-    for e in rd.flatten() {
-        match e.metadata() {
-            Ok(m) if m.is_dir() => total += dir_bytes(&e.path()),
-            Ok(m) if m.is_file() => total += m.len(),
-            _ => {}
-        }
-    }
-    total
 }
 
 fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
@@ -418,257 +414,12 @@ fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
     })
 }
 
-#[cfg(unix)]
-fn chmod(path: &Path, mode: u32) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
-}
-
-#[cfg(not(unix))]
-fn chmod(_path: &Path, _mode: u32) {}
-
-fn clean_line(s: &str, max: usize) -> String {
-    let one: String = s
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    let one = one.split_whitespace().collect::<Vec<_>>().join(" ");
-    one.chars().take(max).collect()
-}
-
-/// Create or update an app package. Returns the saved app and whether it was
-/// newly created.
-pub fn save_at(root: &Path, args: &J) -> Result<(App, bool), String> {
-    let name = str_arg(args, "name")
-        .map(|s| s.trim().to_ascii_lowercase())
-        .unwrap_or_default();
-    if !valid_slug(&name) {
-        return Err(format!(
-            "invalid app name '{name}': use lowercase letters, digits, '_' or '-' (max 32)"
-        ));
-    }
-    let category = str_arg(args, "category")
-        .map(|s| s.trim().to_ascii_lowercase())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "apps".to_string());
-    if !valid_slug(&category) {
-        return Err(format!(
-            "invalid category '{category}': use lowercase letters, digits, '_' or '-' (max 32)"
-        ));
-    }
-    let title = clean_line(&str_arg(args, "title").unwrap_or_default(), MAX_TITLE);
-    if title.is_empty() {
-        return Err("missing 'title': one short human title for the app".into());
-    }
-    let description = clean_line(&str_arg(args, "description").unwrap_or_default(), MAX_DESC);
-    if description.is_empty() {
-        return Err("missing 'description': one line saying what the app is for".into());
-    }
-    let annotation = str_arg(args, "annotation").unwrap_or_default();
-    let annotation = annotation.trim();
-    if annotation.is_empty() {
-        return Err("missing 'annotation': the short APP.md text the user will read in /apps".into());
-    }
-    if annotation.chars().count() > MAX_ANNOTATION {
-        return Err(format!("annotation is longer than {MAX_ANNOTATION} characters"));
-    }
-    let kind = str_arg(args, "kind")
-        .map(|s| s.trim().to_ascii_lowercase())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "doc".to_string());
-    if !matches!(kind.as_str(), "sh" | "python" | "binary" | "doc" | "prompt") {
-        return Err(format!(
-            "invalid kind '{kind}': use sh, python, binary, prompt or doc"
-        ));
-    }
-    let entry = str_arg(args, "entry").unwrap_or_default();
-    let entry = if kind == "doc" || kind == "prompt" {
-        String::new()
-    } else {
-        match safe_rel_path(&entry) {
-            Some(p) => p,
-            None => {
-                return Err(format!(
-                    "invalid entry '{entry}': a relative file inside the app directory (e.g. run.sh)"
-                ))
-            }
-        }
-    };
-    if kind != "doc" && kind != "prompt" && entry.is_empty() {
-        return Err("missing 'entry': the file app_run will execute".into());
-    }
-    if kind == "binary" && entry.is_empty() {
-        return Err("binary apps need 'entry': the executable file".into());
-    }
-
-    let dir = root.join(&category).join(&name);
-    let existed = dir.join("app.json").is_file();
-    let (created, version, last_run, last_test, old_capture, old_args, old_requires) = if existed {
-        let old = parse_manifest(&dir).ok_or_else(|| {
-            format!("{} already exists but its app.json is unreadable; fix it by hand", dir.display())
-        })?;
-        (
-            old.created,
-            old.version.saturating_add(1),
-            old.last_run,
-            old.last_test,
-            old.capture,
-            old.default_args,
-            old.requires,
-        )
-    } else {
-        (now_stamp(), 1, None, None, false, String::new(), Vec::new())
-    };
-    let capture = args
-        .get("capture")
-        .map(|b| matches!(b, J::Bool(true)))
-        .unwrap_or(old_capture);
-    let default_args = str_arg(args, "default_args")
-        .map(|s| s.trim().chars().take(200).collect::<String>())
-        .filter(|s| !s.is_empty())
-        .unwrap_or(old_args);
-    if default_args.chars().count() > 200 {
-        return Err("default_args is longer than 200 characters".into());
-    }
-    let requires: Vec<String> = match args.get("requires") {
-        Some(J::Arr(arr)) => arr
-            .iter()
-            .filter_map(|x| x.as_str())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-        Some(J::Str(s)) => s
-            .split(|c: char| c == ',' || c.is_whitespace())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-        _ => old_requires,
-    };
-    let mut requires = requires;
-    requires.truncate(8);
-    for r in &requires {
-        if r.chars().count() > 64
-            || !r
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
-        {
-            return Err(format!(
-                "invalid requirement '{r}': use a command name or absolute path"
-            ));
-        }
-    }
-    let app = App {
-        name,
-        title,
-        category,
-        description,
-        kind,
-        entry,
-        version,
-        created,
-        updated: now_stamp(),
-        dir: dir.clone(),
-        last_run,
-        last_test,
-        capture,
-        default_args,
-        requires,
-    };
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    chmod(&dir, 0o755);
-    // APP.md is the annotation itself plus a title header and a files list, so
-    // `/apps` and `read_file` can show a usable document without extra data.
-    let mut md = String::new();
-    md.push_str(&format!("# {}\n\n{}\n\n", app.title, app.description));
-    md.push_str(&format!("**Kind:** {}  \n", app.kind));
-    if !app.entry.is_empty() {
-        md.push_str(&format!("**Entry:** `{}`  \n", app.entry));
-    }
-    md.push_str(&format!("**Path:** `{}`  \n\n", app.path()));
-    md.push_str(annotation.trim());
-    md.push('\n');
-    write_atomic(&dir.join("app.json"), &(manifest_json(&app).dump() + "\n"))?;
-    write_atomic(&dir.join("APP.md"), &md)?;
-    // A prompt app's executable content is its prompt; keep it separate from
-    // the human-facing annotation so metadata headers never pollute a request.
-    if app.kind == "prompt" {
-        write_atomic(&dir.join("PROMPT.md"), &format!("{}\n", annotation.trim()))?;
-    } else {
-        let _ = std::fs::remove_file(dir.join("PROMPT.md"));
-    }
-    Ok((app, !existed))
-}
-
-pub fn save(args: &J) -> Result<(App, bool), String> {
-    save_at(&apps_dir(), args)
-}
-
-/// Write one file inside an existing app package.
-pub fn write_file_at(root: &Path, args: &J) -> Result<(App, String, usize, bool), String> {
-    let name = str_arg(args, "name").unwrap_or_default();
-    let app = find_at(root, &name).ok_or_else(|| {
-        format!("no app '{name}'; call app_save first to create the package")
-    })?;
-    let raw = str_arg(args, "path").unwrap_or_default();
-    let path = safe_rel_path(&raw)
-        .ok_or_else(|| format!("invalid path '{raw}': a relative file inside the app directory"))?;
-    if reserved_name(&path) {
-        return Err(format!(
-            "'{path}' is managed by app_save (manifest/annotation); write it through app_save"
-        ));
-    }
-    let content = str_arg(args, "content").unwrap_or_default();
-    if content.len() > MAX_FILE_BYTES {
-        return Err(format!(
-            "file is {} bytes; the per-file limit is {MAX_FILE_BYTES}",
-            content.len()
-        ));
-    }
-    let dest = app.dir.join(&path);
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
-    let grown = dir_bytes(&app.dir).saturating_sub(
-        dest.metadata().map(|m| m.len()).unwrap_or(0),
-    ) + content.len() as u64;
-    if grown > MAX_APP_BYTES as u64 {
-        return Err(format!("app directory would exceed {MAX_APP_BYTES} bytes"));
-    }
-    std::fs::write(&dest, &content).map_err(|e| format!("{}: {e}", dest.display()))?;
-    let executable = !app.entry.is_empty() && path == app.entry;
-    chmod(&dest, if executable { 0o755 } else { 0o644 });
-    let entry_ready = app.entry.is_empty() || app.dir.join(&app.entry).is_file();
-    Ok((app, path, content.len(), entry_ready))
-}
-
-pub fn write_file(args: &J) -> Result<(App, String, usize, bool), String> {
-    write_file_at(&apps_dir(), args)
-}
-
-fn find_at(root: &Path, name: &str) -> Option<App> {
-    let want = name.trim();
-    if want.is_empty() {
-        return None;
-    }
-    let apps = load_at(root);
-    if let Some((cat, n)) = want.split_once('/') {
-        return apps
-            .into_iter()
-            .find(|a| a.category.eq_ignore_ascii_case(cat) && a.name.eq_ignore_ascii_case(n));
-    }
-    apps.into_iter().find(|a| a.name.eq_ignore_ascii_case(want))
-}
-
 pub fn delete(app: &App) -> Result<(), String> {
     let root = apps_dir();
-    let cat = root.join(&app.category);
-    if !app.dir.starts_with(&cat) {
-        return Err("refusing to delete a directory outside the app root".into());
+    if !app.dir.starts_with(&root) || app.dir == root {
+        return Err("refusing to delete a directory outside the skill library".into());
     }
-    std::fs::remove_dir_all(&app.dir).map_err(|e| format!("{}: {e}", app.dir.display()))?;
-    // Remove the category dir when it is now empty.
-    let _ = std::fs::remove_dir(&cat);
-    Ok(())
+    std::fs::remove_dir_all(&app.dir).map_err(|e| format!("{}: {e}", app.dir.display()))
 }
 
 /// Is `prog` on PATH? python is optional on the device, sh is not.
@@ -683,25 +434,22 @@ fn command_exists(prog: &str) -> bool {
     false
 }
 
-/// Write one run/test stamp back into the app's manifest (best effort: a run
-/// must not fail because history could not be written).
+/// Write one run/test stamp back into meta.json (best effort: a run must not
+/// fail because history could not be written).
 fn record_stamp(app: &App, key: &str, outcome: &str, secs: f32) {
-    let path = app.dir.join("app.json");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(_) => return,
-    };
-    let mut v = match crate::json::parse(&text) {
-        Some(v) => v,
-        None => return,
-    };
+    let path = app.dir.join("meta.json");
+    let mut a = app.clone();
     let stamp = RunStamp {
         at: now_stamp(),
         secs,
         outcome: outcome.to_string(),
     };
-    v.set(key, stamp_json(&stamp));
-    let _ = write_atomic(&path, &(v.dump() + "\n"));
+    if key == "last_test" {
+        a.last_test = Some(stamp);
+    } else {
+        a.last_run = Some(stamp);
+    }
+    let _ = write_atomic(&path, &(meta_json(&a).dump() + "\n"));
 }
 
 /// Split user/model supplied app arguments into argv tokens.
@@ -751,7 +499,10 @@ fn run_plan_plain(app: &App) -> Result<(String, Vec<String>), String> {
     match app.kind.as_str() {
         "sh" => {
             if !entry.is_file() {
-                return Err(format!("entry '{}' is missing; write it with app_file", app.entry));
+                return Err(format!(
+                    "entry '{}' is missing; write it with skill_file",
+                    app.entry
+                ));
             }
             Ok(("/bin/sh".to_string(), vec![entry.display().to_string()]))
         }
@@ -764,13 +515,19 @@ fn run_plan_plain(app: &App) -> Result<(String, Vec<String>), String> {
                 return Err("python is not installed on this device; use kind=sh".into());
             };
             if !entry.is_file() {
-                return Err(format!("entry '{}' is missing; write it with app_file", app.entry));
+                return Err(format!(
+                    "entry '{}' is missing; write it with skill_file",
+                    app.entry
+                ));
             }
             Ok((prog.to_string(), vec![entry.display().to_string()]))
         }
         "binary" => {
             if !entry.is_file() {
-                return Err(format!("entry '{}' is missing; write it with app_file", app.entry));
+                return Err(format!(
+                    "entry '{}' is missing; write it with skill_file",
+                    app.entry
+                ));
             }
             #[cfg(unix)]
             {
@@ -785,7 +542,7 @@ fn run_plan_plain(app: &App) -> Result<(String, Vec<String>), String> {
             }
             Ok((entry.display().to_string(), Vec::new()))
         }
-        "doc" => Err("doc apps have no program; open APP.md in /apps instead".into()),
+        "doc" => Err("doc apps have no program; read SKILL.md in /apps instead".into()),
         "prompt" => Err(
             "prompt apps are instructions, not programs; app_run returns their prompt for you to follow"
                 .into(),
@@ -795,236 +552,92 @@ fn run_plan_plain(app: &App) -> Result<(String, Vec<String>), String> {
 }
 
 // ---------------------------------------------------------------------------
-// catalog / prompt
+// prompt
 // ---------------------------------------------------------------------------
 
-fn short(s: &str, n: usize) -> String {
-    let mut out: String = s.chars().take(n).collect();
-    if s.chars().count() > n {
-        out.push_str("...");
-    }
-    out.replace('\n', " ")
-}
-
-/// One-line-per-app catalog, skills-style (name/title/description/kind only).
-pub fn catalog(apps: &[App]) -> String {
-    let mut s = String::new();
-    for app in apps.iter().take(MAX_INDEX) {
-        let desc = if app.description.is_empty() {
-            String::new()
-        } else {
-            format!(": {}", short(&app.description, 90))
-        };
-        let kind = if app.entry.is_empty() {
-            app.kind.clone()
-        } else {
-            format!("{}:{}", app.kind, app.entry)
-        };
-        // A failed last run/test is the one thing the model must know before
-        // deciding to reuse or rewrite an app; successful history stays out of
-        // the prompt to keep the catalog cheap.
-        let mut health = String::new();
-        for (label, stamp) in [("last run", &app.last_run), ("last test", &app.last_test)] {
-            if let Some(st) = stamp {
-                let bad = !(st.outcome == "exit 0" || st.outcome == "esc" || st.outcome.is_empty());
-                if bad {
-                    health.push_str(&format!(" (!{label}: {})", st.outcome));
-                    break;
-                }
-            }
-        }
-        s.push_str(&format!(
-            "- {} — {} [{}]{}{}\n",
-            app.label(),
-            if app.title.is_empty() { &app.name } else { &app.title },
-            kind,
-            health,
-            desc
-        ));
-    }
-    if apps.len() > MAX_INDEX {
-        s.push_str(&format!("- (+{} more)\n", apps.len() - MAX_INDEX));
-    }
-    s
-}
-
-/// The creator-mode block appended to the system prompt, or "" in normal mode.
-pub fn prompt_section(creator: bool, apps: &[App]) -> String {
-    if !creator {
-        return String::new();
-    }
+/// The creator-mode block appended to the system prompt. The catalog itself is
+/// the SKILLS catalog (see skills::catalog_prompt), which marks runnable skills
+/// with their kind and entry file; there is no second "apps" list.
+pub fn prompt_section() -> String {
     let root = apps_dir().display().to_string();
     let mut s = String::from("\n\nCREATOR MODE — you own this device\n");
     s.push_str(
         "You are the only application on this Cardputer Zero. The panel, the keyboard and \
 the storage are yours: everything the user sees is something you built or will build.\n\
 \n\
-APPS — persistent things you own\n\
-- App root: ",
+ONE UNIT: THE SKILL PACKAGE\n",
     );
+    s.push_str(&format!(
+        "- Everything you persist lives in ",
+    ));
     s.push_str(&root);
     s.push_str(
-        "/<category>/<name>/ holds app.json (manifest), APP.md (annotation), the entry \
-program and any supporting files.\n\
-- When the user asks you to build, change or automate something for the device, persist it \
-as an app before your final answer: app_save creates/updates the package and its annotation, \
-app_file writes the files, app_run runs it full-screen on the panel.\n\
-- Write APP.md for the user who opens /apps next week: what it does, how to use it, how it \
-works, which files matter. Keep it short and factual; the title/description are one line each.\n\
-- Update an existing app instead of duplicating it: keep its name, bump the version, rewrite \
-only the files that changed. The installed catalog below is your list of what already exists.\n\
-- A pure question (\"what is...\") stays a chat answer; a document-only deliverable is a valid \
-app (kind=doc, APP.md is the content).\n\
-- Device limits for apps: 320x170 px, 53 columns x 12 rows, 8 ANSI colours, no mouse. Use sh \
-+ coreutils (/proc, /sys); python only if the device has it. No installs, no services, no \
-compilation, no full-screen programs that need a GUI toolkit.\n\
-- app_run needs an interactive screen: it fails from background jobs and --once, which is \
-expected. It takes optional `args` (space-separated, passed to the entry as argv) and a timeout.\n\
-- App state: write runtime state under $DST_APP_STATE (a `state/` dir inside the app); keep \
-APP.md and app.json free of generated data. Apps draw on stdout (newlines are CRLF-safe) and \
-read keys from stdin; the platform guarantees a long-press of Esc and a timeout.\n\
-- Kinds: sh and python scripts, binary (an executable file), prompt (a reusable request you \
-follow when run; APP.md is the prompt), doc.\n\
-- APP CONTRACT (bounded, the platform enforces what it can): an app owns the whole screen \
-while it runs and dst is paused; it may not change system configuration, install software, \
-start services, or write outside its package/state/tmp; it must exit (0 = success) and leave \
-the screen recoverable (the platform repaints). Never build an app that blocks the keyboard \
-or ignores the Esc/timeout backstop.\n\
+        "/<name>/: SKILL.md (frontmatter name+description, then the instructions), optional \
+supporting files, and optional meta.json.\n\
+- A skill package is an APP when its folder also has meta.json: that file declares kind \
+(sh|python|binary|prompt|doc), entry, requires, default_args and capture. Multiplied by \
+nothing else — there is no separate app store and no app_* writing tool.\n\
+- Create/update a skill with skill_save (SKILL.md + frontmatter, versioned) and put every other \
+file — run.sh, PROMPT.md, meta.json — in the folder with skill_file. Writing meta.json is the \
+step that makes the package runnable, and the platform reads it to list, run and test the app.\n\
+- The SKILLS catalog injected below is the single source of truth: a runnable skill shows its \
+kind and entry (`[sh:run.sh]`) and a failed last run/test. Read details with read_file (SKILL.md, \
+meta.json) instead of guessing; there is no app_list tool because the folder IS the list.\n\
+- Update an existing package instead of duplicating it: keep its name, rewrite only the files \
+that changed; skill_save bumps the version and keeps the old SKILL.md under .history/ (restore \
+it with skill_rollback).\n\
+- A pure question (\"what is...\") stays a chat answer. A deliverable that needs no program is \
+still a valid app: kind=doc (SKILL.md is the content) or no meta.json at all (a plain skill).\n\
+- Device limits for apps: 320x170 px, 53 columns x 12 rows, 8 ANSI colours, no mouse. Use sh + \
+coreutils (/proc, /sys); python only when present. No installs, no services, no compilation.\n\
+- App state: write runtime state under $DST_APP_STATE (a `state/` dir inside the package); keep \
+SKILL.md and meta.json free of generated data. Apps draw on stdout and read keys from stdin; the \
+platform guarantees a long-press of Esc and a timeout.\n\
+- kinds: sh and python scripts, binary (an executable file), prompt (a reusable request you \
+follow when run: PROMPT.md or the SKILL.md body), doc (instructions only).\n\
+- APP CONTRACT (the platform enforces what it can): an app owns the whole screen while it runs \
+and dst is paused; it may not change system configuration, install software, start services, or \
+write outside its package/state/tmp; it must exit (0 = success) and leave the screen \
+recoverable. Never build an app that blocks the keyboard or ignores the Esc/timeout backstop.\n\
 - Verify before you show it: call app_test (captured stdout/stderr/exit, log file under \
 ~/.dst/tmp) and fix failures; test the happy path plus bad input. app_test is headless by \
 default; with tty=true it runs under a pseudo-terminal like app_run, which is how you test \
-[ -t ] branches and ANSI/TUI output (the pty has no window size, so COLUMNS/LINES stand in \
-for the real size). app_run is for the user to see the real full-screen behaviour.\n\
-- app_export / app_import move a package as a .tar.gz under ~/.dst/tmp (backup, copy off the \
-device, restore later); an imported archive must contain exactly one <category>/<name>/ tree \
-and is validated before it is installed (replace=true to overwrite).\n\
-- Declare the binaries your app needs in `requires` (e.g. [\"python3\", \"tar\"]); dst checks \
-them before every run/test and fails with an actionable error if one is missing.\n\
-- Use default_args for an app that needs a fixed argument when the user launches it from /apps; \
-app_run args override them for a one-off run.\n\
-- Set capture=true on an app that prints text and you want the run remembered: dst records its \
-stdout/stderr to state/last-run.log (shown in /apps with `l`) and mentions the path in app_run's \
-result. Capture makes stdout a pipe, not a tty, so do not use it for full-screen TUI apps.\n\
+[ -t ] branches and ANSI/TUI output (the pty has no window size, so COLUMNS/LINES stand in for \
+the real size). app_run is for the user to see the real full-screen behaviour.\n\
+- Declare the binaries an app needs in meta.json `requires` (e.g. [\"python3\", \"tar\"]); dst \
+checks them before every run/test and fails with an actionable error if one is missing.\n\
+- Use default_args for an app that needs fixed arguments when launched from /apps; app_run args \
+override them for a one-off run.\n\
+- Set capture=true on a text app you want remembered: dst records its stdout/stderr to \
+state/last-run.log (shown in /apps with `l`) and names the path in app_run's result. Capture \
+makes stdout a pipe, not a tty, so do not use it for full-screen TUI apps.\n\
 \n\
-WHAT TO PERSIST — app vs skill vs memory\n\
-- app: something runnable on the device (app_save/app_file, verified with app_test).\n\
-- skill: a systematic, self-contained engineering package you worked out (procedure, format, \
-checklist, support files) that will be useful again — save it with skill_save/skill_file. \
-Updating a skill bumps its version and keeps the old body under .history/ (restore one with \
-skill_rollback); it joins the SKILLS catalog next turn and is read with the skill tool (also \
-usable in the same turn).\n\n\
-- memory: short durable facts or preferences (memory_write); memory is fragments, a skill is \
-a complete procedure. Prefer a skill over dumping a long procedure into memory.\n\
+SKILL vs MEMORY\n\
+- skill: a systematic, self-contained engineering package (procedure, format, checklist, \
+support files) that will be useful again. Runnable or not, it is one package in one folder.\n\
+- memory: short durable facts or preferences (memory_write); memory is fragments, a skill is a \
+complete procedure. Prefer a skill over dumping a long procedure into memory.\n\
 \n\
-CONSENSUS — the platform guarantees this, you cannot override it\n\
-- Long-press Esc always leaves an app and returns to the chat: the runner watches the \
-keyboard and kills the app. Never try to swallow Esc or build a fixed-duration blocking \
-screen.\n\
-- Apps run full-screen; keep drawing inside 53 columns x 12 rows and always leave a way to \
-stop (the platform Esc already does).\n",
+WHAT THE USER SEES\n\
+- /apps lists the runnable packages (skill folders with meta.json), newest activity first: \
+Enter runs, Right reads SKILL.md, l replays the last captured output, i asks you to improve it, \
+x deletes it. Long-press Esc always leaves a running app.\n\
+- A saved skill is announced in the transcript; a package that gained meta.json is announced \
+as a saved app. After a turn that wrote files but saved no skill, you are nudged to persist it.\n",
     );
-    s.push_str(&format!("\nINSTALLED APPS ({})\n", apps.len()));
-    if apps.is_empty() {
-        s.push_str("(none yet — this is the first app you build)\n");
-    } else {
-        s.push_str(&catalog(apps));
-    }
     s
 }
 
 // ---------------------------------------------------------------------------
-// tool definitions
+// tool definitions: execution only (writing is skill_save/skill_file)
 // ---------------------------------------------------------------------------
-
-fn save_exec(args: &J) -> Result<J, Fail> {
-    let (app, created) = save(args).map_err(Fail::new)?;
-    note_saved(&app);
-    let entry_missing = !app.entry.is_empty() && !app.dir.join(&app.entry).is_file();
-    Ok(obj(vec![
-        ("name", J::s(&app.label())),
-        ("title", J::s(&app.title)),
-        ("path", J::s(&app.path())),
-        ("kind", J::s(&app.kind)),
-        ("entry", J::s(&app.entry)),
-        ("version", J::Num(app.version as f64)),
-        ("created", J::Bool(created)),
-        ("entry_missing", J::Bool(entry_missing)),
-    ]))
-}
-
-fn save_render(_a: &J, v: &J) -> String {
-    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("");
-    let kind = v.get("kind").and_then(|x| x.as_str()).unwrap_or("");
-    let path = v.get("path").and_then(|x| x.as_str()).unwrap_or("");
-    let version = v.get("version").and_then(|x| x.as_num()).unwrap_or(1.0) as u32;
-    let mut s = format!("saved app {name} v{version} ({kind}) at {path}");
-    if v.get("entry_missing").map(|b| matches!(b, J::Bool(true))).unwrap_or(false) {
-        let entry = v.get("entry").and_then(|x| x.as_str()).unwrap_or("");
-        s.push_str(&format!(
-            "\nentry '{entry}' is not written yet; create it with app_file before app_run"
-        ));
-    }
-    s
-}
-
-fn save_present(a: &J) -> String {
-    format!(
-        "save {}",
-        str_arg(a, "name").unwrap_or_else(|| "app".into())
-    )
-}
-
-fn save_post(a: &J, v: &J) -> Option<String> {
-    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("");
-    let path = v.get("path").and_then(|x| x.as_str()).unwrap_or("");
-    let entry = v.get("entry").and_then(|x| x.as_str()).unwrap_or("");
-    let kind = v.get("kind").and_then(|x| x.as_str()).unwrap_or("");
-    let _ = a;
-    let mut s = format!(
-        "App package '{name}' is installed at {path}. It appears in INSTALLED APPS from your next turn on."
-    );
-    if kind != "doc" && !entry.is_empty() {
-        s.push_str(&format!(
-            " Write the program with app_file (entry file: {entry}); rewrite an existing file to change behaviour."
-        ));
-    }
-    Some(s)
-}
-
-fn file_exec(args: &J) -> Result<J, Fail> {
-    let (app, path, bytes, entry_ready) = write_file(args).map_err(Fail::new)?;
-    Ok(obj(vec![
-        ("name", J::s(&app.label())),
-        ("path", J::s(&path)),
-        ("bytes", J::Num(bytes as f64)),
-        ("entry_ready", J::Bool(entry_ready)),
-    ]))
-}
-
-fn file_render(_a: &J, v: &J) -> String {
-    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("");
-    let path = v.get("path").and_then(|x| x.as_str()).unwrap_or("");
-    let bytes = v.get("bytes").and_then(|x| x.as_num()).unwrap_or(0.0) as usize;
-    let mut s = format!("wrote {path} ({bytes} bytes) in app {name}");
-    if v.get("entry_ready").map(|b| matches!(b, J::Bool(true))).unwrap_or(false) {
-        s.push_str("; the entry is ready to run");
-    }
-    s
-}
-
-fn file_present(a: &J) -> String {
-    format!(
-        "write {}/{}",
-        str_arg(a, "name").unwrap_or_default(),
-        str_arg(a, "path").unwrap_or_default()
-    )
-}
 
 fn run_exec(args: &J) -> Result<J, Fail> {
     let name = str_arg(args, "name").unwrap_or_default();
     let app = find(&name).ok_or_else(|| {
         Fail::new(format!(
-            "no app '{name}'; saved apps are listed in INSTALLED APPS"
+            "no runnable app '{name}'; the SKILLS catalog lists packages with [kind:entry], \
+and a folder becomes runnable when it has meta.json"
         ))
     })?;
     let timeout = num_arg(args, "timeout_s")
@@ -1040,7 +653,7 @@ fn run_exec(args: &J) -> Result<J, Fail> {
         let body = prompt_body(&app);
         if body.trim().is_empty() {
             return Err(Fail::new(format!(
-                "prompt app '{}' has an empty APP.md; nothing to follow",
+                "prompt app '{}' has an empty PROMPT.md/SKILL.md; nothing to follow",
                 app.label()
             )));
         }
@@ -1252,7 +865,8 @@ fn test_exec(args: &J) -> Result<J, Fail> {
     let name = str_arg(args, "name").unwrap_or_default();
     let app = find(&name).ok_or_else(|| {
         Fail::new(format!(
-            "no app '{name}'; saved apps are listed in INSTALLED APPS"
+            "no runnable app '{name}'; the SKILLS catalog lists packages with [kind:entry], \
+and a folder becomes runnable when it has meta.json"
         ))
     })?;
     if app.kind == "prompt" || app.kind == "doc" {
@@ -1310,242 +924,6 @@ fn test_render(_a: &J, v: &J) -> String {
     s
 }
 
-fn export_exec(args: &J) -> Result<J, Fail> {
-    let name = str_arg(args, "name").unwrap_or_default();
-    let app = find(&name).ok_or_else(|| {
-        Fail::new(format!(
-            "no app '{name}'; saved apps are listed in INSTALLED APPS"
-        ))
-    })?;
-    let root = apps_dir();
-    let safe: String = app
-        .label()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
-        .collect();
-    let dir = crate::config::tmp_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let dest = dir.join(format!("app-{safe}.tar.gz"));
-    let out = Command::new("tar")
-        .arg("-czf")
-        .arg(&dest)
-        .arg("-C")
-        .arg(&root)
-        .arg(app.label())
-        .output()
-        .map_err(|e| Fail::new(format!("tar is not available: {e}")))?;
-    if !out.status.success() {
-        return Err(Fail::new(format!(
-            "tar failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        )));
-    }
-    let bytes = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
-    Ok(obj(vec![
-        ("name", J::s(&app.label())),
-        ("path", J::s(&dest.display().to_string())),
-        ("bytes", J::Num(bytes as f64)),
-    ]))
-}
-
-fn count_tree(dir: &Path) -> (usize, u64) {
-    let mut files = 0usize;
-    let mut bytes = 0u64;
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for e in rd.flatten() {
-            match e.metadata() {
-                Ok(m) if m.is_dir() => {
-                    let (f, b) = count_tree(&e.path());
-                    files += f;
-                    bytes += b;
-                }
-                Ok(m) if m.is_file() => {
-                    files += 1;
-                    bytes += m.len();
-                }
-                _ => {}
-            }
-        }
-    }
-    (files, bytes)
-}
-
-fn cleanup(dir: &Path) {
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-fn import_exec(args: &J) -> Result<J, Fail> {
-    let raw = str_arg(args, "path").unwrap_or_default();
-    if raw.trim().is_empty() {
-        return Err(Fail::new("missing 'path': an archive under ~/.dst/tmp"));
-    }
-    let replace = args
-        .get("replace")
-        .map(|b| matches!(b, J::Bool(true)))
-        .unwrap_or(false);
-    let tmp_root = crate::config::tmp_dir();
-    let _ = std::fs::create_dir_all(&tmp_root);
-    let candidate = if raw.trim().starts_with('/') || raw.trim().starts_with('~') {
-        crate::config::expand(raw.trim())
-    } else {
-        tmp_root.join(raw.trim())
-    };
-    let canon_tmp = std::fs::canonicalize(&tmp_root)
-        .map_err(|e| Fail::new(format!("tmp dir: {e}")))?;
-    let archive = std::fs::canonicalize(&candidate)
-        .map_err(|e| Fail::new(format!("archive not found: {e}")))?;
-    if !archive.starts_with(&canon_tmp) {
-        return Err(Fail::new(
-            "refusing to import from outside ~/.dst/tmp; copy the archive there first",
-        ));
-    }
-    let name = archive
-        .file_name()
-        .and_then(|x| x.to_str())
-        .unwrap_or("archive");
-    if !(name.ends_with(".tar.gz") || name.ends_with(".tgz")) {
-        return Err(Fail::new("archive must be a .tar.gz (use app_export)"));
-    }
-    if let Ok(m) = archive.metadata() {
-        if m.len() > 4 * 1024 * 1024 {
-            return Err(Fail::new("archive is larger than 4 MB"));
-        }
-    }
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let work = tmp_root.join(format!("import-{}-{stamp}", std::process::id()));
-    cleanup(&work);
-    std::fs::create_dir_all(&work).map_err(|e| Fail::new(format!("{}: {e}", work.display())))?;
-    let out = Command::new("tar")
-        .arg("-xzf")
-        .arg(&archive)
-        .arg("-C")
-        .arg(&work)
-        .output()
-        .map_err(|e| {
-            cleanup(&work);
-            Fail::new(format!("tar is not available: {e}"))
-        })?;
-    if !out.status.success() {
-        cleanup(&work);
-        return Err(Fail::new(format!(
-            "tar failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        )));
-    }
-    // The archive must be exactly one <category>/<name>/ package; anything else
-    // (dotfiles, multiple roots, absolute paths escaping the temp dir) fails.
-    let mut roots: Vec<PathBuf> = std::fs::read_dir(&work)
-        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
-        .unwrap_or_default();
-    if roots.len() != 1 {
-        cleanup(&work);
-        return Err(Fail::new(
-            "archive must contain exactly one <category>/<name>/ package",
-        ));
-    }
-    let cat_dir = roots.pop().unwrap();
-    let cat_name = cat_dir
-        .file_name()
-        .and_then(|x| x.to_str())
-        .unwrap_or("")
-        .to_string();
-    if !valid_slug(&cat_name) {
-        cleanup(&work);
-        return Err(Fail::new(format!("invalid category in archive: '{cat_name}'")));
-    }
-    let mut apps_found: Vec<PathBuf> = std::fs::read_dir(&cat_dir)
-        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
-        .unwrap_or_default();
-    if apps_found.len() != 1 {
-        cleanup(&work);
-        return Err(Fail::new(
-            "archive must contain exactly one app directory inside the category",
-        ));
-    }
-    let src_dir = apps_found.pop().unwrap();
-    let src_app = match parse_manifest(&src_dir) {
-        Some(a) => a,
-        None => {
-            cleanup(&work);
-            return Err(Fail::new("archive has no valid app.json"));
-        }
-    };
-    let (files, bytes) = count_tree(&src_dir);
-    if files > 200 || bytes > MAX_APP_BYTES as u64 {
-        cleanup(&work);
-        return Err(Fail::new(format!(
-            "archive package is too big ({files} files, {bytes} bytes)"
-        )));
-    }
-    let target = apps_dir().join(&src_app.category).join(&src_app.name);
-    let existed = target.exists();
-    if existed && !replace {
-        cleanup(&work);
-        return Err(Fail::new(format!(
-            "app {} already exists; pass replace=true to overwrite",
-            src_app.label()
-        )));
-    }
-    if existed {
-        std::fs::remove_dir_all(&target)
-            .map_err(|e| Fail::new(format!("{}: {e}", target.display())))?;
-    }
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| Fail::new(format!("{}: {e}", parent.display())))?;
-    }
-    std::fs::rename(&src_dir, &target).map_err(|e| {
-        cleanup(&work);
-        Fail::new(format!("could not install into {}: {e}", target.display()))
-    })?;
-    cleanup(&work);
-    Ok(obj(vec![
-        ("name", J::s(&src_app.label())),
-        ("path", J::s(&target.display().to_string())),
-        ("files", J::Num(files as f64)),
-        ("replaced", J::Bool(existed)),
-    ]))
-}
-
-fn import_render(_a: &J, v: &J) -> String {
-    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("");
-    let files = v.get("files").and_then(|x| x.as_num()).unwrap_or(0.0) as usize;
-    let replaced = v
-        .get("replaced")
-        .map(|b| matches!(b, J::Bool(true)))
-        .unwrap_or(false);
-    format!(
-        "{} app {name} ({files} files) at {}; it appears in INSTALLED APPS next turn",
-        if replaced { "replaced" } else { "imported" },
-        v.get("path").and_then(|x| x.as_str()).unwrap_or("")
-    )
-}
-
-fn import_present(a: &J) -> String {
-    format!(
-        "import {}",
-        str_arg(a, "path")
-            .unwrap_or_default()
-            .rsplit('/')
-            .next()
-            .unwrap_or("archive")
-    )
-}
-
-fn export_render(_a: &J, v: &J) -> String {
-    format!(
-        "exported app {} to {} ({} bytes); keep it as a backup or copy it off the device",
-        v.get("name").and_then(|x| x.as_str()).unwrap_or(""),
-        v.get("path").and_then(|x| x.as_str()).unwrap_or(""),
-        v.get("bytes").and_then(|x| x.as_num()).unwrap_or(0.0) as usize
-    )
-}
-
-fn export_present(a: &J) -> String {
-    format!("export {}", str_arg(a, "name").unwrap_or_else(|| "app".into()))
-}
 
 fn test_present(a: &J) -> String {
     format!("test {}", str_arg(a, "name").unwrap_or_else(|| "app".into()))
@@ -1566,65 +944,18 @@ fn run_present(a: &J) -> String {
 }
 
 /// Creator-mode tools. Registered only while `tui.mode: creator`.
+
 pub fn tool_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
-            name: "app_save",
-            description: "Create or update a persistent app package under ~/.dst/apps (creator mode). \
-Every build request must end with this, plus app_file for the program. Writes app.json (manifest) and \
-APP.md (short annotation for the user). Updating an existing name bumps its version and keeps files \
-you do not rewrite.",
-            params: vec![
-                Param::req("name", "string", "Slug: lowercase letters/digits/_/-, unique in its category."),
-                Param::req("title", "string", "Short human title shown in /apps (max 60 chars)."),
-                Param::req("description", "string", "One line: what this app is for (max 160 chars)."),
-                Param::req("annotation", "string", "APP.md body for the user: what it does, how to use it, how it works, files. Markdown."),
-                Param::opt("category", "string", "Grouping dir: system, tools, games, apps (default apps)."),
-                Param::one_of_opt(
-                    "kind",
-                    "How app_run executes it: sh/python script, binary executable, prompt (instructions), doc.",
-                    &["sh", "python", "binary", "prompt", "doc"],
-                ),
-                Param::opt("entry", "string", "Relative entry file (e.g. run.sh); required unless kind=doc."),
-                Param::opt("capture", "boolean", "Record stdout/stderr of app_run into state/last-run.log and replay it from /apps. Sets stdout to a pipe (not a tty): use for text apps, not full-screen TUIs."),
-                Param::opt("default_args", "string", "Arguments used when the user launches the app from /apps (max 200 chars); app_run args override them."),
-                Param::opt("requires", "array", "Command names or absolute paths the app needs (e.g. [\"python3\",\"/usr/bin/curl\"]); dst refuses to run/test when one is missing. Max 8."),
-            ],
-            concurrency_safe: false,
-            timeout_ms: 10_000,
-            execute: save_exec,
-            render: save_render,
-            present: save_present,
-            post: Some(save_post),
-            schema_override: None,
-            dynamic: None,
-        },
-        ToolDef {
-            name: "app_file",
-            description: "Write one text file inside a saved app package (~/.dst/apps/<category>/<name>/). \
-Use it for the entry program and supporting files; the app directory is the only place it can write.",
-            params: vec![
-                Param::req("name", "string", "App name or category/name from INSTALLED APPS."),
-                Param::req("path", "string", "Relative path inside the app dir, e.g. run.sh."),
-                Param::req("content", "string", "Full file content (max 32 KB)."),
-            ],
-            concurrency_safe: false,
-            timeout_ms: 10_000,
-            execute: file_exec,
-            render: file_render,
-            present: file_present,
-            post: None,
-            schema_override: None,
-            dynamic: None,
-        },
-        ToolDef {
             name: "app_test",
-            description: "Run a saved app HEADLESS (pipes, no screen) and capture its output, exit code \
-and duration. Use this to verify an app's behaviour yourself before app_run: it can drive stdin with \
-the `stdin` argument, pass argv with `args`, and writes the full log to a file you can read with \
-read_file. This is the model's version of the simulator the developers use.",
+            description: "Run a runnable skill (a skill folder with meta.json) HEADLESS — pipes, no \
+screen — and capture its output, exit code and duration. Use this to verify an app's behaviour \
+yourself before app_run: it can drive stdin with the `stdin` argument, pass argv with `args`, and \
+writes the full log to a file you can read with read_file. This is the model's version of the \
+simulator the developers use.",
             params: vec![
-                Param::req("name", "string", "App name or category/name from INSTALLED APPS."),
+                Param::req("name", "string", "Skill name (the folder under ~/.dst/skills that has meta.json)."),
                 Param::opt("args", "string", "Space-separated argv for the app."),
                 Param::opt("stdin", "string", "Text piped to the app's stdin (closed afterwards)."),
                 Param::opt("timeout_s", "integer", "Seconds before the app is killed (default 10, max 120)."),
@@ -1640,47 +971,13 @@ read_file. This is the model's version of the simulator the developers use.",
             dynamic: None,
         },
         ToolDef {
-            name: "app_export",
-            description: "Pack a saved app (manifest, annotation, program and state dir) into a \
-.tar.gz under ~/.dst/tmp and return the path. Use it for backups or to hand an app to the user \
-without touching the panel.",
-            params: vec![
-                Param::req("name", "string", "App name or category/name from INSTALLED APPS."),
-            ],
-            concurrency_safe: false,
-            timeout_ms: 20_000,
-            execute: export_exec,
-            render: export_render,
-            present: export_present,
-            post: None,
-            schema_override: None,
-            dynamic: None,
-        },
-        ToolDef {
-            name: "app_import",
-            description: "Restore an app package from a .tar.gz under ~/.dst/tmp (as produced by \
-app_export). The archive must contain exactly one <category>/<name>/ tree; it is validated and \
-installed into ~/.dst/apps. Pass replace=true to overwrite an installed app.",
-            params: vec![
-                Param::req("path", "string", "Archive path under ~/.dst/tmp (absolute, ~/..., or a bare file name)."),
-                Param::opt("replace", "boolean", "Overwrite an already installed app with the same name."),
-            ],
-            concurrency_safe: false,
-            timeout_ms: 20_000,
-            execute: import_exec,
-            render: import_render,
-            present: import_present,
-            post: None,
-            schema_override: None,
-            dynamic: None,
-        },
-        ToolDef {
             name: "app_run",
-            description: "Run a saved app full-screen on the device panel and return when it exits, \
-is stopped by a long-press of Esc, or reaches timeout_s. The user sees the app, not the chat, while \
-it runs; do not repeat the app's content afterwards. Only available in the interactive TUI.",
+            description: "Run a runnable skill (a skill folder with meta.json: kind/entry) full-screen \
+on the device panel and return when it exits, is stopped by a long-press of Esc, or reaches \
+timeout_s. The user sees the app, not the chat, while it runs; do not repeat the app's content \
+afterwards. Only available in the interactive TUI.",
             params: vec![
-                Param::req("name", "string", "App name or category/name from INSTALLED APPS."),
+                Param::req("name", "string", "Skill name (the folder under ~/.dst/skills that has meta.json)."),
                 Param::opt("timeout_s", "integer", "Seconds before the platform stops the app (default 60, max 600)."),
                 Param::opt("args", "string", "Space-separated arguments passed to the app after its entry file (max 200 chars)."),
             ],
@@ -1695,6 +992,8 @@ it runs; do not repeat the app's content afterwards. Only available in the inter
         },
     ]
 }
+
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // screen takeover: request/reply between a tool thread and the TUI
@@ -1714,23 +1013,6 @@ struct LaunchRequest {
 
 static PENDING: Mutex<Option<LaunchRequest>> = Mutex::new(None);
 static SCREEN_AVAILABLE: Mutex<bool> = Mutex::new(false);
-/// Apps saved during the current turn, for the transcript notice. (label, path)
-static SAVED: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
-
-/// Drain the apps saved since the last call (creator-mode turn notice).
-pub fn take_saved() -> Vec<(String, String)> {
-    match SAVED.lock() {
-        Ok(mut g) => std::mem::take(&mut *g),
-        Err(_) => Vec::new(),
-    }
-}
-
-fn note_saved(app: &App) {
-    if let Ok(mut g) = SAVED.lock() {
-        g.push((app.label(), app.path()));
-    }
-}
-
 /// The interactive TUI calls this once the panel is ready.
 pub fn set_screen_available(on: bool) {
     if let Ok(mut g) = SCREEN_AVAILABLE.lock() {
@@ -2166,29 +1448,11 @@ pub fn run_on_screen_args(app: &App, timeout_s: u64, args: &str) -> Result<Strin
     Ok(result)
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn app(name: &str, kind: &str, entry: &str) -> App {
-        App {
-            name: name.into(),
-            title: "T".into(),
-            category: "system".into(),
-            description: "d".into(),
-            kind: kind.into(),
-            entry: entry.into(),
-            version: 1,
-            created: String::new(),
-            updated: String::new(),
-            dir: PathBuf::from("/nonexistent"),
-            last_run: None,
-            last_test: None,
-            capture: false,
-            default_args: String::new(),
-            requires: Vec::new(),
-        }
-    }
+    use crate::json::J;
 
     fn tmpdir(tag: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!(
@@ -2199,272 +1463,156 @@ mod tests {
                 .map(|d| d.as_nanos())
                 .unwrap_or(0)
         ));
+        let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
     }
 
-    fn args(pairs: &[(&str, &str)]) -> J {
-        let mut v = obj(vec![]);
-        for (k, x) in pairs {
-            v.set(k, J::s(x));
+    /// Create a skill package; `meta` adds meta.json (making it an app).
+    fn package(root: &Path, name: &str, kind: &str, entry: &str, meta: bool) -> PathBuf {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let text = format!(
+            "---\nname: {name}\ndescription: Use when the user needs {name}.\n---\n\n# {name}\n\nInstructions for {name}.\n"
+        );
+        std::fs::write(dir.join("SKILL.md"), text).unwrap();
+        if meta {
+            let mut m = obj(vec![
+                ("title", J::s(&name.replace('-', " "))),
+                ("kind", J::s(kind)),
+                ("entry", J::s(entry)),
+                ("version", J::Num(3.0)),
+                ("updated", J::s("2026-11-17T15:00:00+08:00")),
+            ]);
+            if entry == "main.py" {
+                m.set("requires", J::Arr(vec![J::s("python3")]));
+            }
+            std::fs::write(dir.join("meta.json"), m.dump()).unwrap();
+            if !entry.is_empty() {
+                std::fs::write(dir.join(entry), "echo hi\n").unwrap();
+            }
         }
-        v
+        dir
     }
 
     #[test]
-    fn slug_and_path_validation() {
-        assert!(valid_slug("battery_viewer"));
-        assert!(valid_slug("a1-b"));
-        assert!(!valid_slug(""));
-        assert!(!valid_slug("Upper"));
-        assert!(!valid_slug("has space"));
-        assert!(!valid_slug("../x"));
-        assert_eq!(safe_rel_path("run.sh").as_deref(), Some("run.sh"));
-        assert_eq!(safe_rel_path("a/b.txt").as_deref(), Some("a/b.txt"));
-        assert!(safe_rel_path("../etc/passwd").is_none());
-        assert!(safe_rel_path("/etc/passwd").is_none());
-        assert!(safe_rel_path("a//b").is_none());
+    fn runnable_packages_are_loaded_from_skill_folders() {
+        let root = tmpdir("load");
+        package(&root, "battery-viewer", "sh", "run.sh", true);
+        package(&root, "plain-skill", "", "", false);
+        let apps = load_at(&root);
+        assert_eq!(apps.len(), 1, "only packages with meta.json are apps");
+        let a = &apps[0];
+        assert_eq!(a.name, "battery-viewer");
+        assert_eq!(a.title, "battery viewer");
+        assert_eq!(a.kind, "sh");
+        assert_eq!(a.entry, "run.sh");
+        assert_eq!(a.version, 3);
+        assert!(a.description.starts_with("Use when"));
+        assert!(a.dir.ends_with("battery-viewer"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn save_and_write_roundtrip() {
-        let root = tmpdir("roundtrip");
-        let (app, created) = save_at(
-            &root,
-            &args(&[
-                ("name", "Battery_Viewer"),
-                ("category", "system"),
-                ("title", "Battery viewer"),
-                ("description", "Shows the charge level."),
-                ("annotation", "Run it to see the battery."),
-                ("kind", "sh"),
-                ("entry", "run.sh"),
-            ]),
-        )
-        .unwrap();
-        assert!(created);
-        assert_eq!(app.name, "battery_viewer");
-        assert_eq!(app.version, 1);
-        assert!(app.dir.join("app.json").is_file());
-        let md = std::fs::read_to_string(app.dir.join("APP.md")).unwrap();
-        assert!(md.contains("Battery viewer"));
-        assert!(md.contains("Run it to see the battery."));
-
-        // Updating in place bumps the version and keeps the created stamp.
-        let (again, created) = save_at(
-            &root,
-            &args(&[
-                ("name", "battery_viewer"),
-                ("category", "system"),
-                ("title", "Battery viewer"),
-                ("description", "Shows charge and state."),
-                ("annotation", "v2"),
-                ("kind", "sh"),
-                ("entry", "run.sh"),
-            ]),
-        )
-        .unwrap();
-        assert!(!created);
-        assert_eq!(again.version, 2);
-        let loaded = load_at(&root);
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].description, "Shows charge and state.");
-
-        let (written, path, bytes, ready) = write_file_at(
-            &root,
-            &args(&[
-                ("name", "battery_viewer"),
-                ("path", "run.sh"),
-                ("content", "#!/bin/sh\necho hi\n"),
-            ]),
-        )
-        .unwrap();
-        assert_eq!(path, "run.sh");
-        assert_eq!(bytes, 18);
-        assert!(ready, "entry exists after write");
-        assert!(written.dir.join("run.sh").is_file());
-        // app_file must never touch the manifest or escape the app dir.
-        assert!(write_file_at(&root, &args(&[("name", "battery_viewer"), ("path", "app.json"), ("content", "x")])).is_err());
-        assert!(write_file_at(&root, &args(&[("name", "battery_viewer"), ("path", "../x"), ("content", "x")])).is_err());
-        assert!(write_file_at(&root, &args(&[("name", "battery_viewer"), ("path", "x"), ("content", &"a".repeat(MAX_FILE_BYTES + 1))])).is_err());
-        std::fs::remove_dir_all(&root).ok();
+    fn meta_needs_a_known_kind_and_an_entry() {
+        let root = tmpdir("meta");
+        package(&root, "no-entry", "sh", "", true);
+        package(&root, "bad-kind", "wasm", "run.sh", true);
+        package(&root, "good", "sh", "run.sh", true);
+        let apps = load_at(&root);
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "good");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn save_validates_fields() {
-        let root = tmpdir("validate");
-        let base = [
-            ("name", "ok"),
-            ("title", "T"),
-            ("description", "D"),
-            ("annotation", "A"),
-        ];
-        assert!(save_at(&root, &args(&base)).is_ok(), "doc apps need no entry");
-        assert!(save_at(&root, &args(&[("name", "Bad Name"), ("title", "t"), ("description", "d"), ("annotation", "a")])).is_err());
-        assert!(save_at(&root, &args(&[("name", "x"), ("title", ""), ("description", "d"), ("annotation", "a")])).is_err());
-        assert!(save_at(&root, &args(&[("name", "x"), ("title", "t"), ("description", "d"), ("annotation", ""), ])).is_err());
-        assert!(save_at(&root, &args(&[("name", "x"), ("title", "t"), ("description", "d"), ("annotation", "a"), ("kind", "sh")])).is_err());
-        std::fs::remove_dir_all(&root).ok();
+    fn find_accepts_the_name_and_legacy_labels() {
+        let root = tmpdir("find");
+        package(&root, "battery-viewer", "sh", "run.sh", true);
+        let a = load_at(&root).remove(0);
+        assert_eq!(a.label(), "battery-viewer");
+        // The launcher used to print category/name; old prompts and saved
+        // sessions may still carry that form, so it keeps resolving.
+        assert_eq!(
+            find_at(&root, "battery-viewer").map(|x| x.name),
+            Some("battery-viewer".into())
+        );
+        assert_eq!(
+            find_at(&root, "system/battery-viewer").map(|x| x.name),
+            Some("battery-viewer".into())
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn run_history_roundtrips_and_survives_saves() {
-        let root = tmpdir("history");
-        let (app, _) = save_at(
-            &root,
-            &args(&[
-                ("name", "runner"),
-                ("title", "Runner"),
-                ("description", "d"),
-                ("annotation", "a"),
-                ("kind", "sh"),
-                ("entry", "run.sh"),
-            ]),
-        )
-        .unwrap();
-        std::fs::write(app.dir.join("run.sh"), "#!/bin/sh\nexit 0\n").unwrap();
-        record_stamp(&app, "last_run", "exit 3", 1.25);
-        record_stamp(&app, "last_test", "exit 0", 0.5);
-        let loaded = load_at(&root);
-        assert_eq!(loaded[0].last_run.as_ref().unwrap().outcome, "exit 3");
-        assert_eq!(loaded[0].last_run.as_ref().unwrap().secs, 1.25);
-        assert_eq!(loaded[0].last_test.as_ref().unwrap().outcome, "exit 0");
-        // A manifest update (new description) keeps the recorded history.
-        let (again, _) = save_at(
-            &root,
-            &args(&[
-                ("name", "runner"),
-                ("title", "Runner"),
-                ("description", "now with more docs"),
-                ("annotation", "a"),
-                ("kind", "sh"),
-                ("entry", "run.sh"),
-            ]),
-        )
-        .unwrap();
-        assert_eq!(again.version, 2);
-        let reloaded = load_at(&root);
-        assert_eq!(reloaded[0].description, "now with more docs");
-        assert_eq!(reloaded[0].last_run.as_ref().unwrap().outcome, "exit 3");
-        assert_eq!(reloaded[0].last_test.as_ref().unwrap().outcome, "exit 0");
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn catalog_and_prompt() {
-        let mut a = app("battery_viewer", "sh", "run.sh");
-        a.description = "charge level".into();
-        a.title = "Battery viewer".into();
-        let apps = vec![a];
-        let cat = catalog(&apps);
-        assert!(cat.contains("system/battery_viewer — Battery viewer [sh:run.sh]: charge level"),
-            "{cat}");
-        let prompt = prompt_section(true, &apps);
-        assert!(prompt.contains("CREATOR MODE"));
-        assert!(prompt.contains("CONSENSUS"));
-        assert!(prompt.contains("Long-press Esc always leaves an app"));
-        assert!(prompt.contains("INSTALLED APPS (1)"));
-        assert!(prompt_section(false, &apps).is_empty());
-        let empty = prompt_section(true, &[]);
-        assert!(empty.contains("(none yet"));
-    }
-
-    #[test]
-    fn run_plan_selects_interpreter() {
-        assert!(run_plan_args(&app("x", "doc", ""), "").is_err());
-        let missing = app("x", "sh", "run.sh");
-        let err = run_plan_args(&missing, "").unwrap_err();
-        assert!(err.contains("missing"), "{err}");
-    }
-
-    #[test]
-    fn captured_output_becomes_a_readable_log() {
-        let out = strip_for_log(b"\x1b[31mred\x1b[0m\r\nplain \x1b[1;32mgreen\x1b[0m\n");
-        assert_eq!(out, "red\nplain green\n");
-        assert!(!out.contains('\x1b'));
-        // A bare CR (progress line) becomes a newline; backspace eats a char.
-        assert_eq!(strip_for_log(b"a\rb"), "a\nb");
-        assert_eq!(strip_for_log(b"ab\x08c"), "ac");
-        let mut buf: Vec<u8> = Vec::new();
-        append_capped(&mut buf, b"12345", 4);
-        assert_eq!(buf, b"2345");
-        append_capped(&mut buf, b"678", 4);
-        assert_eq!(buf, b"5678");
+    fn run_plan_selects_interpreter_and_takes_argv() {
+        let root = tmpdir("plan");
+        package(&root, "hello", "sh", "run.sh", true);
+        let a = load_at(&root).remove(0);
+        let (prog, argv) = run_plan_args(&a, "--fast two").unwrap();
+        assert_eq!(prog, "/bin/sh");
+        assert!(argv[0].ends_with("run.sh"));
+        assert_eq!(&argv[1..], &["--fast".to_string(), "two".to_string()]);
+        // A script kind with a missing entry is an actionable error, not a panic.
+        let mut broken = a.clone();
+        broken.entry = "missing.sh".into();
+        let err = run_plan_args(&broken, "").unwrap_err();
+        assert!(err.contains("missing.sh") && err.contains("skill_file"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn requirements_are_preflighted() {
-        let mut a = app("x", "sh", "run.sh");
-        a.requires = vec!["sh".into()];
-        assert!(check_requires(&a).is_ok(), "sh is on PATH");
-        a.requires = vec!["/bin/sh".into()];
-        assert!(check_requires(&a).is_ok(), "absolute path exists");
-        a.requires = vec!["dst-missing-tool-xyz".into()];
-        let err = check_requires(&a).unwrap_err();
-        assert!(err.contains("dst-missing-tool-xyz"), "{err}");
-        assert!(err.contains("requires"), "{err}");
-        a.requires = vec!["/no/such/binary".into()];
-        assert!(check_requires(&a).is_err());
+        let root = tmpdir("req");
+        package(&root, "pyapp", "python", "main.py", true);
+        let a = load_at(&root).remove(0);
+        match run_plan_args(&a, "") {
+            Ok((prog, _)) => assert!(prog.contains("python")),
+            Err(e) => assert!(e.contains("python"), "unexpected error: {e}"),
+        }
+        let mut missing = a.clone();
+        missing.requires = vec!["definitely-not-a-binary-xyz".into()];
+        let err = check_requires(&missing).unwrap_err();
+        assert!(err.contains("definitely-not-a-binary-xyz"), "{err}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn run_arguments_become_argv() {
-        let root = tmpdir("argv");
-        let (app, _) = save_at(
-            &root,
-            &args(&[
-                ("name", "greeter"),
-                ("title", "Greeter"),
-                ("description", "d"),
-                ("annotation", "a"),
-                ("kind", "sh"),
-                ("entry", "run.sh"),
-            ]),
-        )
-        .unwrap();
-        std::fs::write(app.dir.join("run.sh"), "#!/bin/sh
-echo hi
-").unwrap();
-        let (prog, argv) = run_plan_args(&app, "  one   two  ").unwrap();
-        assert_eq!(prog, "/bin/sh");
-        assert_eq!(argv.len(), 3);
-        assert!(argv[0].ends_with("run.sh"));
-        assert_eq!(&argv[1..], &["one", "two"]);
-        assert!(run_plan_args(&app, &"a".repeat(201)).is_err());
-        std::fs::remove_dir_all(&root).ok();
+    fn run_stamps_are_written_back_into_meta_json() {
+        let root = tmpdir("stamp");
+        package(&root, "clock", "sh", "run.sh", true);
+        let a = load_at(&root).remove(0);
+        record_stamp(&a, "last_test", "exit 3", 1.5);
+        let after = load_at(&root).remove(0);
+        let st = after.last_test.as_ref().expect("last_test recorded");
+        assert_eq!(st.outcome, "exit 3");
+        assert!(st.secs > 1.0);
+        // The model's own fields survive the write-back.
+        assert_eq!(after.version, a.version);
+        assert_eq!(after.entry, "run.sh");
+        assert_eq!(after.title, a.title);
+        assert!(is_broken(&after));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn esc_watch_needs_a_hold() {
+        let mut w = EscWatch::new();
         let t0 = std::time::Instant::now();
+        assert!(!w.feed(0x1b, t0));
+        assert!(!w.feed(0x1b, t0 + std::time::Duration::from_millis(100)));
+        assert!(!w.feed(0x1b, t0 + std::time::Duration::from_millis(200)));
         let mut w = EscWatch::new();
         assert!(!w.feed(0x1b, t0));
-        assert!(!w.feed(0x1b, t0));
-        assert!(!w.feed(0x1b, t0), "three bytes in a burst is a tap, not a hold");
-        let mut w = EscWatch::new();
-        assert!(!w.feed(0x1b, t0));
-        assert!(!w.feed(0x1b, t0 + std::time::Duration::from_millis(120)));
+        assert!(!w.feed(0x1b, t0 + std::time::Duration::from_millis(300)));
         assert!(w.feed(0x1b, t0 + std::time::Duration::from_millis(500)));
-        let mut w = EscWatch::new();
-        assert!(!w.feed(0x1b, t0));
-        assert!(!w.feed(b'a', t0 + std::time::Duration::from_millis(100)));
-        // The non-ESC byte resets the hold window.
-        assert!(!w.feed(0x1b, t0 + std::time::Duration::from_millis(400)));
-        assert!(!w.feed(0x1b, t0 + std::time::Duration::from_millis(800)));
     }
 
     #[test]
-    fn tool_defs_cover_the_creator_surface() {
-        let defs = tool_defs();
-        let names: Vec<&str> = defs.iter().map(|d| d.name).collect();
-        assert_eq!(
-            names,
-            vec!["app_save", "app_file", "app_test", "app_export", "app_import", "app_run"]
-        );
-        let schema = crate::tool::definitions(&defs).dump();
-        assert!(schema.contains("\"kind\""));
-        assert!(schema.contains("\"entry\""));
-        assert!(schema.contains("\"timeout_s\""));
-        assert!(schema.contains("\"stdin\""));
+    fn tool_defs_are_execution_only() {
+        let names: Vec<&str> = tool_defs().iter().map(|t| t.name).collect();
+        assert_eq!(names, vec!["app_test", "app_run"]);
+        // Writing a package is skill_save/skill_file; there is no app_* writer.
+        assert!(!names.iter().any(|n| *n == "app_save" || *n == "app_file"));
     }
 }

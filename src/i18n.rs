@@ -55,6 +55,31 @@ pub fn code() -> &'static str {
     }
 }
 
+/// English name of the current UI language: the system prompt tells the model
+/// which language to answer in, so the name has to be unambiguous.
+pub fn language_name() -> &'static str {
+    match lang() {
+        Lang::En => "English",
+        Lang::Zh => "Simplified Chinese",
+        Lang::Es => "Spanish",
+        Lang::Ja => "Japanese",
+        Lang::De => "German",
+        Lang::It => "Italian",
+    }
+}
+
+/// Native spelling of the current UI language (what the user sees in /config).
+pub fn language_native() -> &'static str {
+    match lang() {
+        Lang::En => "English",
+        Lang::Zh => "简体中文",
+        Lang::Es => "Español",
+        Lang::Ja => "日本語",
+        Lang::De => "Deutsch",
+        Lang::It => "Italiano",
+    }
+}
+
 /// Language codes in the order `/config` cycles them.
 pub const CODES: &[&str] = &["en", "zh", "es", "ja", "de", "it"];
 
@@ -370,11 +395,11 @@ const EN: &[(&str, &str)] = &[
     ("apps_launching", "app {} on the screen"),
     ("creator_hint", "creator · {} apps · /apps · hold Esc"),
     ("creator_hint_broken", "creator · {} apps · {}! · /apps · hold Esc"),
-    ("app_saved_notice", "saved app {}"),
+    ("app_saved_notice", "saved app {} (runnable skill)"),
     ("ui_skill_saved", "saved skill {} v{}"),
     ("apps_prompt_run", "prompt app {}"),
     ("apps_prompt_empty", "prompt app {} has no instructions"),
-    ("creator_nudge", "creator: files changed but no app saved — app_save keeps this work"),
+    ("creator_nudge", "creator: files changed but no package saved — skill_save keeps it"),
     ("apps_title", "Apps"),
     ("apps_hint", "↑↓·Enter run·→ read·l log·/ find·i fix·x del·Esc"),
     ("apps_version", "version: {}"),
@@ -716,7 +741,7 @@ const ZH: &[(&str, &str)] = &[
     ("ui_skill_saved", "已保存技能 {} v{}"),
     ("apps_prompt_run", "提示词应用 {}"),
     ("apps_prompt_empty", "提示词应用 {} 没有说明内容"),
-    ("creator_nudge", "创作者: 本轮改了文件但没有保存应用 — 用 app_save 长期保留"),
+    ("creator_nudge", "创作者: 改了文件但没存包 — 用 skill_save 保留"),
     ("apps_title", "应用"),
     ("apps_hint", "↑↓·Enter 运行·→ 阅读·l 日志·/ 查找·i 改进·x 删·Esc"),
     ("apps_version", "版本: {}"),
@@ -1057,7 +1082,7 @@ const ES: &[(&str, &str)] = &[
     ("ui_skill_saved", "skill {} guardada v{}"),
     ("apps_prompt_run", "app de prompt {}"),
     ("apps_prompt_empty", "la app de prompt {} no tiene instrucciones"),
-    ("creator_nudge", "creator: se cambiaron archivos sin guardar app — usa app_save"),
+    ("creator_nudge", "creator: archivos cambiados sin guardar paquete — usa skill_save"),
     ("apps_title", "Apps"),
     ("apps_hint", "↑↓·Enter·→ leer·l log·/ buscar·i mejora·x borrar·Esc"),
     ("apps_version", "versión: {}"),
@@ -1399,7 +1424,7 @@ const JA: &[(&str, &str)] = &[
     ("ui_skill_saved", "スキル {} を保存 v{}"),
     ("apps_prompt_run", "プロンプトアプリ {}"),
     ("apps_prompt_empty", "プロンプトアプリ {} に指示がありません"),
-    ("creator_nudge", "クリエイター: ファイル変更をアプリ未保存 — app_save で残す"),
+    ("creator_nudge", "クリエイター: ファイル変更をパッケージ未保存 — skill_save"),
     ("apps_title", "アプリ"),
     ("apps_hint", "↑↓·Enter 実行·→ 読む·l ログ·/ 検索·i 改善·x 削除·Esc"),
     ("apps_version", "バージョン: {}"),
@@ -1741,7 +1766,7 @@ const DE: &[(&str, &str)] = &[
     ("ui_skill_saved", "Skill {} gespeichert v{}"),
     ("apps_prompt_run", "Prompt-App {}"),
     ("apps_prompt_empty", "Prompt-App {} hat keine Anweisungen"),
-    ("creator_nudge", "Creator: Dateien geändert, keine App gespeichert — app_save"),
+    ("creator_nudge", "Creator: Dateien geändert, kein Paket gespeichert — skill_save"),
     ("apps_title", "Apps"),
     ("apps_hint", "↑↓·Enter·→ lesen·l Log·/ suchen·i fixen·x löschen·Esc"),
     ("apps_version", "Version: {}"),
@@ -2083,7 +2108,7 @@ const IT: &[(&str, &str)] = &[
     ("ui_skill_saved", "skill {} salvata v{}"),
     ("apps_prompt_run", "app prompt {}"),
     ("apps_prompt_empty", "l'app prompt {} non ha istruzioni"),
-    ("creator_nudge", "creator: file modificati senza app — usa app_save"),
+    ("creator_nudge", "creator: file modificati senza pacchetto — usa skill_save"),
     ("apps_title", "App"),
     ("apps_hint", "↑↓·Enter·→ leggi·l log·/ cerca·i migli·x elimina·Esc"),
     ("apps_version", "versione: {}"),

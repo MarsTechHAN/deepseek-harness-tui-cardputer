@@ -59,6 +59,9 @@ pub struct Scr {
     busy: bool,
     /// Tab was pressed while busy: start recording once the turn ends.
     voice_pending: bool,
+    /// A recorder already opened by the busy screen when Tab interrupted the
+    /// turn: the mic is live before the turn unwinds, so no words are lost.
+    pending_rec: Option<crate::voice::Recorder>,
     /// Full-screen QR overlay (login).
     qr: Option<Vec<String>>,
     /// Whether speech (ASR/TTS) is available for the current endpoint.
@@ -95,6 +98,9 @@ pub struct Scr {
     splash_done: bool,
     /// Live line above the prompt: (1 = thinking, 2 = streaming tail, text).
     live: Option<(u8, String)>,
+    /// Progress line from the `state_report` tool, pinned to the top row until
+    /// the next transcript line arrives.
+    state_line: Option<String>,
     /// Strict-mode permission pop-up.
     approval: Option<ApprovalView>,
     /// Creator mode is on: idle hint, app manager and system prompt follow it.
@@ -111,14 +117,18 @@ pub struct Scr {
     prompt_label: Option<String>,
     /// Tool names called during the current turn (creator-mode nudge).
     turn_tools: Vec<String>,
+    /// Bytes of a key sequence read while classifying it but not consumed by
+    /// it; the next key read returns them first, so the legacy per-byte ESC
+    /// handlers keep working next to the central PageUp/PageDown decoding.
+    pending: std::cell::RefCell<std::collections::VecDeque<u8>>,
     /// Messages produced by background watchers: (model text, transcript label).
     auto_queue: Vec<(String, String)>,
     /// Label for the auto message edit() is about to return.
     auto_label: Option<String>,
     /// Last bare-Esc instant, for the double-Esc rewind gesture.
     last_esc: Option<std::time::Instant>,
-    /// Recent tool outputs (name, content, is_error, seconds), for CtrlO.
-    tool_log: Vec<(String, String, bool, f32)>,
+    /// Recent tool calls (name, args, content, is_error, seconds), for CtrlO.
+    tool_log: Vec<ToolLogEntry>,
     /// Raw watcher lines waiting for the next auto-turn window.
     watch_buffer: Vec<(String, String)>,
     /// Last time a watcher turn was triggered (rate limit).
@@ -130,6 +140,17 @@ pub struct Scr {
     /// Draft preserved while browsing history.
     hist_draft: String,
     on_tick: Option<Box<dyn FnMut(&mut Scr)>>,
+}
+
+/// One recorded tool call for the CtrlO viewer: the expanded arguments and the
+/// settled output are kept together so a past call can be re-read in full.
+#[derive(Clone)]
+struct ToolLogEntry {
+    name: String,
+    args: String,
+    content: String,
+    is_error: bool,
+    secs: f32,
 }
 
 /// Full-screen strict-mode confirmation panel.
@@ -148,10 +169,90 @@ pub const K_DIM: u8 = 5;
 pub const K_ART: u8 = 6;
 pub const K_CODE: u8 = 7;
 pub const K_HEAD: u8 = 8;
+pub const K_STATE: u8 = 9;
 
 /// 320 px / 6 px per cell. The TUI only ever runs on this panel, so the wrap
 /// width is fixed here rather than trusted from the pty.
 const PANEL_COLS: usize = 53;
+
+/// Control bytes used for PageUp/PageDown: the device sends them as CSI 5~/6~
+/// (fn+L / fn+M), so a single-byte code lets every screen match them without
+/// its own sequence parser. Ctrl-K/Ctrl-L are unused by dst and map here too.
+pub const KEY_PGUP: u8 = 0x0b;
+pub const KEY_PGDN: u8 = 0x0c;
+
+/// One decoded key. The panel's keyboard sends fn+F/X/Z/C as arrow keys and
+/// fn+L/M as PageUp/PageDown; decoding them in one place keeps the transcript,
+/// menus and the busy screen consistent.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KeyEvent {
+    Char(u8),
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Delete,
+    /// Shift+Enter / Alt+Enter: submit without the palette.
+    ShiftEnter,
+    /// A lone Esc (cancel / dismiss).
+    Esc,
+}
+
+/// What followed an already-consumed Esc byte.
+enum EscChunk {
+    /// Nothing: a bare Esc keypress.
+    Bare,
+    /// Esc + one plain byte (Alt+<key>).
+    Alt(u8),
+    /// A CSI/SS3 sequence: every byte that followed Esc, and the decoded key
+    /// when the sequence is one dst knows.
+    Seq(Vec<u8>, Option<KeyEvent>),
+}
+
+/// Decode a CSI/SS3 sequence body (`params` includes the final byte).
+fn decode_seq(params: &[u8]) -> Option<KeyEvent> {
+    let last = *params.last()?;
+    let nums: Vec<u32> = params[..params.len().saturating_sub(1)]
+        .split(|c| *c == b';')
+        .filter(|seg| !seg.is_empty())
+        .map(|seg| {
+            std::str::from_utf8(seg)
+                .ok()
+                .and_then(|t| t.parse::<u32>().ok())
+                .unwrap_or(0)
+        })
+        .collect();
+    let first = nums.first().copied().unwrap_or(0);
+    match last {
+        b'A' => Some(KeyEvent::Up),
+        b'B' => Some(KeyEvent::Down),
+        b'C' => Some(KeyEvent::Right),
+        b'D' => Some(KeyEvent::Left),
+        b'H' => Some(KeyEvent::Home),
+        b'F' => Some(KeyEvent::End),
+        b'~' => match first {
+            1 | 7 => Some(KeyEvent::Home),
+            4 | 8 => Some(KeyEvent::End),
+            5 => Some(KeyEvent::PageUp),
+            6 => Some(KeyEvent::PageDown),
+            3 => Some(KeyEvent::Delete),
+            _ => None,
+        },
+        b'u' => match first {
+            13 => Some(KeyEvent::ShiftEnter),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Icon in front of the `state_report` progress line. A guillemet is in every
+/// font the panel carries (Terminus + CJK fallback), unlike clock glyphs.
+const STATE_ICON: &str = "\u{00bb}";
 
 /// Retained transcript lines. The device has 512 MB and a turn can emit
 /// hundreds of tool result lines; an unbounded `Vec` was the largest avoidable
@@ -199,6 +300,7 @@ impl Scr {
             quit: false,
             busy: false,
             voice_pending: false,
+            pending_rec: None,
             speech_ok: true,
             think_lines: Vec::new(),
             think_active: false,
@@ -218,6 +320,7 @@ impl Scr {
             splash_done: false,
             queue: Vec::new(),
             live: None,
+            state_line: None,
             approval: None,
             creator: false,
             apps_count: 0,
@@ -225,6 +328,7 @@ impl Scr {
             prompt_label: None,
             artifact_action: 0,
             turn_tools: Vec::new(),
+            pending: std::cell::RefCell::new(std::collections::VecDeque::new()),
             auto_queue: Vec::new(),
             auto_label: None,
             last_esc: None,
@@ -348,6 +452,32 @@ impl Scr {
         self.broken_apps = apps.iter().filter(|a| crate::apps::is_broken(a)).count();
     }
 
+    /// Pin a progress line to the top row (`state_report`). A newer report
+    /// replaces the previous one: the row shows what is happening *now*.
+    pub fn set_state(&mut self, text: String) {
+        self.state_line = Some(text);
+        self.draw();
+    }
+
+    /// A progress line is live status, not history: when the next transcript
+    /// line is about to appear, commit it to the log and free the pinned row.
+    fn flush_state(&mut self) {
+        let Some(text) = self.state_line.take() else { return };
+        let mut wrapped = Vec::new();
+        Self::wrap_into(
+            &mut wrapped,
+            &format!("{STATE_ICON} {text}"),
+            self.cols.min(PANEL_COLS),
+        );
+        for w in wrapped {
+            self.lines.push((w, K_STATE));
+        }
+        if self.lines.len() > MAX_TRANSCRIPT_LINES {
+            let drop = self.lines.len() - MAX_TRANSCRIPT_LINES;
+            self.lines.drain(0..drop);
+        }
+    }
+
     /// Draw the first frame of the animated splash plus the hint line. Used at
     /// startup and whenever `/clear` resets the screen.
     pub fn seed_splash(&mut self, model: &str) {
@@ -364,6 +494,7 @@ impl Scr {
         self.think_lines.clear();
         self.think_active = false;
         self.live = None;
+        self.state_line = None;
         self.note = None;
         self.artifact = None;
         for (l, kind) in art_frame_lines(frame, self.cols) {
@@ -403,6 +534,7 @@ impl Scr {
     }
 
     pub fn push(&mut self, text: &str, kind: u8) {
+        self.flush_state();
         let mut wrapped = Vec::new();
         let shown = tidy(text);
         Self::wrap_into(&mut wrapped, &shown, self.cols.min(PANEL_COLS));
@@ -459,7 +591,16 @@ impl Scr {
         s.push_str("\x1b[?25l");
         s.push_str("\x1b[H");
 
-        // Layout: [header(1)] + transcript + palette + live(1) + input(1).
+        // ---- pinned progress row (`state_report`) ----
+        // It owns the top row for as long as it is the newest activity, so the
+        // user always sees the current stage without hunting in the log.
+        if let Some(text) = &self.state_line {
+            s.push_str("\x1b[1;35m");
+            s.push_str(&fit(&format!("{STATE_ICON} {text}"), self.cols));
+            s.push_str("\x1b[0m\x1b[K\r\n");
+        }
+
+        // Layout: [state(0/1)] + transcript + palette + live(1) + input(1).
         let pal = self.palette_items();
         let pal_rows = pal.len().min(4);
         let think_rows = if self.think_active {
@@ -467,12 +608,14 @@ impl Scr {
         } else {
             0
         };
+        let state_rows = if self.state_line.is_some() { 1 } else { 0 };
         let body_rows = self
             .rows
             .saturating_sub(2)
             .max(1)
             .saturating_sub(pal_rows)
-            .saturating_sub(think_rows);
+            .saturating_sub(think_rows)
+            .saturating_sub(state_rows);
 
         // ---- transcript window ----
         let total = self.lines.len();
@@ -490,6 +633,7 @@ impl Scr {
                     K_DIM => s.push_str("\x1b[90m"),
                     K_ART => s.push_str("\x1b[1;36m"),
                     K_CODE => s.push_str("\x1b[90m"),
+                    K_STATE => s.push_str("\x1b[0;35m"),
                     K_HEAD => s.push_str("\x1b[1;37m"),
                     _ => s.push_str("\x1b[0m"),
                 }
@@ -977,19 +1121,19 @@ impl Scr {
                     self.draw();
                     true
                 }
+                KEY_PGUP => {
+                    self.artifact_scroll(-page);
+                    true
+                }
+                KEY_PGDN => {
+                    self.artifact_scroll(page);
+                    true
+                }
                 0x1b => match self.read_key_after_esc() {
                     Some(b'[') | Some(b'O') => {
                         match self.read_key_timeout() {
                             Some(b'A') => self.artifact_scroll(-1),
                             Some(b'B') => self.artifact_scroll(1),
-                            Some(b'5') => {
-                                let _ = self.read_key_timeout();
-                                self.artifact_scroll(-page);
-                            }
-                            Some(b'6') => {
-                                let _ = self.read_key_timeout();
-                                self.artifact_scroll(page);
-                            }
                             _ => {}
                         }
                         true
@@ -1005,18 +1149,37 @@ impl Scr {
         }
     }
 
+    fn pop_pending(&self) -> Option<u8> {
+        self.pending.borrow_mut().pop_front()
+    }
+
+    /// Put bytes back at the head of the input queue (in read order).
+    fn push_back(&self, bytes: &[u8]) {
+        let mut q = self.pending.borrow_mut();
+        for b in bytes.iter().rev() {
+            q.push_front(*b);
+        }
+    }
+
     /// Non-blocking key read. `poll_mode(true)` sets VMIN=0/VTIME=0 so this
     /// returns None immediately instead of waiting for a key.
     fn read_key_now(&self) -> Option<u8> {
+        if let Some(b) = self.pop_pending() {
+            return Some(b);
+        }
         let mut b = [0u8; 1];
         let n = std::io::stdin().read(&mut b).unwrap_or(0);
         if n == 1 { Some(b[0]) } else { None }
     }
 
+    #[allow(dead_code)] // kept for future blocking reads; the TUI is event based
     fn read_key(&self) -> u8 {
         let mut b = [0u8; 1];
         let mut si = std::io::stdin();
         loop {
+            if let Some(b) = self.pop_pending() {
+                return b;
+            }
             match si.read(&mut b) {
                 Ok(1) => return b[0],
                 Ok(_) => continue,
@@ -1025,20 +1188,207 @@ impl Scr {
         }
     }
 
-    /// A byte that may follow Esc (arrow/function-key sequences). Read without
-    /// waiting: a plain Esc tap must not swallow the next typed character and
-    /// must not delay the cancel by the poll-loop timeout.
+    /// A byte that may follow Esc (arrow/function-key sequences). Blocks for a
+    /// very short window: sequence bytes are written together, so a real Esc
+    /// tap pays only a few milliseconds and a sequence is never mistaken for
+    /// a bare Esc (that race swallowed arrow/PageUp presses on the device).
     fn read_key_after_esc(&self) -> Option<u8> {
+        if let Some(b) = self.pop_pending() {
+            return Some(b);
+        }
         poll_mode(true);
-        self.read_key_now()
+        let t0 = std::time::Instant::now();
+        loop {
+            let mut b = [0u8; 1];
+            let n = std::io::stdin().read(&mut b).unwrap_or(0);
+            if n == 1 {
+                return Some(b[0]);
+            }
+            if t0.elapsed().as_millis() >= 25 {
+                return None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
     }
 
-    fn read_key_timeout(&self) -> Option<u8> {
-        stty_tty(&["min", "0", "time", "3"]);
+    /// Read one raw byte, waiting up to `tenths` tenths of a second.
+    fn read_byte_timeout(&self, tenths: u8) -> Option<u8> {
+        if let Some(b) = self.pop_pending() {
+            return Some(b);
+        }
+        let t = tenths.to_string();
+        stty_tty(&["min", "0", "time", t.as_str()]);
         let mut b = [0u8; 1];
         let n = std::io::stdin().read(&mut b).unwrap_or(0);
         stty_tty(&["min", "1", "time", "0"]);
         if n == 1 { Some(b[0]) } else { None }
+    }
+
+    /// Wait up to `ms` for one more input byte without blocking the caller for
+    /// long (used while finishing a key sequence).
+    fn wait_byte(&self, ms: u64) -> Option<u8> {
+        if let Some(b) = self.pop_pending() {
+            return Some(b);
+        }
+        poll_mode(true);
+        let t0 = std::time::Instant::now();
+        loop {
+            let mut b = [0u8; 1];
+            let n = std::io::stdin().read(&mut b).unwrap_or(0);
+            if n == 1 {
+                return Some(b[0]);
+            }
+            if t0.elapsed().as_millis() >= ms as u128 {
+                return None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    /// Classify what follows an Esc byte that was already read. Consumes the
+    /// bytes in the queue order they are returned: the caller decides which of
+    /// them to keep.
+    fn read_esc_chunk(&self, wait_ms: u64) -> EscChunk {
+        let Some(b1) = self.wait_byte(wait_ms) else {
+            return EscChunk::Bare;
+        };
+        if b1 != b'[' && b1 != b'O' {
+            return EscChunk::Alt(b1);
+        }
+        let mut all = vec![b1];
+        let mut params: Vec<u8> = Vec::new();
+        loop {
+            let Some(c) = self.wait_byte(wait_ms) else {
+                return EscChunk::Seq(all, None);
+            };
+            all.push(c);
+            params.push(c);
+            if c.is_ascii_alphabetic() || c == b'~' || c == b'u' || params.len() >= 8 {
+                break;
+            }
+        }
+        let key = decode_seq(&params);
+        EscChunk::Seq(all, key)
+    }
+
+    /// Turn an already-read Esc into a key event.
+    fn esc_to_event(&self) -> KeyEvent {
+        match self.read_esc_chunk(50) {
+            EscChunk::Bare => KeyEvent::Esc,
+            EscChunk::Alt(x) => {
+                if x == b'\r' || x == b'\n' {
+                    KeyEvent::ShiftEnter
+                } else {
+                    KeyEvent::Char(x)
+                }
+            }
+            EscChunk::Seq(_, Some(k)) => k,
+            EscChunk::Seq(_, None) => KeyEvent::Esc,
+        }
+    }
+
+    /// Blocking key read that decodes the panel's key sequences (up to ~300 ms).
+    fn read_key_event(&self) -> Option<KeyEvent> {
+        let b = self.read_byte_timeout(3)?;
+        if b != 0x1b {
+            return Some(KeyEvent::Char(b));
+        }
+        Some(self.esc_to_event())
+    }
+
+    /// Non-blocking variant for the busy screen (`pump` must not stall the
+    /// request loop).
+    fn read_key_event_now(&self) -> Option<KeyEvent> {
+        match self.read_key_now() {
+            Some(b) if b == 0x1b => Some(self.esc_to_event()),
+            Some(b) => Some(KeyEvent::Char(b)),
+            None => None,
+        }
+    }
+
+    /// Blocking byte reader used by older screens. PageUp/PageDown come back
+    /// as `KEY_PGUP`/`KEY_PGDN`; every other sequence is left in the queue as
+    /// its original bytes so the per-screen ESC handling still sees them.
+    fn read_key_timeout(&self) -> Option<u8> {
+        let b = self.read_byte_timeout(3)?;
+        if b != 0x1b {
+            return Some(b);
+        }
+        match self.read_esc_chunk(50) {
+            // Lists understand arrows already, so a page key is replayed as a
+            // screenful of Up/Down: paging then works in every menu without a
+            // second key contract. The toast screens (pump/edit) use
+            // read_key_event and get the real PageUp/PageDown instead.
+            EscChunk::Seq(_, Some(KeyEvent::PageUp)) => {
+                self.queue_arrows(b'A');
+                // The key's own ESC byte is the first queued one: consume it
+                // so the legacy ESC handler reads the '[' next, exactly like a
+                // real arrow sequence.
+                self.pop_pending();
+                Some(0x1b)
+            }
+            EscChunk::Seq(_, Some(KeyEvent::PageDown)) => {
+                self.queue_arrows(b'B');
+                self.pop_pending();
+                Some(0x1b)
+            }
+            EscChunk::Seq(bytes, _) => {
+                self.push_back(&bytes);
+                Some(0x1b)
+            }
+            EscChunk::Alt(x) => {
+                self.push_back(&[x]);
+                Some(0x1b)
+            }
+            EscChunk::Bare => Some(0x1b),
+        }
+    }
+
+    /// Replay one page key as a screenful of arrow keys for list screens.
+    fn queue_arrows(&self, final_byte: u8) {
+        let n = self.rows.saturating_sub(4).max(3);
+        let seq = [0x1b, b'[', final_byte];
+        for _ in 0..n {
+            self.push_back(&seq);
+        }
+    }
+
+    /// Visible transcript rows, mirroring `draw()`'s layout.
+    fn body_rows(&self) -> usize {
+        let pal_rows = self.palette_items().len().min(4);
+        let think_rows = if self.think_active {
+            self.think_lines.len().min(4)
+        } else {
+            0
+        };
+        let state_rows = if self.state_line.is_some() { 1 } else { 0 };
+        self.rows
+            .saturating_sub(2)
+            .max(1)
+            .saturating_sub(pal_rows)
+            .saturating_sub(think_rows)
+            .saturating_sub(state_rows)
+    }
+
+    /// Scroll the transcript window. `n == usize::MAX` jumps to the end (or to
+    /// the very top when scrolling back). The window is clamped so the top of
+    /// the buffer stops at the top row instead of scrolling into blankness.
+    fn scroll_view(&mut self, back: bool, n: usize) {
+        let rows = self.body_rows().max(1);
+        let max = self.lines.len().saturating_sub(rows);
+        if back {
+            self.scroll = if n == usize::MAX {
+                max
+            } else {
+                (self.scroll + n).min(max)
+            };
+        } else {
+            self.scroll = if n == usize::MAX {
+                0
+            } else {
+                self.scroll.saturating_sub(n)
+            };
+        }
     }
 
     /// Wait for the key to be genuinely held. Key-repeat starts after 400 ms,
@@ -1077,35 +1427,53 @@ impl Scr {
     }
 
     fn voice_input(&mut self) {
+        self.voice_capture(None);
+    }
+
+    /// Hold-to-talk capture. `pre` is a recorder the busy screen already opened
+    /// when Tab interrupted the turn: the mic is live before the turn unwinds,
+    /// so the first words are not lost, and the tap debounce is skipped because
+    /// the keypress was deliberate (the user asked to talk, not to type).
+    fn voice_capture(&mut self, pre: Option<crate::voice::Recorder>) {
         if !self.speech_ok {
             self.push(i18n::t("voice_official_only"), K_ERR);
             return;
         }
+        let resume = pre.is_some();
         // Open the mic BEFORE the hold is confirmed: the codec takes a moment
         // to settle and starting late clipped the first syllable of speech.
         // The pre-roll is discarded by the arming check below.
-        let rec = match crate::voice::start_recording() {
-            Ok(r) => r,
-            Err(e) => {
-                self.push(&i18n::tf("ui_mic_failed", &[&e.to_string()]), K_ERR);
-                return;
-            }
+        let rec = match pre {
+            Some(r) => r,
+            None => match crate::voice::start_recording() {
+                Ok(r) => r,
+                Err(e) => {
+                    self.push(&i18n::tf("ui_mic_failed", &[&e.to_string()]), K_ERR);
+                    return;
+                }
+            },
         };
         // Debounce: a tap stays a normal Tab. Otherwise ~0.5 s of room noise
         // reaches ASR and comes back as an invented sentence.
-        if !self.arm_tab() {
+        if !resume && !self.arm_tab() {
             rec.cancel();
             self.vlog("tap (not armed) - no recording");
             return;
         }
-        self.vlog("armed");
+        self.vlog(if resume { "armed (interrupt)" } else { "armed" });
         let t0 = std::time::Instant::now();
         self.note = Some("\x1b[31m\u{25cf} REC\x1b[90m 0.0s".into());
         self.draw();
         let mut cancelled = false;
+        // A held key auto-repeats only after ~400 ms; an interrupt take must
+        // not mistake that quiet stretch for a release (it would stop
+        // recording before the user finished). The debounce path already
+        // proved the key is down, so it may stop on the first quiet window.
+        let mut quiet_ms = 0u32;
         loop {
             match self.read_key_timeout() {
                 Some(0x09) => {
+                    quiet_ms = 0;
                     self.note = Some(format!(
                         "\x1b[31m\u{25cf} REC\x1b[90m {:.1}s",
                         t0.elapsed().as_secs_f32()
@@ -1119,8 +1487,14 @@ impl Scr {
                     cancelled = true;
                     break;
                 }
-                Some(_) => {}
-                None => break, // key released
+                Some(_) => quiet_ms = 0,
+                None => {
+                    quiet_ms += 300;
+                    let limit = if resume { 900 } else { 300 };
+                    if quiet_ms >= limit {
+                        break; // key released
+                    }
+                }
             }
         }
         if cancelled {
@@ -1472,8 +1846,8 @@ impl Scr {
                 self.artifact_keystroke();
                 continue;
             }
-            let b = match self.read_key_timeout() {
-                Some(b) => b,
+            let ev = match self.read_key_event() {
+                Some(e) => e,
                 None => {
                     if let Some(mut f) = self.on_tick.take() {
                         f(self);
@@ -1492,6 +1866,82 @@ impl Scr {
                             .join("\n");
                         self.auto_label = Some(label);
                         return Some(text);
+                    }
+                    continue;
+                }
+            };
+            // Navigation keys are handled before the byte dispatch: they are
+            // decoded sequences, not characters.
+            let b = match ev {
+                KeyEvent::Char(b) => b,
+                KeyEvent::Esc => 0x1b,
+                KeyEvent::ShiftEnter => 0x0a,
+                KeyEvent::Up => {
+                    let n = self.palette_items().len();
+                    if n > 0 {
+                        self.palette_sel = self.palette_sel.saturating_sub(1);
+                    } else if self.input.is_empty() && self.history_recall(true) {
+                        // recalled history, nothing else to do
+                    } else {
+                        self.scroll_view(true, 5);
+                    }
+                    continue;
+                }
+                KeyEvent::Down => {
+                    let n = self.palette_items().len();
+                    if n > 0 {
+                        self.palette_sel = (self.palette_sel + 1).min(n - 1);
+                    } else if self.input.is_empty()
+                        && crate::bg::has_any()
+                        && !self.history_recall(false)
+                    {
+                        // Down on an empty prompt opens the background-task
+                        // manager.
+                        self.jobs_panel();
+                    } else if self.hist_pos.is_some() {
+                        self.history_recall(false);
+                    } else {
+                        self.scroll_view(false, 5);
+                    }
+                    continue;
+                }
+                KeyEvent::Left => {
+                    self.cursor = self.cursor.saturating_sub(1);
+                    continue;
+                }
+                KeyEvent::Right => {
+                    self.cursor = (self.cursor + 1).min(self.input.len());
+                    continue;
+                }
+                KeyEvent::Home => {
+                    if self.input.is_empty() && self.scroll > 0 {
+                        self.scroll_view(true, usize::MAX);
+                    } else {
+                        self.cursor = 0;
+                    }
+                    continue;
+                }
+                KeyEvent::End => {
+                    if self.input.is_empty() && self.scroll > 0 {
+                        self.scroll_view(false, usize::MAX);
+                    } else {
+                        self.cursor = self.input.len();
+                    }
+                    continue;
+                }
+                KeyEvent::PageUp => {
+                    let page = self.body_rows().max(1);
+                    self.scroll_view(true, page);
+                    continue;
+                }
+                KeyEvent::PageDown => {
+                    let page = self.body_rows().max(1);
+                    self.scroll_view(false, page);
+                    continue;
+                }
+                KeyEvent::Delete => {
+                    if self.cursor < self.input.len() {
+                        self.input.remove(self.cursor);
                     }
                     continue;
                 }
@@ -1578,141 +2028,22 @@ impl Scr {
                     self.cursor = 0;
                 }
                 0x1b => {
-                    // A bare Esc is a real key here: it stops a clip that is
-                    // still playing after its turn was cancelled. Waiting for
-                    // a second byte (the old `read_key`) blocked the editor
-                    // until some other key was pressed.
-                    let b1 = match self.read_key_after_esc() {
-                        Some(b) => b,
-                        None => {
-                            // Double Esc within 600 ms opens the rewind picker
-                            // (the physical reset button maps to this gesture
-                            // until a device-side GPIO hook exists).
-                            let now = std::time::Instant::now();
-                            let dbl = self
-                                .last_esc
-                                .map(|t| now.duration_since(t).as_millis() < 600)
-                                .unwrap_or(false);
-                            self.last_esc = Some(now);
-                            if dbl {
-                                self.last_esc = None;
-                                return Some("/rewind".to_string());
-                            }
-                            crate::voice::request_stop();
-                            continue;
-                        }
-                    };
-                    if b1 == b'\r' {
-                        // Alt+Enter / Shift+Enter fallback.
-                        if !self.input.is_empty() {
-                            let line: String = self.input.iter().collect();
-                            self.input.clear();
-                            self.cursor = 0;
-                            return Some(line);
-                        }
-                        continue;
+                    // A lone Esc (read_key_event consumed any key sequence).
+                    // Double Esc within 600 ms opens the rewind picker (the
+                    // physical reset button maps to this gesture until a
+                    // device-side GPIO hook exists).
+                    let now = std::time::Instant::now();
+                    let dbl = self
+                        .last_esc
+                        .map(|t| now.duration_since(t).as_millis() < 600)
+                        .unwrap_or(false);
+                    self.last_esc = Some(now);
+                    if dbl {
+                        self.last_esc = None;
+                        return Some("/rewind".to_string());
                     }
-                    if b1 == b'[' || b1 == b'O' {
-                        poll_mode(false);
-                        let b2 = self.read_key();
-                        if b2.is_ascii_digit() {
-                            // Extended key: ESC [ 1 3 ; 2 u is Shift+Enter.
-                            let mut seq = String::new();
-                            seq.push(b2 as char);
-                            loop {
-                                let c = self.read_key();
-                                seq.push(c as char);
-                                if c == b'u' || c == b'~' || c.is_ascii_alphabetic() {
-                                    break;
-                                }
-                                if seq.len() > 8 {
-                                    break;
-                                }
-                            }
-                            // PageUp/PageDown arrive as ESC [ 5~ / 6~.
-                            if seq == "5~" {
-                                let page = self.rows.saturating_sub(3).max(5);
-                                self.scroll = (self.scroll + page).min(self.lines.len());
-                                continue;
-                            }
-                            if seq == "6~" {
-                                let page = self.rows.saturating_sub(3).max(5);
-                                self.scroll = self.scroll.saturating_sub(page);
-                                continue;
-                            }
-                            if seq == "3~" {
-                                // Forward Delete: remove the char under the
-                                // cursor (external keyboards, not the device).
-                                if self.cursor < self.input.len() {
-                                    self.input.remove(self.cursor);
-                                }
-                                continue;
-                            }
-                            if seq.starts_with("13;") && !self.input.is_empty() {
-                                let line: String = self.input.iter().collect();
-                                self.input.clear();
-                                self.cursor = 0;
-                                return Some(line);
-                            }
-                            continue;
-                        }
-                        match b2 {
-                            b'A' => {
-                                let n = self.palette_items().len();
-                                if n > 0 {
-                                    self.palette_sel = self.palette_sel.saturating_sub(1);
-                                } else if self.input.is_empty()
-                                    && self.history_recall(true)
-                                {
-                                    // recalled history, nothing else to do
-                                } else {
-                                    self.scroll = (self.scroll + 5).min(self.lines.len());
-                                }
-                            }
-                            b'B' => {
-                                let n = self.palette_items().len();
-                                if n > 0 {
-                                    self.palette_sel = (self.palette_sel + 1).min(n - 1);
-                                } else if self.input.is_empty() && crate::bg::has_any()
-                                    && !self.history_recall(false)
-                                {
-                                    // Down on an empty prompt opens the
-                                    // background-task manager.
-                                    self.jobs_panel();
-                                } else if self.hist_pos.is_some() {
-                                    self.history_recall(false);
-                                } else {
-                                    self.scroll = self.scroll.saturating_sub(5);
-                                }
-                            }
-                            b'C' => self.cursor = (self.cursor + 1).min(self.input.len()),
-                            b'D' => self.cursor = self.cursor.saturating_sub(1),
-                            b'H' => {
-                                if self.input.is_empty() && self.scroll > 0 {
-                                    self.scroll = self.lines.len();
-                                } else {
-                                    self.cursor = 0;
-                                }
-                            }
-                            b'F' => {
-                                if self.input.is_empty() && self.scroll > 0 {
-                                    self.scroll = 0;
-                                } else {
-                                    self.cursor = self.input.len();
-                                }
-                            }
-                            b'5' | b'6' => {
-                                let _ = self.read_key();
-                                let page = self.rows.saturating_sub(3).max(5);
-                                if b2 == b'5' {
-                                    self.scroll = (self.scroll + page).min(self.lines.len());
-                                } else {
-                                    self.scroll = self.scroll.saturating_sub(page);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
+                    crate::voice::request_stop();
+                    continue;
                 }
                 0x09 => {
                     self.voice_input();
@@ -1737,6 +2068,49 @@ impl Scr {
 
 /// Drop SGR/CSI sequences, for text that carries its own colour codes.
 /// Wrap a single line for a narrow panel (approval arguments).
+/// Tool-call card body: every argument on its own indented line, values longer
+/// than the panel folded across rows, capped at `max_rows` so one call cannot
+/// swallow the 12-row screen. `usize::MAX` = no cap (the CtrlO viewer).
+fn expand_args(raw: &str, cols: usize, max_rows: usize) -> Vec<String> {
+    let Some(crate::json::J::Obj(pairs)) = crate::json::parse(raw) else {
+        return Vec::new();
+    };
+    let width = cols.saturating_sub(1).max(8);
+    let mut out: Vec<String> = Vec::new();
+    let mut truncated = false;
+    'outer: for (key, val) in pairs {
+        let text = match &val {
+            crate::json::J::Str(s) => s.clone(),
+            other => other.dump(),
+        };
+        let mut first = true;
+        for line in text.split('\n') {
+            let head = if first {
+                format!("  {key}: ")
+            } else {
+                "    ".to_string()
+            };
+            let mut wrapped = Vec::new();
+            Scr::wrap_into(&mut wrapped, &format!("{head}{line}"), width);
+            if wrapped.is_empty() {
+                out.push(head.trim_end().to_string());
+            }
+            for w in wrapped {
+                if out.len() >= max_rows {
+                    truncated = true;
+                    break 'outer;
+                }
+                out.push(w);
+            }
+            first = false;
+        }
+    }
+    if truncated {
+        out.push(format!("  \u{2026} more: CtrlO"));
+    }
+    out
+}
+
 fn wrap(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     Scr::wrap_into(&mut out, text, PANEL_COLS.saturating_sub(2));
@@ -2119,9 +2493,18 @@ STYLE
 - When the user interrupts or cancels, stop immediately; do not retry or repeat
   the interrupted work unless asked.
 
+PROGRESS ROW
+- Call state_report with ONE short line when a long task changes stage (\"reading
+  /proc\", \"writing run.sh\", \"testing it\"). The line is pinned to the top row of
+  the panel while you work, so the user can see what is happening. It must fit
+  in one row: 50 display cells at most (CJK counts as 2), or the call is
+  rejected. Do not report every step and never put secrets in it.
+- The report is replaced by the next one and joins the log when the next line
+  appears; write it as the current activity, not as a conclusion.
+
 RULES
 - Never claim a file changed or a command ran unless a tool result shows it.
-- ALWAYS reply in the language the user writes in. A Chinese question\n  gets a Chinese answer, including inside artifacts.
+- Reply in the interface language (see LANGUAGE) by default; a user request for\n  another language wins, including inside artifacts.
 - Show the result rather than describing the process.";
 
 /// What the model should know about saved-session titles (`/resume` names).
@@ -2219,8 +2602,10 @@ struct TermUi<'a> {
     think_wrapped: Vec<String>,
     /// Messages typed while busy, injected at the next step boundary (steer).
     steer: Vec<String>,
-    tools: std::collections::HashMap<String, (String, String, std::time::Instant)>,
+    tools: std::collections::HashMap<String, (String, String, std::time::Instant, String)>,
     spin: usize,
+    /// The user asked the whole turn to stop (Esc / voice interrupt).
+    interrupted: bool,
 }
 
 impl<'a> TermUi<'a> {
@@ -2343,14 +2728,32 @@ impl<'a> harness::Ui for TermUi<'a> {
                 // structure (headings, bullets, code) rather than raw text.
                 self.scr.push_md(&t);
             }
-            Ev::ToolCall { id, name, title } => {
+            Ev::ToolCall { id, name, title, args } => {
                 self.reset_think();
                 self.scr.live = None;
                 self.scr.turn_tools.push(name.clone());
-                let raw = format!("* {name} > {title} \u{2026}");
-                let raw: String = raw.chars().take(self.scr.cols.saturating_sub(4)).collect();
-                self.scr.push(&fit(&raw, self.scr.cols.saturating_sub(1)), K_DIM);
-                self.tools.insert(id, (name, title, std::time::Instant::now()));
+                if name == "state_report" {
+                    // The pinned progress row is the whole presentation.
+                    self.tools.insert(id, (name, title, std::time::Instant::now(), args));
+                    return;
+                }
+                // Expand the call while it runs: the args are what the user
+                // wants to see, not a truncated summary. Long values are
+                // folded and the full text stays in CtrlO. An artifact body is
+                // about to take over the whole screen, so only its title is
+                // worth a card line.
+                self.scr.push(&format!("* {name}"), K_TOOL);
+                let cols = self.scr.cols;
+                if name == "artifact" {
+                    if !title.is_empty() {
+                        self.scr.push(&fit(&format!("  {title}"), cols), K_DIM);
+                    }
+                } else {
+                    for line in expand_args(&args, cols, 5) {
+                        self.scr.push(&line, K_DIM);
+                    }
+                }
+                self.tools.insert(id, (name, title, std::time::Instant::now(), args));
             }
             Ev::ToolTick { name, secs } => {
                 self.scr.live = Some((1, format!("{name} running {secs:.1}s")));
@@ -2365,21 +2768,35 @@ impl<'a> harness::Ui for TermUi<'a> {
                 self.scr.live = None;
                 // The pending line was drawn when the call started; this one
                 // adds the outcome and a short preview of what came back.
-                let (name, _title, took) = self
+                let (name, _title, took, args) = self
                     .tools
                     .remove(&id)
-                    .map(|(n, t, started)| (n, t, started.elapsed().as_secs_f32()))
-                    .unwrap_or_else(|| (String::new(), String::new(), 0.0));
-                // Keep the full result for the CtrlO output viewer.
+                    .map(|(n, t, started, a)| (n, t, started.elapsed().as_secs_f32(), a))
+                    .unwrap_or_else(|| (String::new(), String::new(), 0.0, String::new()));
+                if name == "state_report" {
+                    // Already shown on the pinned row; a card would duplicate it.
+                    return;
+                }
+                // Keep the full call + result for the CtrlO viewer.
                 if self.scr.tool_log.len() >= 20 {
                     self.scr.tool_log.remove(0);
                 }
                 let log_content: String = content.chars().take(6000).collect();
-                self.scr.tool_log.push((name.clone(), log_content, is_error, took));
-                let raw = format!("* {name} | {took:.1}s {}", if is_error { "x" } else { "ok" });
+                self.scr.tool_log.push(ToolLogEntry {
+                    name: name.clone(),
+                    args,
+                    content: log_content,
+                    is_error,
+                    secs: took,
+                });
                 let cols = self.scr.cols;
-                let raw: String = raw.chars().take(cols.saturating_sub(4)).collect();
-                self.scr.push(&fit(&raw, cols.saturating_sub(1)), K_TOOL);
+                // The call card already named the tool: the settled row is the
+                // outcome, so start a new line with the verdict instead of
+                // repeating the name.
+                self.scr.push(
+                    &format!("  \u{2514} {took:.1}s {}", if is_error { "x" } else { "ok" }),
+                    K_TOOL,
+                );
                 let preview = first_lines(&content, if is_error { 3 } else { 1 });
                 if !preview.trim().is_empty() {
                     let kind = if is_error { K_ERR } else { K_RES };
@@ -2427,6 +2844,11 @@ impl<'a> harness::Ui for TermUi<'a> {
                     self.scr.push(&i18n::tf("ui_compaction_failed", &[&note]), K_DIM);
                 }
             }
+            Ev::StateReport(t) => self.scr.set_state(t),
+            Ev::TurnEnd { .. } => {
+                self.scr.flush_state();
+                self.scr.draw();
+            }
             Ev::Info(n) => self.scr.push(&n, K_DIM),
             Ev::Hint(n) => self.scr.push(&format!("\u{2192} {n}"), K_TOOL),
             Ev::Note(n) => self.scr.push(&n, K_ERR),
@@ -2472,27 +2894,47 @@ impl<'a> harness::Ui for TermUi<'a> {
         }
         let mut changed = false;
         loop {
-            let k = match self.scr.read_key_now() {
-                Some(k) => k,
+            let ev = match self.scr.read_key_event_now() {
+                Some(ev) => ev,
                 None => break,
             };
-            match k {
-                0x03 | 0x04 => {
+            match ev {
+                KeyEvent::Char(0x03) | KeyEvent::Char(0x04) => {
                     crate::voice::request_stop();
                     self.scr.quit = true;
+                    self.interrupted = true;
                     return Action::Cancel;
                 }
-                0x09 => {
-                    // Push-to-talk during a turn: honoured as soon as the
-                    // current work stops, then submitted like a normal take.
-                    if !self.scr.voice_pending {
-                        self.scr.voice_pending = true;
-                        self.scr
-                            .push(i18n::t("voice_queued"), K_DIM);
-                        changed = true;
+                KeyEvent::Char(0x09) => {
+                    // Voice interrupt: stop the turn (and any speech) right
+                    // now, with the microphone already capturing, instead of
+                    // waiting for the turn to finish. The take is finished and
+                    // submitted (or left in the prompt, per auto_send) once the
+                    // driver unwinds.
+                    crate::voice::request_stop();
+                    if self.scr.pending_rec.is_none() {
+                        match crate::voice::start_recording() {
+                            Ok(rec) => {
+                                self.scr.pending_rec = Some(rec);
+                                self.scr.voice_pending = true;
+                            }
+                            Err(e) => {
+                                self.scr
+                                    .push(&i18n::tf("ui_mic_failed", &[&e.to_string()]), K_ERR);
+                            }
+                        }
                     }
+                    self.interrupted = true;
+                    return Action::Cancel;
                 }
-                0x11 => {
+                KeyEvent::Char(0x0f) => {
+                    // CtrlO works during a turn: the viewer opens over the live
+                    // transcript and the request keeps buffering behind it.
+                    tool_output_panel(&mut self.scr);
+                    poll_mode(true);
+                    self.scr.draw();
+                }
+                KeyEvent::Char(0x11) => {
                     if !self.scr.queue.is_empty() {
                         if let Some(text) = self.scr.queue_panel_modal() {
                             self.scr.input = text.chars().collect();
@@ -2502,102 +2944,142 @@ impl<'a> harness::Ui for TermUi<'a> {
                         self.scr.draw();
                     }
                 }
-                0x1b => {
-                    // Esc cancels the turn, including a `speak` clip that is
-                    // still playing: the clip is a side effect of the turn, so
-                    // the interrupt has to reach the speaker too.
-                    match self.scr.read_key_after_esc() {
-                        Some(b'\r') => {
-                            // Steering: deliver at the next step boundary.
-                            let line: String = self.scr.input.iter().collect();
-                            let line = line.trim().to_string();
-                            if !line.is_empty() {
-                                self.scr.input.clear();
-                                self.scr.cursor = 0;
-                                self.scr.push(
-                                    &format!("\u{21b3} {}", i18n::tf("ui_steer", &[&line])),
-                                    K_DIM,
-                                );
-                                self.steer.push(line);
-                            }
-                            poll_mode(true);
-                        }
-                        Some(b) if b == b'[' || b == b'O' => {
-                            let mut seq = String::new();
-                            for _ in 0..8 {
-                                match self.scr.read_key_timeout() {
-                                    Some(c) => {
-                                        seq.push(c as char);
-                                        if c == b'u' || c == b'~' || c.is_ascii_alphabetic() {
-                                            break;
-                                        }
-                                    }
-                                    None => break,
-                                }
-                            }
-                            if seq.starts_with("13;") {
-                                let line: String = self.scr.input.iter().collect();
-                                let line = line.trim().to_string();
-                                if !line.is_empty() {
-                                    self.scr.input.clear();
-                                    self.scr.cursor = 0;
-                                    self.scr.push(
-                                        &format!("\u{21b3} {}", i18n::tf("ui_steer", &[&line])),
-                                        K_DIM,
-                                    );
-                                    self.steer.push(line);
-                                }
-                            }
-                            poll_mode(true); // read_key_timeout left the tty blocking
-                        }
-                        _ => {
-                            crate::voice::request_stop();
-                            if !self.scr.input.is_empty() {
-                                self.force_now();
-                            }
-                            return Action::Cancel;
-                        }
+                KeyEvent::Esc => {
+                    // Esc stops the whole turn at once: the driver abandons the
+                    // step instead of only cancelling the tool in flight. Typed
+                    // text becomes the next message and anything already queued
+                    // is sent right after this turn ends.
+                    crate::voice::request_stop();
+                    if !self.scr.input.is_empty() {
+                        self.force_now();
+                    }
+                    self.interrupted = true;
+                    return Action::Cancel;
+                }
+                KeyEvent::ShiftEnter => {
+                    // Steering: deliver at the next step boundary.
+                    let line: String = self.scr.input.iter().collect();
+                    let line = line.trim().to_string();
+                    if !line.is_empty() {
+                        self.scr.input.clear();
+                        self.scr.cursor = 0;
+                        self.scr.push(
+                            &format!("\u{21b3} {}", i18n::tf("ui_steer", &[&line])),
+                            K_DIM,
+                        );
+                        self.steer.push(line);
                     }
                 }
-                0x0d | 0x0a => {
+                KeyEvent::Char(0x0d) | KeyEvent::Char(0x0a) => {
                     let line: String = self.scr.input.iter().collect();
                     if !line.trim().is_empty() {
                         self.scr.input.clear();
                         self.scr.cursor = 0;
                         self.scr.queue.push(line.clone());
                         let n = self.scr.queue.len();
-                        self.scr.push(&format!("\u{23ce} {}", i18n::tf("ui_queued", &[&n.to_string(), &line])), K_DIM);
+                        self.scr.push(
+                            &format!(
+                                "\u{23ce} {}",
+                                i18n::tf("ui_queued", &[&n.to_string(), &line])
+                            ),
+                            K_DIM,
+                        );
                     }
                     changed = true;
                 }
-                0x7f | 0x08 => {
+                KeyEvent::Char(0x7f) | KeyEvent::Char(0x08) => {
                     if self.scr.cursor > 0 {
                         self.scr.cursor -= 1;
                         self.scr.input.remove(self.scr.cursor);
                         changed = true;
                     }
                 }
-                0x15 => {
+                KeyEvent::Char(0x15) => {
                     self.scr.input.clear();
                     self.scr.cursor = 0;
                     changed = true;
                 }
-                0x20..=0x7e => {
+                KeyEvent::Char(0x01) => {
+                    self.scr.cursor = 0;
+                    changed = true;
+                }
+                KeyEvent::Char(0x05) => {
+                    self.scr.cursor = self.scr.input.len();
+                    changed = true;
+                }
+                KeyEvent::Char(0x17) => {
+                    while self.scr.cursor > 0 && self.scr.input[self.scr.cursor - 1].is_whitespace()
+                    {
+                        self.scr.cursor -= 1;
+                        self.scr.input.remove(self.scr.cursor);
+                    }
+                    while self.scr.cursor > 0 && !self.scr.input[self.scr.cursor - 1].is_whitespace()
+                    {
+                        self.scr.cursor -= 1;
+                        self.scr.input.remove(self.scr.cursor);
+                    }
+                    changed = true;
+                }
+                KeyEvent::Left => {
+                    self.scr.cursor = self.scr.cursor.saturating_sub(1);
+                    changed = true;
+                }
+                KeyEvent::Right => {
+                    self.scr.cursor = (self.scr.cursor + 1).min(self.scr.input.len());
+                    changed = true;
+                }
+                KeyEvent::Home => {
+                    self.scr.cursor = 0;
+                    changed = true;
+                }
+                KeyEvent::End => {
+                    self.scr.cursor = self.scr.input.len();
+                    changed = true;
+                }
+                KeyEvent::Delete => {
+                    if self.scr.cursor < self.scr.input.len() {
+                        self.scr.input.remove(self.scr.cursor);
+                        changed = true;
+                    }
+                }
+                KeyEvent::Up => {
+                    self.scr.scroll_view(true, 5);
+                    changed = true;
+                }
+                KeyEvent::Down => {
+                    self.scr.scroll_view(false, 5);
+                    changed = true;
+                }
+                KeyEvent::PageUp => {
+                    let page = self.scr.body_rows().max(1);
+                    self.scr.scroll_view(true, page);
+                    changed = true;
+                }
+                KeyEvent::PageDown => {
+                    let page = self.scr.body_rows().max(1);
+                    self.scr.scroll_view(false, page);
+                    changed = true;
+                }
+                KeyEvent::Char(k) if (0x20..=0x7e).contains(&k) => {
                     self.scr.input.insert(self.scr.cursor, k as char);
                     self.scr.cursor += 1;
                     changed = true;
                 }
-                0x80..=0xff => {
+                KeyEvent::Char(k) if k >= 0x80 => {
                     self.scr.utf8_push(k);
                     changed = true;
                 }
-                _ => {}
+                KeyEvent::Char(_) => {}
             }
         }
         if changed {
             self.scr.draw();
         }
         Action::Continue
+    }
+
+    fn interrupted(&self) -> bool {
+        self.interrupted
     }
 }
 
@@ -3995,23 +4477,23 @@ fn tool_output_panel(scr: &mut Scr) {
         scr.push(i18n::t("tool_log_empty"), K_DIM);
         return;
     }
-    let entries: Vec<(String, String, bool, f32)> = scr.tool_log.iter().rev().cloned().collect();
+    let entries: Vec<ToolLogEntry> = scr.tool_log.iter().rev().cloned().collect();
     let mut sel = 0usize;
     loop {
         let items: Vec<MenuItem> = entries
             .iter()
-            .map(|(name, content, is_error, secs)| MenuItem {
+            .map(|e| MenuItem {
                 // Menu rows cannot carry per-row colour; mark failures with
                 // an ASCII "x" so they stand out from successful calls.
-                label: if *is_error {
-                    format!("x {name}  {secs:.1}s")
+                label: if e.is_error {
+                    format!("x {}  {:.1}s", e.name, e.secs)
                 } else {
-                    format!("{name}  {secs:.1}s")
+                    format!("{}  {:.1}s", e.name, e.secs)
                 },
-                value: if *is_error {
-                    format!("error  {}", first_line_short(content, 18))
+                value: if e.is_error {
+                    format!("error  {}", first_line_short(&e.content, 18))
                 } else {
-                    first_line_short(content, 24)
+                    first_line_short(&e.content, 24)
                 },
             })
             .collect();
@@ -4037,13 +4519,14 @@ fn tool_output_panel(scr: &mut Scr) {
         }
         if k == 0x03 || k == b'q' { scr.menu = None; scr.draw(); return; }
         if k == b's' || k == b'S' {
-            let (name, content, _, _) = &entries[sel];
+            let e = &entries[sel];
             let path = crate::config::tmp_dir().join(format!(
                 "tool-{}-{}.txt",
                 crate::session::title().chars().take(20).collect::<String>().replace(' ', "-"),
-                name
+                e.name
             ));
-            match std::fs::write(&path, content) {
+            let saved = format!("CALL {}\n{}\n\nRESULT\n{}", e.name, e.args, e.content);
+            match std::fs::write(&path, saved) {
                 Ok(()) => {
                     let home = std::env::var("HOME").unwrap_or_default();
                     let mut shown = path.display().to_string();
@@ -4059,10 +4542,20 @@ fn tool_output_panel(scr: &mut Scr) {
             return;
         }
         if k == 0x0d || k == 0x0a {
-            let (name, content, is_error, _) = &entries[sel];
-            let title = if *is_error { format!("{name} (error)") } else { format!("{name} output") };
+            let e = &entries[sel];
+            let title = if e.is_error {
+                format!("{} (error)", e.name)
+            } else {
+                format!("{} call", e.name)
+            };
             let mut body = Vec::new();
-            for line in content.lines() {
+            for line in expand_args(&e.args, scr.cols, usize::MAX) {
+                body.push(line);
+            }
+            if !e.args.trim().is_empty() {
+                body.push(String::new());
+            }
+            for line in e.content.lines() {
                 let mut wrapped = Vec::new();
                 Scr::wrap_into(&mut wrapped, line, scr.cols);
                 if wrapped.is_empty() { body.push(String::new()); }
@@ -4678,16 +5171,14 @@ fn apps_menu(scr: &mut Scr, config_rc: &ConfigRc) -> AppsAction {
                 needle.is_empty()
                     || a.name.to_lowercase().contains(&needle)
                     || a.title.to_lowercase().contains(&needle)
-                    || a.category.to_lowercase().contains(&needle)
+                    || a.description.to_lowercase().contains(&needle)
             })
             .collect();
         // Launcher order: most recently run/tested first, then alphabetical.
         filtered.sort_by(|a, b| {
             let la = crate::apps::last_activity(a);
             let lb = crate::apps::last_activity(b);
-            lb.cmp(&la)
-                .then_with(|| a.category.cmp(&b.category))
-                .then_with(|| a.name.cmp(&b.name))
+            lb.cmp(&la).then_with(|| a.name.cmp(&b.name))
         });
         let mut rows: Vec<Row> = (0..filtered.len()).map(Row::App).collect();
         if creator {
@@ -4707,13 +5198,7 @@ fn apps_menu(scr: &mut Scr, config_rc: &ConfigRc) -> AppsAction {
                         .unwrap_or_default();
                     MenuItem {
                         label: if a.title.is_empty() { a.name.clone() } else { a.title.clone() },
-                        value: format!(
-                            "{} · {}{}{}",
-                            a.category,
-                            a.kind,
-                            if bad { " !" } else { "" },
-                            used
-                        ),
+                        value: format!("{}{}{}", a.kind, if bad { " !" } else { "" }, used),
                     }
                 }
                 Row::New => MenuItem {
@@ -5033,6 +5518,13 @@ fn build_system_prompt(
         TOOL_SAFETY_GUIDANCE,
         SESSION_GUIDANCE
     );
+    // UI language -> default answer language. The user's explicit request wins,
+    // so this is stated as a default rather than a hard rule.
+    system_prompt.push_str(&format!(
+        "\nLANGUAGE\n- The interface language is {} ({}). Write every reply in it by default: prose, artifact bodies, state reports, questions and errors.\n- The user's own request wins: if they ask for another language, or tell you to match the language they write in, switch to it and keep using it.\n",
+        i18n::language_name(),
+        i18n::language_native()
+    ));
     system_prompt.push_str(&instructions::prompt_section());
     system_prompt.push_str(
         "\nTODO AND MEMORY\n- Track multi-step work with todo_write; mark items done as you finish them.\n- Save durable user preferences and project conventions with memory_write (scope=project for workspace rules, global for cross-project). Read them with memory_read / memory_search before changing conventions. Never store secrets in memory.\n",
@@ -5055,7 +5547,7 @@ speak tool and do not claim you can listen or talk.\n",
         system_prompt.push_str(&caps_text);
     }
     if c.creator {
-        system_prompt.push_str(&apps::prompt_section(true, &apps::load()));
+        system_prompt.push_str(&apps::prompt_section());
     }
     system_prompt
 }
@@ -5271,6 +5763,7 @@ fn main() {
     }
 
     let mut scr = Scr::new();
+    tools::set_panel_cols(scr.cols);
     if let Ok(text) = std::fs::read_to_string(config::history_path()) {
         for line in text.lines().rev().take(60).collect::<Vec<_>>().into_iter().rev() {
             let line = line.trim();
@@ -5414,6 +5907,7 @@ fn main() {
                             steer: Vec::new(),
                             tools: std::collections::HashMap::new(),
                             spin: 0,
+                            interrupted: false,
                         };
                         crate::compact::compact(&cfg, &manual, &mut m, window, &defs, &mut ui)
                     };
@@ -5654,6 +6148,7 @@ fn main() {
                     steer: Vec::new(),
                     tools: std::collections::HashMap::new(),
                     spin: 0,
+                    interrupted: false,
                 };
                 last_report = Some(harness::run_turn(&cfg, &opts, &mut m, &reg, &submit, &mut ui));
             }
@@ -5665,10 +6160,10 @@ fn main() {
             // Creator mode: name what was saved, or say that nothing was.
             if config_rc.borrow().creator {
                 scr.refresh_apps_count();
-                let saved_apps = crate::apps::take_saved();
+                let saved_apps = crate::skills::take_saved_apps();
                 let saved_skills = crate::skills::take_saved();
-                for (label, _path) in &saved_apps {
-                    scr.push(&i18n::tf("app_saved_notice", &[label]), K_DIM);
+                for name in &saved_apps {
+                    scr.push(&i18n::tf("app_saved_notice", &[name]), K_DIM);
                 }
                 for (name, _path, version) in &saved_skills {
                     scr.push(
@@ -5678,7 +6173,7 @@ fn main() {
                 }
                 if saved_apps.is_empty() && saved_skills.is_empty() {
                     let mutated = scr.turn_tools.iter().any(|t| {
-                        matches!(t.as_str(), "write_file" | "edit_file" | "app_file" | "skill_file")
+                        matches!(t.as_str(), "write_file" | "edit_file" | "skill_file")
                     });
                     if mutated {
                         scr.push(i18n::t("creator_nudge"), K_DIM);
@@ -5687,9 +6182,10 @@ fn main() {
             }
             scr.turn_tools.clear();
             scr.draw();
-            if scr.voice_pending {
+            if scr.voice_pending || scr.pending_rec.is_some() {
                 scr.voice_pending = false;
-                scr.voice_input();
+                let pre = scr.pending_rec.take();
+                scr.voice_capture(pre);
                 if scr.auto_send && !scr.input.is_empty() {
                     let line: String = scr.input.iter().collect();
                     scr.input.clear();

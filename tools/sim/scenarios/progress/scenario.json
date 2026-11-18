@@ -1,0 +1,30 @@
+{
+ "steps": [
+  {"wait_for": {"text": "dst", "timeout_ms": 10000}},
+  {"send": "first filler"},
+  {"key": "Enter"},
+  {"wait_stable": {"stable_ms": 600, "timeout_ms": 15000}},
+  {"send": "second filler"},
+  {"key": "Enter"},
+  {"wait_stable": {"stable_ms": 600, "timeout_ms": 15000}},
+  {"send": "do the whole thing"},
+  {"key": "Enter"},
+  {"wait_for": {"text": "reading /proc", "timeout_ms": 15000}},
+  {"snap": "pinned"},
+  {"wait_for": {"text": "sleep 5", "timeout_ms": 15000}},
+  {"snap": "running"},
+  {"key": "CtrlO"},
+  {"wait_ms": 500, "snap": "ctrlo"},
+  {"key": "Esc"},
+  {"wait_ms": 300},
+  {"key": "PgUp"},
+  {"wait_ms": 300, "snap": "scrolled_busy"},
+  {"key": "End"},
+  {"wait_ms": 250},
+  {"key": "Esc"},
+  {"wait_ms": 1200, "snap": "interrupted"},
+  {"send": "now answer shortly"},
+  {"key": "Enter"},
+  {"wait_stable": {"stable_ms": 900, "timeout_ms": 20000}, "snap": "next"}
+ ]
+}

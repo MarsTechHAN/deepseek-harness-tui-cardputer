@@ -132,6 +132,9 @@ pub enum PipeEvent {
         id: String,
         name: String,
         title: String,
+        /// Parsed arguments as JSON text: the UI expands the call while it
+        /// runs, so the user sees what the model is actually doing.
+        args: String,
     },
     /// `tool/result` — settled, in model order.
     Made(Outcome),
@@ -270,6 +273,7 @@ pub fn run_batch_with(
                     id: c.id.clone(),
                     name: def.name.to_string(),
                     title: (def.present)(&args),
+                    args: args.dump(),
                 });
                 if let Err(reason) = host.allow(def.name, &args) {
                     let o = err_out(c, format!("permission denied: {reason}"));
@@ -284,6 +288,7 @@ pub fn run_batch_with(
                     id: c.id.clone(),
                     name: def.name.to_string(),
                     title: format!("{} (rejected)", def.name),
+                    args: c.raw_args.clone(),
                 });
                 let o = err_out(c, reason);
                 host.call(PipeEvent::Made(o.clone()));

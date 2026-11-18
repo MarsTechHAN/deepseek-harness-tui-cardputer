@@ -1,0 +1,24 @@
+{
+ "steps": [
+  {"wait_for": {"text": "dst", "timeout_ms": 10000}},
+  {"send": "first question"},
+  {"key": "Enter"},
+  {"wait_stable": {"stable_ms": 700, "timeout_ms": 15000}},
+  {"send": "second question"},
+  {"key": "Enter"},
+  {"wait_stable": {"stable_ms": 700, "timeout_ms": 15000}},
+  {"send": "third question"},
+  {"key": "Enter"},
+  {"wait_stable": {"stable_ms": 700, "timeout_ms": 15000}, "snap": "bottom"},
+  {"key": "PgUp"},
+  {"wait_ms": 300, "snap": "page1"},
+  {"key": "PgUp"},
+  {"wait_ms": 300, "snap": "page2"},
+  {"key": "PgUp"},
+  {"wait_ms": 300, "snap": "page3"},
+  {"key": "PgUp"},
+  {"wait_ms": 300, "snap": "page4"},
+  {"key": "End"},
+  {"wait_ms": 300, "snap": "back"}
+ ]
+}

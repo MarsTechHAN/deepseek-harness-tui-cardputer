@@ -120,11 +120,14 @@ pub enum Ev {
     ThinkingDone { secs: f32, chars: usize },
     /// Settled assistant text (`assistant/message`).
     Assistant(String),
-    /// `tool/call`, logged before execution. `title` is UI presentation only.
+    /// `tool/call`, logged before execution. `title` is UI presentation only;
+    /// `args` is the parsed argument JSON, which the UI expands into the card
+    /// so the user can see exactly what is running.
     ToolCall {
         id: String,
         name: String,
         title: String,
+        args: String,
     },
     /// `tool/result`, settled in model order.
     ToolResult {
@@ -133,6 +136,9 @@ pub enum Ev {
         content: String,
         is_error: bool,
     },
+    /// Progress line from the `state_report` tool: one short sentence the TUI
+    /// pins to the top row until the next transcript line arrives.
+    StateReport(String),
     /// `additionalContexts` injected as a user message after the batch.
     Context(String),
     /// Automatic context compaction started for this many tokens.
@@ -157,6 +163,13 @@ pub trait Ui {
     /// Called continuously while the request is in flight. Implementations
     /// must not block for long: the keyboard is read here.
     fn pump(&mut self) -> Action;
+    /// True once the interrupt belongs to the whole turn (Esc, voice), not
+    /// just to the tool call that happened to be running. The driver checks it
+    /// after every batch so Esc really stops the turn instead of handing
+    /// cancelled tool results back to the model for another step.
+    fn interrupted(&self) -> bool {
+        false
+    }
     /// Strict-mode permission pop-up. Returning false rejects the call.
     fn confirm(&mut self, request: &crate::sandbox::Approval) -> bool;
     /// A message typed while busy that should be injected at the next step
@@ -189,13 +202,31 @@ struct UiHost<'a> {
 impl<'a> tool::ToolHost for UiHost<'a> {
     fn call(&mut self, ev: PipeEvent) {
         match ev {
-            PipeEvent::Call { id, name, title } => self.ui.on(Ev::ToolCall { id, name, title }),
-            PipeEvent::Made(o) => self.ui.on(Ev::ToolResult {
-                id: o.call_id,
-                name: o.name,
-                content: o.content,
-                is_error: o.is_error,
-            }),
+            PipeEvent::Call { id, name, title, args } => {
+                self.ui.on(Ev::ToolCall { id, name, title, args })
+            }
+            PipeEvent::Made(o) => {
+                // A progress report is a UI event, not a tool card: surface it
+                // the moment the call settles, before the batch moves on.
+                let report = if o.name == "state_report" && !o.is_error {
+                    o.value
+                        .as_ref()
+                        .and_then(|v| v.get("text"))
+                        .and_then(|t| t.as_str())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                };
+                self.ui.on(Ev::ToolResult {
+                    id: o.call_id,
+                    name: o.name,
+                    content: o.content,
+                    is_error: o.is_error,
+                });
+                if let Some(text) = report {
+                    self.ui.on(Ev::StateReport(text));
+                }
+            }
         }
     }
     fn cancel(&mut self) -> bool {
@@ -476,6 +507,12 @@ pub fn run_turn(
             break;
         }
 
+        if ui.interrupted() {
+            report.cancelled = true;
+            ui.on(Ev::StepEnd(steps));
+            break;
+        }
+
         // agent/pre-step: keep the request it is about to send inside the
         // context window. This is token based (see compact.rs), not the old
         // message-count heuristic.
@@ -638,6 +675,16 @@ pub fn run_turn(
                 }
             }
         }
+        if ui.interrupted() {
+            // The user interrupted while the batch ran: the turn stops here.
+            // The tool results stay in the history (the transcript is real),
+            // and the next queued message is dispatched by the front end.
+            report.cancelled = true;
+            ui.on(Ev::Info(crate::i18n::t("ui_cancelled").to_string()));
+            ui.on(Ev::StepEnd(steps));
+            break;
+        }
+
         // Identical-call detection (DSH thresholds 3/5/8; the first two are
         // enough on a 512 MB device).
         if let Some(first) = calls.first() {
