@@ -83,7 +83,9 @@ jobs:
   full-scenarios:
     name: full simulator scenarios (advisory)
     needs: build-and-test
-    if: github.event_name == 'push'
+    # Main pushes only: tag releases reuse the commit main already checked,
+    # and the whole suite is a ~20 minute job.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -108,9 +110,32 @@ jobs:
         run: python3 -m pip install --quiet pyte pillow
 
       - name: All simulator scenarios
+        continue-on-error: true
         run: |
           cd tools/sim
-          python3 run_scenarios.py
+          set +e
+          python3 run_scenarios.py 2>&1 | tee /tmp/scen.log
+          exit 0
+
+      - name: Scenario summary
+        if: always()
+        run: |
+          set -euo pipefail
+          total=$(grep -cE '^\[PASS\]' /tmp/scen.log || true)
+          failed=$(grep -E '^\[FAIL\]' /tmp/scen.log || true)
+          {
+            echo "### Simulator scenarios"
+            echo
+            echo "passed: ${total:-0} / 96"
+            if [ -n "$failed" ]; then
+              echo
+              echo "| failed scenario |"
+              echo "| --- |"
+              echo "$failed" | sed -E 's/^\[FAIL\] ([^ ]+).*/| `\1` |/'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Surface failures as annotations on the run page.
+          echo "$failed" | grep -E '^\[FAIL\]' | sed -E 's/^\[FAIL\] ([^ ]+).*/::error title=scenario \1 failed::\1/' || true
 
   # ---------------------------------------------------------------------
   # Release binaries: native x86_64 Linux + cross-compiled aarch64 (the

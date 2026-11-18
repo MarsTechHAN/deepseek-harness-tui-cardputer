@@ -57,7 +57,9 @@ scenarios, login-page checks and the 20-turn memory check.
 
 - release build + `cargo test`;
 - the simulator demo and a smoke set of scenarios on every PR;
-- the full simulator scenario suite for pushes to `main` and for version tags.
+- the full simulator scenario suite for pushes to `main` (advisory: it does not
+  block publishing, and failures are listed in the run's job summary and as
+  annotations). Tag releases reuse the commit `main` already checked.
 
 Publishing builds on that:
 
