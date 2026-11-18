@@ -16,9 +16,11 @@ zero-dependency Rust binary, on a 320×170 handheld.**
 <img src="https://img.shields.io/badge/panel-320%C3%97170%20%C2%B7%2053%C3%9712%20cells-22d3ee?style=flat-square" alt="320x170 panel, 53x12 cells">
 <img src="https://img.shields.io/badge/UI%20languages-6-8b5cf6?style=flat-square" alt="6 UI languages">
 <img src="https://img.shields.io/badge/tests-92%20passing-2ea043?style=flat-square" alt="92 unit tests">
+<a href="https://github.com/MarsTechHAN/deepseek-harness-tui-cardputer/actions/workflows/ci.yml"><img src="https://github.com/MarsTechHAN/deepseek-harness-tui-cardputer/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
 <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs welcome"></a>
 
 <a href="#quick-start">Quick start</a> ·
+<a href="#downloads">Downloads</a> ·
 <a href="#screenshots">Screenshots</a> ·
 <a href="#features">Features</a> ·
 <a href="#commands">Commands</a> ·
@@ -324,6 +326,32 @@ default answer language (a user request for another language wins).
 
 ---
 
+## Downloads
+
+Prebuilt binaries are published by CI on every commit to `main`:
+
+- **Nightly (rolling)**: [`releases/tag/nightly`](https://github.com/MarsTechHAN/deepseek-harness-tui-cardputer/releases/tag/nightly) —
+  one prerelease whose assets are **overwritten on every commit**; it always
+  carries the latest `main` build plus `SHA256SUMS`.
+- **Versioned releases**: [`releases`](https://github.com/MarsTechHAN/deepseek-harness-tui-cardputer/releases) —
+  built only when a version tag (`vX.Y.Z`, matching `Cargo.toml`) is pushed.
+
+| asset | target |
+| --- | --- |
+| `dst-linux-aarch64` | Cardputer Zero (Raspberry Pi CM0, Debian 13 aarch64) |
+| `dst-linux-x86_64` | Linux x86_64 desktop / server |
+
+The binaries are stripped, LTO'd and built on Ubuntu 24.04 (recent glibc; the
+device image is Debian 13). Run `dst --version` to identify a build:
+
+```sh
+curl -L -o dst https://github.com/MarsTechHAN/deepseek-harness-tui-cardputer/releases/download/nightly/dst-linux-aarch64
+chmod +x dst && ./dst --version
+```
+
+For deploying to the device (cross-compile + SSH push instead of downloading),
+see [Deploying to the device](#deploying-to-the-device).
+
 ## Quick start
 
 ### 1. Requirements
@@ -387,6 +415,7 @@ has the model refine the skill afterwards).
 
 ```sh
 dst                      # interactive TUI
+dst --version                           # build identity (e.g. dst 0.1.0 (aarch64, release))
 dst --once "summarise this repo"        # one turn, prints events
 dst --tools                             # effective tool set + capability decision
 dst --hwinfo-scan                       # run the hardware scan, print the skill summary

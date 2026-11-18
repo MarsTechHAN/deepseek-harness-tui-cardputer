@@ -1,22 +1,46 @@
 name: ci
 
+# Compile + test on every push/PR, then publish binaries:
+#   * every push to main  -> rolling "nightly" pre-release (one release, assets
+#     overwritten on each commit)
+#   * a pushed vX.Y.Z tag -> a versioned release (tag must match Cargo.toml)
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
 jobs:
+  # ---------------------------------------------------------------------
+  # Fast gate: release build + unit tests + a simulator smoke test.
+  # Runs on every push and pull request.
+  # ---------------------------------------------------------------------
   build-and-test:
-    name: build + unit tests
+    name: build + unit tests + simulator smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
 
       - name: Build (release, LTO)
         run: cargo build --release --locked
@@ -24,7 +48,268 @@ jobs:
       - name: Unit tests
         run: cargo test --locked
 
+      - name: Build debug binary for the simulator
+        run: cargo build --locked
+
       - name: Report binary size
         run: |
           ls -lh target/release/dst
           echo "binary: $(stat -c%s target/release/dst) bytes"
+
+      - name: Set up Python for the simulator
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install simulator dependencies
+        run: python3 -m pip install --quiet pyte pillow
+
+      - name: Simulator demo (device-fidelity renderer)
+        run: |
+          cd tools/sim
+          python3 run_demo.py
+
+      - name: Simulator smoke scenarios
+        run: |
+          cd tools/sim
+          python3 run_scenarios.py \
+            progress job_manager rewind rewind_prompt btw_side_question \
+            image_input read_image_tool creator_build update_hwinfo
+
+  # ---------------------------------------------------------------------
+  # Full regression: all checked simulator scenarios. Publishing paths only
+  # (main or a version tag), so pull requests stay quick.
+  # ---------------------------------------------------------------------
+  full-scenarios:
+    name: full simulator scenarios (advisory)
+    needs: build-and-test
+    if: github.event_name == 'push'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build debug binary for the simulator
+        run: cargo build --locked
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install simulator dependencies
+        run: python3 -m pip install --quiet pyte pillow
+
+      - name: All simulator scenarios
+        run: |
+          cd tools/sim
+          python3 run_scenarios.py
+
+  # ---------------------------------------------------------------------
+  # Release binaries: native x86_64 Linux + cross-compiled aarch64 (the
+  # Cardputer Zero target). Same flags as tools/deploy/deploy.sh but using
+  # Ubuntu's cross gcc instead of the host zig wrapper.
+  # ---------------------------------------------------------------------
+  binaries:
+    name: release binaries (${{ matrix.arch }})
+    needs: build-and-test
+    if: github.event_name == 'push'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            linker: ""
+          - arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            linker: aarch64-linux-gnu-gcc
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install the aarch64 cross linker
+        if: matrix.arch == 'aarch64'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+          rustup target add aarch64-unknown-linux-gnu
+
+      - name: Build
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.linker }}
+        run: |
+          if [ -n "${{ matrix.linker }}" ]; then
+            cargo build --release --locked --target ${{ matrix.target }}
+          else
+            cargo build --release --locked
+          fi
+
+      - name: Collect + verify the artifact
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            src="target/${{ matrix.target }}/release/dst"
+            out="dist/dst-linux-aarch64"
+          else
+            src="target/release/dst"
+            out="dist/dst-linux-x86_64"
+          fi
+          cp "$src" "$out"
+          chmod +x "$out"
+          file "$out"
+          case "$(file -b "$out")" in
+            *"ELF 64-bit"*) ;;
+            *) echo "not an ELF64 binary: $out" >&2; exit 1 ;;
+          esac
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            file -b "$out" | grep -q "aarch64" || { echo "not aarch64" >&2; exit 1; }
+          else
+            "$out" --version
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dst-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------
+  # Nightly: one rolling pre-release on the "nightly" tag, overwritten on
+  # every commit to main (its assets always describe the latest main).
+  # ---------------------------------------------------------------------
+  nightly:
+    name: publish nightly release
+    needs: binaries
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: nightly-release
+      cancel-in-progress: true
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: dst-*
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum dst-linux-x86_64 dst-linux-aarch64 > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Write release notes
+        env:
+          COMMIT: ${{ github.sha }}
+          SHORT: ${{ github.sha }}
+        run: |
+          {
+            echo "Automated **nightly** build of \`${SHORT:0:12}\` (rolling release: these assets are replaced on every commit to \`main\`)."
+            echo
+            echo "- built from: https://github.com/${GITHUB_REPOSITORY}/commit/${COMMIT}"
+            echo "- date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- checks: \`cargo test\` and the simulator smoke set on every PR/push; the full scenario suite runs alongside this build"
+            echo "- run \`dst --version\` to identify a build"
+            echo
+            echo "| asset | target |"
+            echo "| --- | --- |"
+            echo "| \`dst-linux-x86_64\` | Linux x86_64 |"
+            echo "| \`dst-linux-aarch64\` | Linux aarch64 (Cardputer Zero / Raspberry Pi CM0) |"
+            echo
+            echo "Both binaries are stripped, size-optimised (LTO, \`opt-level=z\`), and need a recent glibc (Ubuntu 24.04 build; Debian 13 on the device)."
+          } > notes.md
+
+      - name: Replace the rolling nightly release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # One release, overwritten: drop the previous nightly tag+release first.
+          gh release delete nightly --cleanup-tag --yes || true
+          gh release create nightly \
+            --target "${GITHUB_SHA}" \
+            --prerelease \
+            --title "Nightly build ($(date -u +%Y-%m-%d))" \
+            --notes-file notes.md \
+            dist/dst-linux-x86_64 dist/dst-linux-aarch64 dist/SHA256SUMS
+
+  # ---------------------------------------------------------------------
+  # Official release: only for vX.Y.Z tags, and the tag must match the
+  # Cargo.toml version (so a release cannot ship a mislabelled build).
+  # ---------------------------------------------------------------------
+  release:
+    name: publish versioned release
+    needs: binaries
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: dst-*
+          merge-multiple: true
+
+      - name: Tag must match Cargo.toml
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "tag=$tag cargo=$version"
+          if [ "$tag" != "v$version" ]; then
+            echo "::error::tag $tag does not match Cargo.toml version v$version"
+            exit 1
+          fi
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum dst-linux-x86_64 dst-linux-aarch64 > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Verify the host binary
+        run: |
+          chmod +x dist/dst-linux-x86_64
+          dist/dst-linux-x86_64 --version
+          file dist/dst-linux-aarch64
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "dst ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/dst-linux-x86_64 dist/dst-linux-aarch64 dist/SHA256SUMS

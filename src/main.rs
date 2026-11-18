@@ -6044,6 +6044,18 @@ fn main() {
 
     // Host/device debug entry points for the real DSH login flow.
     let argv: Vec<String> = std::env::args().collect();
+    // Release/CI smoke check and a quick way for users to identify a build.
+    if argv.get(1).map(|s| s.as_str()) == Some("--version")
+        || argv.get(1).map(|s| s.as_str()) == Some("-V")
+    {
+        println!(
+            "dst {} ({}, {})",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::ARCH,
+            if cfg!(debug_assertions) { "debug" } else { "release" }
+        );
+        return;
+    }
     if argv.iter().any(|a| a == "--dsh-login-test") {
         let port = 7788u16;
         let mut never_cancel = || false;

@@ -51,6 +51,36 @@ optional and documented in `docs/UX-LIVE.md`.
 `python3 tools/sim/run_all.py` runs everything offline: demo, 96 feature
 scenarios, login-page checks and the 20-turn memory check.
 
+## CI and releases
+
+`ci` (`.github/workflows/ci.yml`) runs on every push and pull request:
+
+- release build + `cargo test`;
+- the simulator demo and a smoke set of scenarios on every PR;
+- the full simulator scenario suite for pushes to `main` and for version tags.
+
+Publishing builds on that:
+
+- **every push to `main`** rebuilds the Linux x86_64 and aarch64 binaries and
+  replaces the rolling [`nightly`](https://github.com/MarsTechHAN/deepseek-harness-tui-cardputer/releases/tag/nightly)
+  prerelease (same asset names, overwritten each commit);
+- **a pushed `vX.Y.Z` tag** builds the same assets and creates a versioned
+  release with generated notes. The tag must match `Cargo.toml`'s `version`
+  (the workflow fails otherwise).
+
+Cutting a release:
+
+```sh
+# bump Cargo.toml version, then:
+git commit -am "release: vX.Y.Z"
+git tag vX.Y.Z
+git push origin main --tags
+```
+
+The deployment script (`tools/deploy/deploy.sh`) is separate and still
+cross-compiles locally with zig; CI release binaries use Ubuntu's cross gcc and
+are meant for download/`scp`, not for the deploy script.
+
 ## Making a change
 
 1. Keep the diff focused; one concern per commit.
