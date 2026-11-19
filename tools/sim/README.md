@@ -554,6 +554,8 @@ request log:
 | `busy_commands` | the three input classes during a turn | `/usage` runs immediately, `/model` is refused, `/btw` runs as a separate read-only request with its answer in a panel, plain chat queues, and no command ever enters the model context |
 | `state_report_steps` | one report per working step | each tool step starts with `state_report`, the pinned row survives tool cards/text and is replaced by the next report, then joins the transcript when the turn ends |
 | `usage_ring_reset` | fresh-start context ring | a `usage.json` carrying a large previous-run context starts at `○ 0%`, not the old value |
+| `update_offer` | startup self-update offer | a fake nightly feed (local HTTP server) makes the background check offer `[Y]es/[N]o` on startup; No/Esc dismiss, Yes downloads and refuses the bad checksum, and the running binary/config stay untouched |
+| `update_command` | `/update` wiring and channel config | `/update` checks the feed and reports an unreachable source as an error line, `/update stable` switches and persists `update.channel`, a bad channel prints usage, and no model request is spent |
 | `todo_plan` | DSH-style todo plan | `todo_write` sends the whole `{content,status}` list, the `done/total` badge moves 0/2 → 1/2, the result line is DSH's, and the list is cleared when the next turn starts |
 | `new_session` | `/clear` and `/new` | both reset the conversation (the next request is system+user only), restart the splash and zero the ring |
 | `read_image_tool` | agent opens an image | the model calls `read_image {"file_path": "~/photo.png"}`, the card shows the path, the tool result carries the DeepSeek `image_url` block so the model describes the picture, and the following request's history has only the `[image read: …]` placeholder |
@@ -568,7 +570,7 @@ request log:
 
 ```bash
 cd tools/sim
-python3 run_scenarios.py               # all 101 checked scenarios (~13 min)
+python3 run_scenarios.py               # all 103 checked scenarios (~13 min)
 python3 run_scenarios.py goal compact  # just some
 python3 check_memory.py                # 20-turn session, samples dst RSS
 python3 run_all.py                     # demo + scenarios + memory in one go

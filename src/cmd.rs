@@ -84,6 +84,12 @@ pub const COMMANDS: &[Command] = &[
         input_hint: Some("[<path>|clear]"),
     },
     Command {
+        name: "update",
+        category: "cat_setup",
+        description: "check the update channel and install a newer dst build (nightly|stable)",
+        input_hint: Some("[nightly|stable]"),
+    },
+    Command {
         name: "update-hwinfo",
         category: "cat_info",
         description: "rescan this device's hardware and refresh the hardware-info skill",
@@ -291,6 +297,9 @@ pub struct Outcome {
     pub image_clear: bool,
     /// Ask a one-off read-only subagent this side question (/btw <question>).
     pub btw: Option<String>,
+    /// Check for a self-update; `Some(channel)` switches the channel first,
+    /// `Some("")` keeps the configured one (/update [nightly|stable]).
+    pub update: Option<String>,
 }
 
 impl Outcome {
@@ -312,6 +321,7 @@ impl Outcome {
             image: None,
             image_clear: false,
             btw: None,
+            update: None,
             compact: false,
         }
     }
@@ -333,6 +343,7 @@ impl Outcome {
             image: None,
             image_clear: false,
             btw: None,
+            update: None,
             compact: false,
         }
     }
@@ -381,6 +392,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             image: None,
             image_clear: false,
             btw: None,
+            update: None,
         },
         "model" => {
             if arg.is_empty() {
@@ -401,6 +413,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             image: None,
             image_clear: false,
             btw: None,
+            update: None,
                     compact: false,
                 }
             } else if arg.len() > 120 {
@@ -505,6 +518,20 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                 out
             }
         }
+        "update" => {
+            let arg = arg.trim().to_ascii_lowercase();
+            if !arg.is_empty() && crate::update::Channel::parse(&arg).is_none() {
+                Outcome::many(vec![
+                    (crate::i18n::t("cmd_update_usage").to_string(), KIND_ERR),
+                    (crate::i18n::t("try_help").to_string(), KIND_DIM),
+                ])
+            } else {
+                let mut out = Outcome::text("", KIND_DIM);
+                out.lines.clear();
+                out.update = Some(arg);
+                out
+            }
+        }
         "update-hwinfo" | "update_hwinfo" | "hwinfo" => {
             // The scan is local and deterministic: it works in any mode. In
             // creator mode the model then reads the refreshed skill and refines
@@ -571,6 +598,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             image: None,
             image_clear: false,
             btw: None,
+            update: None,
                     compact: false,
                 }
             }
@@ -586,6 +614,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             image: None,
             image_clear: false,
             btw: None,
+            update: None,
         },
         "extensions" => Outcome {
             lines: Vec::new(), quit: false, clear: false, login: false,
@@ -597,6 +626,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             image: None,
             image_clear: false,
             btw: None,
+            update: None,
         },
         "rename" => {
             if arg.is_empty() {
@@ -625,6 +655,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             image: None,
             image_clear: false,
             btw: None,
+            update: None,
             compact: true,
         },
         "goal" => {
@@ -706,6 +737,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
                             image: None,
                             image_clear: false,
                             btw: None,
+                            update: None,
                             compact: false,
                         },
                     }
@@ -733,6 +765,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             image: None,
             image_clear: false,
             btw: None,
+            update: None,
                     compact: false,
                 }
             }
@@ -754,6 +787,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             image: None,
             image_clear: false,
             btw: None,
+            update: None,
             compact: false,
         },
         "quit" | "exit" | "q" => Outcome {
@@ -773,6 +807,7 @@ pub fn evaluate(input: &str, cfg: &mut Config, persist: bool) -> Option<Outcome>
             image: None,
             image_clear: false,
             btw: None,
+            update: None,
             compact: false,
         },
         "" => usage("/"),

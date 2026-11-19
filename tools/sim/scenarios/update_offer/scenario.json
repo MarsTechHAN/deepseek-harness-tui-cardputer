@@ -1,0 +1,76 @@
+{
+ "update_mock": true,
+ "steps": [
+  {
+   "wait_for": {
+    "text": "dst",
+    "timeout_ms": 15000
+   }
+  },
+  {
+   "wait_for": {
+    "text": "Update available",
+    "timeout_ms": 15000
+   },
+   "snap": "offer"
+  },
+  {
+   "send": "n"
+  },
+  {
+   "wait_for": {
+    "text": "update skipped",
+    "timeout_ms": 5000
+   },
+   "snap": "declined"
+  },
+  {
+   "send": "/update"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Update available",
+    "timeout_ms": 15000
+   },
+   "snap": "offer2"
+  },
+  {
+   "send": "y"
+  },
+  {
+   "wait_for": {
+    "text": "update failed",
+    "timeout_ms": 15000
+   },
+   "snap": "failed"
+  },
+  {
+   "send": "/update"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "text": "Update available",
+    "timeout_ms": 15000
+   }
+  },
+  {
+   "key": "Esc"
+  },
+  {
+   "wait_for": {
+    "text": "update skipped",
+    "timeout_ms": 5000
+   }
+  },
+  {
+   "wait_ms": 300,
+   "snap": "final"
+  }
+ ]
+}

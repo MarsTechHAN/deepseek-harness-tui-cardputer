@@ -594,6 +594,9 @@ pub struct Config {
     pub creator: bool,
     /// True once a usable API key has been provided.
     pub configured: bool,
+    /// Self-update channel: `nightly` (rolling commit builds) or `stable`
+    /// (newest versioned release). Default `nightly`.
+    pub update_channel: String,
 }
 
 impl Default for Config {
@@ -633,6 +636,7 @@ impl Default for Config {
             sandbox_judge_max_tokens: 48,
             creator: false,
             configured: false,
+            update_channel: "nightly".into(),
         }
     }
 }
@@ -729,6 +733,19 @@ impl Config {
             }
             if let Some(v) = tui.get("mode").and_then(|v| v.as_str()) {
                 self.creator = v.eq_ignore_ascii_case("creator");
+            }
+        }
+        if let Some(update) = doc.get("update") {
+            if let Some(v) = update.get("channel").and_then(|v| v.as_str()) {
+                if crate::update::Channel::parse(v).is_some() {
+                    self.update_channel = v.trim().to_ascii_lowercase();
+                }
+            }
+        }
+        // Tolerate the flat spelling too (hand-written configs).
+        if let Some(v) = doc.get("update_channel").and_then(|v| v.as_str()) {
+            if crate::update::Channel::parse(v).is_some() {
+                self.update_channel = v.trim().to_ascii_lowercase();
             }
         }
         if let Some(voice) = doc.get("voice") {
@@ -845,6 +862,13 @@ impl Config {
         if !self.api_key.is_empty() {
             s.push_str(&format!("  key: {}\n", yaml_quote(&self.api_key.trim())));
         }
+        s.push_str("update:\n");
+        s.push_str(&format!(
+            "  channel: {}\n",
+            crate::update::Channel::parse(&self.update_channel)
+                .unwrap_or(crate::update::Channel::Nightly)
+                .as_str()
+        ));
         s.push_str("voice:\n");
         s.push_str(&format!("  tts_voice: {}\n", yaml_quote(&self.tts_voice)));
         s.push_str("tui:\n");

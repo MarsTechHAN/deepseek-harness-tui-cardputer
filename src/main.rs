@@ -36,6 +36,7 @@ mod usage;
 mod json;
 mod tool;
 mod tools;
+mod update;
 mod vision;
 mod voice;
 
@@ -109,6 +110,8 @@ pub struct Scr {
     /// Progress line from the `state_report` tool, pinned to the top row until
     /// the next transcript line arrives.
     state_line: Option<String>,
+    /// A finished background update check waiting for the user's yes/no.
+    update_offer: Option<crate::update::UpdateInfo>,
     /// Strict-mode permission pop-up.
     approval: Option<ApprovalView>,
     /// Creator mode is on: idle hint, app manager and system prompt follow it.
@@ -337,6 +340,7 @@ impl Scr {
             attachments: Vec::new(),
             live: None,
             state_line: None,
+            update_offer: None,
             approval: None,
             creator: false,
             apps_count: 0,
@@ -1867,6 +1871,115 @@ impl Scr {
     }
 
     /// returns Some(line) when the user submits
+    /// Ask once whether to install the update the background check found.
+    /// Yes downloads/verifies/installs and re-execs the new binary; No/Esc
+    /// dismisses it for this session (`/update` can re-offer at any time).
+    fn offer_update(&mut self) {
+        let Some(info) = self.update_offer.clone() else { return };
+        let mut sel = 0usize;
+        loop {
+            let items = vec![
+                MenuItem {
+                    label: i18n::t("ui_update_yes").to_string(),
+                    value: String::new(),
+                },
+                MenuItem {
+                    label: i18n::t("ui_update_no").to_string(),
+                    value: String::new(),
+                },
+            ];
+            let preview = Some(vec![
+                i18n::tf("ui_update_target", &[&info.version, info.channel.as_str()]),
+                i18n::tf("ui_update_current", &[env!("CARGO_PKG_VERSION")]),
+                format!("{}: {}", i18n::t("ui_update_asset_label"), info.asset),
+            ]);
+            self.menu = Some(Menu {
+                title: i18n::t("ui_update_title").into(),
+                items,
+                sel,
+                hint: i18n::t("ui_update_hint").into(),
+                preview,
+            });
+            self.draw();
+            let k = match self.read_key_timeout() {
+                Some(k) => k,
+                None => continue,
+            };
+            if k == 0x1b {
+                match self.read_key_after_esc() {
+                    Some(b'[') => match self.read_key_timeout() {
+                        Some(b'A') => sel = sel.saturating_sub(1),
+                        Some(b'B') => sel = (sel + 1).min(1),
+                        _ => {}
+                    },
+                    _ => {
+                        self.decline_update();
+                        return;
+                    }
+                }
+                continue;
+            }
+            match k {
+                b'y' | b'Y' => {
+                    self.install_update(&info);
+                    return;
+                }
+                b'n' | b'N' | 0x03 => {
+                    self.decline_update();
+                    return;
+                }
+                0x0d | 0x0a => {
+                    if sel == 0 {
+                        self.install_update(&info);
+                    } else {
+                        self.decline_update();
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn decline_update(&mut self) {
+        self.menu = None;
+        self.update_offer = None;
+        self.push(i18n::t("ui_update_skipped"), K_DIM);
+        self.draw();
+    }
+
+    /// Download, verify and install the offered build, then re-exec.
+    fn install_update(&mut self, info: &crate::update::UpdateInfo) {
+        self.menu = None;
+        self.update_offer = None;
+        self.busy = true;
+        self.live = Some((1, i18n::t("ui_update_downloading").to_string()));
+        self.draw();
+        let result = crate::update::install(info, |stage| {
+            let key = match stage {
+                "verifying" => "ui_update_verifying",
+                "installing" => "ui_update_installing",
+                _ => "ui_update_downloading",
+            };
+            self.live = Some((1, i18n::t(key).to_string()));
+            self.draw();
+        });
+        self.busy = false;
+        self.live = None;
+        match result {
+            Ok(()) => {
+                self.push(&i18n::tf("ui_update_done", &[&info.version]), K_NORM);
+                self.draw();
+                std::thread::sleep(std::time::Duration::from_millis(900));
+                crate::update::restart_now();
+            }
+            Err(e) => {
+                self.push(&i18n::tf("ui_update_failed", &[&e]), K_ERR);
+                self.draw();
+            }
+        }
+    }
+
     fn edit(&mut self) -> Option<String> {
         loop {
             self.draw();
@@ -1881,6 +1994,10 @@ impl Scr {
             }
             if self.artifact.is_some() {
                 self.artifact_keystroke();
+                continue;
+            }
+            if self.update_offer.is_some() {
+                self.offer_update();
                 continue;
             }
             let ev = match self.read_key_event() {
@@ -4565,6 +4682,61 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc) {
 
 // --------------------------------------------------------------- sessions
 
+fn update_channel(cfg: &config::Config) -> crate::update::Channel {
+    crate::update::Channel::parse(&cfg.update_channel).unwrap_or(crate::update::Channel::Nightly)
+}
+
+/// `/update [nightly|stable]`: switch the channel (saved), check now and queue
+/// the yes/no offer; the download/install happens only after confirmation.
+fn run_update_command(scr: &mut Scr, config_rc: &ConfigRc, arg: &str) {
+    if !arg.is_empty() {
+        let Some(channel) = crate::update::Channel::parse(arg) else {
+            return;
+        };
+        {
+            let mut c = config_rc.borrow_mut();
+            c.update_channel = channel.as_str().to_string();
+            let _ = c.save();
+        }
+        scr.push(
+            &i18n::tf("ui_update_channel_set", &[channel.as_str()]),
+            K_DIM,
+        );
+    }
+    if !crate::update::enabled() {
+        scr.push(i18n::t("ui_update_dev_build"), K_ERR);
+        scr.draw();
+        return;
+    }
+    if crate::update::asset_name().is_none() {
+        scr.push(i18n::t("ui_update_unsupported"), K_ERR);
+        scr.draw();
+        return;
+    }
+    let channel = update_channel(&config_rc.borrow());
+    scr.busy = true;
+    scr.live = Some((1, i18n::t("ui_update_checking").to_string()));
+    scr.draw();
+    let result = crate::update::check(channel);
+    scr.busy = false;
+    scr.live = None;
+    match result {
+        Ok(Some(info)) => {
+            // The idle loop asks yes/no on its next iteration.
+            scr.update_offer = Some(info);
+        }
+        Ok(None) => scr.push(
+            &i18n::tf(
+                "ui_update_up_to_date",
+                &[env!("CARGO_PKG_VERSION"), channel.as_str()],
+            ),
+            K_NORM,
+        ),
+        Err(e) => scr.push(&i18n::tf("ui_update_failed", &[&e]), K_ERR),
+    }
+    scr.draw();
+}
+
 fn new_session_path() -> std::path::PathBuf {
     // Millisecond suffix + collision loop: two dst instances (different
     // terminals) or a quick /new can create a session in the same second and
@@ -6641,6 +6813,14 @@ start another one in a different terminal or tmux window"
     tools::set_cfg(cfg.clone());
     voice::set_cfg(cfg.clone());
     refresh_ctx_window(&mut scr, &cfg);
+    // Startup self-update check (release builds only): background thread, the
+    // TUI offers the result once it lands.
+    if config_rc.borrow().configured {
+        crate::update::spawn_check(crate::update::Channel::parse(
+            &config_rc.borrow().update_channel,
+        )
+        .unwrap_or(crate::update::Channel::Nightly));
+    }
     if !config_rc.borrow().configured {
         scr.push(i18n::t("unconfigured"), K_ERR);
     }
@@ -6652,6 +6832,9 @@ start another one in a different terminal or tmux window"
         scr.on_tick = Some(Box::new(move |s: &mut Scr| {
             let c = sc.borrow().clone();
             jobs::poll(&c, &tdefs2, &msgs2, s);
+            if let Some(Ok(Some(info))) = crate::update::take_check() {
+                s.update_offer = Some(info);
+            }
             s.watch_buffer.extend(crate::bg::poll_watchers());
             // Coalesce a chatty watcher into one bounded message and rate-limit
             // how often lines can start an unattended turn.
@@ -6990,6 +7173,9 @@ start another one in a different terminal or tmux window"
                         run_btw(&mut scr, &now_cfg, caps, &msgs, &question, &btw_opts);
                         scr.draw();
                     }
+                }
+                if let Some(arg) = out.update {
+                    run_update_command(&mut scr, &config_rc, &arg);
                 }
                 if let Some(p) = out.model_prompt {
                     // The request is internal: show a short label in the

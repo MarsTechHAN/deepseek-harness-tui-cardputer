@@ -197,6 +197,23 @@ main conversation:
    `msgs`, the session file and the checkpoint list are not modified, so the
    side question cannot pollute (or be re-sent with) the real conversation.
 
+## Self-update
+
+`update.channel` selects the release feed: `nightly` (the rolling prerelease
+replaced on every commit to `main`; "newer" means the published binary's
+SHA-256 differs from the running one) or `stable` (newest `vX.Y.Z` release;
+versions compared numerically). No HTTP crates: metadata and the binary come
+from `curl`, hashing from `sha256sum`/`shasum` (`src/update.rs`). On startup a
+background thread checks the feed (release builds only; `DST_NO_UPDATE_CHECK=1`
+disables it) and the TUI offers the result as a yes/no menu. `/update
+[nightly|stable]` checks on demand and saves a channel switch. Installation
+downloads to `.dst.update.<pid>` next to the running binary, verifies the
+published SHA-256, renames it over the binary atomically (a running Linux
+executable can be replaced this way) and re-execs dst with the same argv.
+Failures (offline feed, checksum mismatch, no write permission in
+`/usr/local/bin`) surface as a normal error line and leave the old binary
+untouched.
+
 ## Multiple instances
 
 The process owns its **terminal**, not the machine: `/tmp/dst.lock/pid` (a

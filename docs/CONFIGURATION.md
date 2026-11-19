@@ -28,6 +28,9 @@ api:
   retries: 2                  # transient-failure retries per request
   fallback_models: [deepseek-flash]
 
+update:
+  channel: nightly            # nightly (rolling main builds) | stable (vX.Y.Z releases)
+
 voice:
   tts_voice: stella           # stella | tide
 
@@ -112,6 +115,12 @@ Setting `key` clears `dsh_token`, so the newer credential is never shadowed.
 | `tui.hw_survey_done` | `false` | first run offered to scan the hardware into the `hardware-info` skill (set once, either answer) |
 | `voice.tts_voice` | `stella` | `stella` or `tide` |
 
+### `update`
+
+| key | default | meaning |
+| --- | --- | --- |
+| `update.channel` | `nightly` | `nightly` = rolling build replaced on every commit to `main` (SHA-256 compared against the running binary); `stable` = newest `vX.Y.Z` release (version compared). On startup dst checks the channel in the background and asks `[Y]es/[N]o` when a newer build exists; `/update` checks and installs on demand, `/update stable|nightly` switches the channel (saved here). Downloads are SHA-256 verified, the binary is replaced atomically in place and dst re-execs itself. |
+
 ### Budgets
 
 | key | default | meaning |
@@ -193,6 +202,10 @@ tools=artifact,bash,create_goal,...
 ```
 
 ## Environment and test hooks
+
+Self-update hooks: `DST_NO_UPDATE_CHECK=1` disables the startup check;
+`DST_UPDATE_BASE` points the updater at another mirror (tests); `DST_UPDATE_FORCE=1`
+enables `/update` in developer builds (which default to "update disabled").
 
 These exist for the simulator and the live walkthrough. None is set on the
 device:

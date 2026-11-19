@@ -1,0 +1,16 @@
+{
+ "env": {"DST_UPDATE_FORCE": "1", "DST_UPDATE_BASE": "http://127.0.0.1:9"},
+ "steps": [
+  {"wait_for": {"text": "dst", "timeout_ms": 15000}},
+  {"send": "/update"}, {"key": "Enter"},
+  {"wait_for": {"text": "update failed", "timeout_ms": 8000}},
+  {"wait_ms": 200, "snap": "failed"},
+  {"send": "/update stable"}, {"key": "Enter"},
+  {"wait_for": {"text": "update channel set to stable", "timeout_ms": 8000}},
+  {"wait_for": {"text": "update failed", "timeout_ms": 8000}},
+  {"wait_ms": 200, "snap": "stable"},
+  {"send": "/update bogus"}, {"key": "Enter"},
+  {"wait_for": {"text": "usage: /update", "timeout_ms": 5000}},
+  {"wait_ms": 200, "snap": "usage"}
+ ]
+}

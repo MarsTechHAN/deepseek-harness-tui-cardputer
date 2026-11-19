@@ -5,7 +5,7 @@ Method: every screen is exercised through the pty simulator, captured as text
 animated `docs/demo.webp`) are device-fidelity simulator renders of the real
 `dst` binary with scripted model replies, rebuilt by
 `python3 tools/sim/make_demo_webp.py`; `run_scenarios.py` supplies the
-deterministic assertions (101 checked scenarios). An optional real-endpoint pass
+deterministic assertions (103 checked scenarios). An optional real-endpoint pass
 (`run_live.py`, `live_creator_check.py`) can be re-run when an endpoint is
 available. See `docs/UX-LIVE.md`. All rows were inspected visually, not only
 asserted in code.
@@ -38,6 +38,7 @@ asserted in code.
 | Background | task list (all/running/watchers), save, full output | fixed: the footer hint fits 53 cells in all six languages (it was cut to `f…`); long commands are ellipsised instead of bare-cut; filter titles and full-width rows |
 | Queue | CtrlQ editor, delete, pull back into prompt; three input classes during a turn | fixed: during a turn only direct chat text queues; side-effect-free commands (`/usage`, `/btw`, `/image`, `/rename`, `/update-hwinfo`, `/goal`, `/quit`) execute immediately in the middle of the turn; model/history commands (`/config`, `/model`, `/effort`, `/key`, `/login`, `/clear`, `/new`, `/compact`, `/resume`, `/rewind`, `/extensions`, `/help`, `/apps`) are refused with "press Esc first" and never enter the queue or the model context (`busy_commands`). Long queued messages are still ellipsised in the CtrlQ editor (`queue_edit`) |
 | Context ring | bottom-right start state | fixed: `usage.json` persisted `last_prompt`/`last_completion`, so a fresh start showed the previous run's context pressure. A fresh run now starts at `○ 0%`; `/resume` and `/rewind` seed the ring from the loaded history's token estimate; `/clear` and `/new` reset it (`usage_ring_reset`) |
+| Self-update | startup offer, `/update`, channels | ok: the startup background check offers `[Y]es/[N]o` only when a newer build exists; `/update` checks on demand; `/update stable|nightly` switches and persists `update.channel`; downloads are SHA-256 verified before an atomic in-place replace + re-exec. An unreachable feed renders as 「update failed: …」 without spending a model request (`update_command`); config round-trip is unit-tested |
 | Multiple instances | one dst per terminal | fixed: dst was a machine-wide singleton (`/tmp/dst.lock/pid`); now each process claims only its own pty (`~/.dst/tmp/terminals/<tty>.pid`), so the panel, an SSH shell and a tmux window can run dst side by side while a second instance on the *same* terminal is still refused. Session filenames gained a millisecond suffix + collision loop so concurrent instances cannot overwrite each other (`check_multi_instance.py`, unit-tested) |
 | New conversation | `/clear`, `/new` | fixed: both now reset the conversation too (fresh system prompt, no session file, context ring 0%, splash), while the old session stays on disk for `/resume`; previously `/clear` only reset the screen and kept sending the old history (`new_session`) |
 | Goal | pursuing / objective / paused / done badges, wrap-up | fixed: state glyphs are ASCII-safe (paused/done rendered as boxes before); the model-facing wrap-up paragraph is now a one-line `+ goal wrap-up …` marker instead of filling the transcript |

@@ -21,9 +21,11 @@ import os
 import shutil
 import signal
 import subprocess
+import threading
 import sys
 import tempfile
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from run_demo import DEFAULT_BIN, MOCK, REPO, SIM, log, start_mock, stop_mock
 
@@ -101,6 +103,46 @@ def read_screens(out_dir):
     return screens
 
 
+def start_update_mock(work):
+    """Serve a fake nightly release feed for the self-update scenarios.
+
+    The updater compares the running binary's SHA-256 with the published
+    SHA256SUMS; a fake digest therefore means "update available". The fake
+    binary does not match that digest, so choosing to install fails at the
+    checksum step without touching the real dst binary.
+    """
+    fake_sha = "0" * 64
+    sums = f"{fake_sha}  dst-linux-aarch64\n{fake_sha}  dst-linux-x86_64\n"
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - http.server API
+            if self.path.endswith("/SHA256SUMS"):
+                body = sums.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif "/dst-linux-" in self.path:
+                body = b"fake-update-binary\n"
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self.send_error(404)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    return server, url
+
+
 def start_mock_login(work, env):
     """Start the nine-step DSH login mock; returns (proc, cleanup)."""
     port_file = os.path.join(work, "mock-login-port")
@@ -172,6 +214,19 @@ def run_scenario(name, binary, timeout=None):
     log_path = os.path.join(work, "requests.jsonl")
     env = dict(os.environ)
     env.update({str(k): str(v) for k, v in (doc.get("env") or {}).items()})
+    update_mock = None
+    if doc.get("update_mock"):
+        update_mock, update_url = start_update_mock(work)
+        env["DST_UPDATE_BASE"] = update_url
+        env["DST_UPDATE_FORCE"] = "1"
+        import hashlib as _hashlib
+        try:
+            with open(binary, "rb") as _bh:
+                _target_sha = _hashlib.sha256(_bh.read()).hexdigest()
+        except OSError:
+            _target_sha = ""
+        with open(os.path.join(work, "update-target-sha256"), "w", encoding="utf-8") as fh:
+            fh.write(_target_sha)
     want_mock_login = bool(doc.get("mock_login")) or os.path.exists(os.path.join(base, "mock_login"))
     login_mock = None
     login_log = None
@@ -256,6 +311,9 @@ def run_scenario(name, binary, timeout=None):
                 raise AssertionError(f"simulator failed (exit {returncode}):\n{tail}")
     finally:
         stop_mock(proc)
+        if update_mock is not None:
+            update_mock.shutdown()
+            update_mock.server_close()
         if login_mock is not None:
             login_mock.terminate()
             try:
@@ -2411,6 +2469,56 @@ def check_todo_plan(screens, reqs, work):
     return checks
 
 
+def check_update_command(screens, reqs, work):
+    failed = screens.get("failed", "")
+    stable = screens.get("stable", "")
+    usage = screens.get("usage", "")
+    cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+    checks = []
+    checks.append(("update failed" in failed,
+                   "/update runs the check and reports an unreachable update source"))
+    checks.append(("update channel set to stable" in stable
+                   and "update failed" in stable,
+                   "/update <channel> switches the channel and checks it"))
+    checks.append(("channel: stable" in cfg,
+                   "the channel is persisted in config.yml for the next start"))
+    checks.append(("/update [nightly|stable]" in usage,
+                   "a bad channel argument prints the usage hint"))
+    checks.append((len(reqs) == 0, "updating never spends a model request"))
+    return checks
+
+
+def check_update_offer(screens, reqs, work):
+    import hashlib
+    import glob
+    offer = screens.get("offer", "")
+    declined = screens.get("declined", "")
+    failed = screens.get("failed", "")
+    checks = []
+    checks.append(("Update available" in offer and "nightly" in offer,
+                   "the startup background check offers the newer nightly build"))
+    checks.append(("update skipped" in declined,
+                   "answering No dismisses the offer for this session"))
+    checks.append(("checksum mismatch" in failed,
+                   "choosing Yes downloads, verifies and refuses a bad checksum"))
+    bins = glob.glob(os.path.join(work, "update-target-sha256"))
+    recorded = read_file(bins[0]) if bins else ""
+    current = ""
+    binary = os.environ.get("DST_BIN") or os.path.join(REPO, "target", "debug", "dst")
+    try:
+        with open(binary, "rb") as fh:
+            current = hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        pass
+    checks.append((bool(recorded) and recorded.strip() == current,
+                   "a failed update leaves the running binary untouched"))
+    checks.append((len(reqs) == 0, "the update flow spends no model request"))
+    cfg = read_file(os.path.join(work, "home", ".dst", "config.yml"))
+    checks.append(("channel: nightly" in cfg,
+                   "declining or failing an update keeps the configured channel"))
+    return checks
+
+
 CHECKS = {
     "creator_app_flow": check_creator_app_flow,
     "esc_queue": check_esc_queue,
@@ -2462,6 +2570,8 @@ CHECKS = {
     "usage_ring_reset": check_usage_ring_reset,
     "new_session": check_new_session,
     "todo_plan": check_todo_plan,
+    "update_command": check_update_command,
+    "update_offer": check_update_offer,
     "read_image_tool": check_read_image_tool,
     "onboarding_hw": check_onboarding_hw,
     "onboarding_reject": check_onboarding_reject,
