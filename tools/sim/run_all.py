@@ -37,6 +37,7 @@ def main(argv):
         scenario_count = "?"
     checks = [
         ("demo (screens + mock streaming)", ["run_demo.py"], False),
+        ("multiple instances (two terminals)", ["check_multi_instance.py"], False),
         (f"feature scenarios ({scenario_count})", ["run_scenarios.py"], False),
         ("login page i18n (en/zh/es/ja/de/it)", ["check_login_page_i18n.py"], quick),
         ("login cancel (phone page)", ["check_login_cancel.py"], quick),

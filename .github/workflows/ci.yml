@@ -97,6 +97,11 @@ jobs:
             progress job_manager rewind rewind_prompt btw_side_question \
             image_input read_image_tool creator_build update_hwinfo
 
+      - name: Two dst instances on two terminals
+        run: |
+          cd tools/sim
+          timeout 120 python3 check_multi_instance.py
+
   # ---------------------------------------------------------------------
   # Full regression: all checked simulator scenarios. Publishing paths only
   # (main or a version tag), so pull requests stay quick.

@@ -1,6 +1,8 @@
 # Architecture
 
-`dst` is one process, one binary and zero third-party crates. Everything below
+`dst` is one binary and zero third-party crates; each terminal runs its own
+process, and several terminals (the panel, an SSH shell, a tmux pane) may run
+dst concurrently. Everything below
 lives in `src/`; the device only needs `fbterm`, `curl` and (optionally)
 `alsa-utils`.
 
@@ -194,6 +196,18 @@ main conversation:
    panel (`btw · <question>`), dismissed with Esc or saved with `s`. The main
    `msgs`, the session file and the checkpoint list are not modified, so the
    side question cannot pollute (or be re-sent with) the real conversation.
+
+## Multiple instances
+
+The process owns its **terminal**, not the machine: `/tmp/dst.lock/pid` (a
+machine-wide singleton) is gone. `terminal_id()` resolves the pty behind stdin
+(`pts/3`, `ttys004`), `~/.dst/tmp/terminals/<tty>.pid` records the owner, and
+only a second dst on the same pty is refused — two readers of one `/dev/tty`
+make keys appear dead or land in the wrong window. Different terminals may run
+dst at the same time; they share `~/.dst` (sessions, usage, checkpoints, goal,
+tmux status options), so session paths carry a millisecond suffix and a
+collision loop. `tools/sim/check_multi_instance.py` starts two real instances in
+CI and asserts both start.
 
 ## Planning (`todo_write`) and the prompt contract
 

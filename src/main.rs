@@ -2331,7 +2331,7 @@ fn strip_inline(s: &str) -> String {
 
 #[cfg(test)]
 mod inline_tests {
-    use super::strip_inline;
+    use super::{claim_terminal, strip_inline, tty_lock_name};
 
     #[test]
     fn the_prompt_teaches_planning_and_per_step_reports() {
@@ -2356,6 +2356,42 @@ mod inline_tests {
         ] {
             assert!(prompt.contains(needle), "prompt misses {needle:?}");
         }
+    }
+
+    #[test]
+    fn instances_on_different_terminals_are_allowed() {
+        let dir = std::env::temp_dir().join(format!(
+            "dst-tty-lock-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let alive = |pid: u32| pid != 0;
+        assert!(claim_terminal(&dir, "pts/1", 111, &alive));
+        assert!(
+            claim_terminal(&dir, "pts/2", 222, &alive),
+            "a second instance on another terminal must be allowed"
+        );
+        assert!(
+            !claim_terminal(&dir, "pts/1", 333, &alive),
+            "a second instance on the same terminal must be refused"
+        );
+        assert!(
+            claim_terminal(&dir, "pts/3", 444, &|_| false),
+            "a stale lock (dead pid) must be taken over"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tty_lock_names_are_safe_file_names() {
+        assert_eq!(tty_lock_name("pts/3"), "pts_3");
+        assert_eq!(tty_lock_name("ttys004"), "ttys004");
+        assert_eq!(tty_lock_name(""), "tty");
+        assert_eq!(tty_lock_name("a b/c"), "a_b_c");
     }
 
     #[test]
@@ -3599,25 +3635,97 @@ fn art_frame_lines(frame: usize, cols: usize) -> Vec<(String, u8)> {
         .collect()
 }
 
-/// Only one `dst` may own a terminal. Two instances both reading /dev/tty is
-/// what makes keys appear dead or go to the wrong window.
-fn single_instance() -> bool {
-    let dir = "/tmp/dst.lock";
-    let pidfile = format!("{dir}/pid");
-    if let Ok(s) = std::fs::read_to_string(&pidfile) {
-        if let Ok(pid) = s.trim().parse::<u32>() {
-            let proc_dir = format!("/proc/{pid}");
-            if std::path::Path::new(&proc_dir).exists() {
-                let comm = std::fs::read_to_string(format!("{proc_dir}/comm")).unwrap_or_default();
-                if comm.trim() == "dst" {
-                    return false;
-                }
+/// Identity of the terminal this process was started on: the pty slave behind
+/// stdin (`pts/3`, `ttys004`, ...). `/dev/tty` is a device node rather than the
+/// pty, so the fd symlink is the reliable source.
+fn terminal_id() -> String {
+    for link in ["/proc/self/fd/0", "/dev/fd/0"] {
+        if let Ok(path) = std::fs::read_link(link) {
+            let shown = path.to_string_lossy();
+            let shown = shown.strip_prefix("/dev/").unwrap_or(&shown).to_string();
+            if !shown.is_empty() && !shown.starts_with("fd/") {
+                return shown;
             }
         }
     }
-    let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(&pidfile, std::process::id().to_string());
+    "tty".to_string()
+}
+
+/// One lock file per terminal; slashes and odd characters become `_`.
+fn tty_lock_name(tty: &str) -> String {
+    let mut out: String = tty
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if out.is_empty() {
+        out.push_str("tty");
+    }
+    out
+}
+
+/// Is `pid` a live `dst` process? Linux can name it exactly; elsewhere a live
+/// pid is good enough (the lock dir is per user and stale files are reused).
+fn is_dst_process(pid: u32) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let proc_dir = format!("/proc/{pid}");
+        if !std::path::Path::new(&proc_dir).exists() {
+            return false;
+        }
+        let comm = std::fs::read_to_string(format!("{proc_dir}/comm")).unwrap_or_default();
+        matches!(comm.trim(), "dst" | "dst.exe")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+}
+
+/// Claim one terminal for this process. Multiple dst instances are supported as
+/// long as they own different terminals (the panel tty, an SSH pty, a tmux
+/// pane); only a second instance on the *same* pty is refused, because two
+/// readers of one `/dev/tty` make keys appear dead or land in the wrong window.
+fn claim_terminal(
+    lock_dir: &std::path::Path,
+    tty: &str,
+    pid: u32,
+    alive: &dyn Fn(u32) -> bool,
+) -> bool {
+    let path = lock_dir.join(format!("{}.pid", tty_lock_name(tty)));
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        if let Ok(other) = text.trim().parse::<u32>() {
+            if other != pid && alive(other) {
+                return false;
+            }
+        }
+    }
+    let _ = std::fs::create_dir_all(lock_dir);
+    let _ = std::fs::write(&path, pid.to_string());
     true
+}
+
+/// Claim *this* terminal (not the whole machine). The old /tmp/dst.lock/pid
+/// made dst a machine-wide singleton; it is removed and only used as a fallback
+/// identity when the pty cannot be resolved.
+fn single_instance() -> bool {
+    let _ = std::fs::remove_dir_all("/tmp/dst.lock");
+    let lock_dir = crate::config::tmp_dir().join("terminals");
+    claim_terminal(
+        &lock_dir,
+        &terminal_id(),
+        std::process::id(),
+        &is_dst_process,
+    )
 }
 
 
@@ -4458,6 +4566,13 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc) {
 // --------------------------------------------------------------- sessions
 
 fn new_session_path() -> std::path::PathBuf {
+    // Millisecond suffix + collision loop: two dst instances (different
+    // terminals) or a quick /new can create a session in the same second and
+    // must never overwrite each other's file.
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_millis())
+        .unwrap_or(0);
     let stamp = std::process::Command::new("date")
         .arg("+%Y%m%d-%H%M%S")
         .output()
@@ -4470,7 +4585,15 @@ fn new_session_path() -> std::path::PathBuf {
                 .map(|d| d.as_secs().to_string())
                 .unwrap_or_else(|_| "session".into())
         });
-    config::sessions_dir().join(format!("{stamp}.json"))
+    let dir = config::sessions_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let mut path = dir.join(format!("{stamp}-{ms:03}.json"));
+    let mut n = 1u32;
+    while path.exists() {
+        path = dir.join(format!("{stamp}-{ms:03}-{n}.json"));
+        n += 1;
+    }
+    path
 }
 
 fn save_session(msgs: &jobs::Msgs, cfg: &config::Config, path: &std::path::Path) {
@@ -6482,7 +6605,10 @@ fn main() {
 
     // The TUI owns the terminal; diagnostics (--tools/--once) run without it.
     if !single_instance() {
-        eprintln!("dst: another instance is already running on this terminal");
+        eprintln!(
+            "dst: this terminal already runs a dst instance; \
+start another one in a different terminal or tmux window"
+        );
         std::process::exit(1);
     }
 

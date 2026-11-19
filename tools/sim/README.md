@@ -14,6 +14,7 @@ Two tools, both pure Python (stdlib + `pyte` + `Pillow`):
 | `sample_home/.dst/config.yml` | ready-made dst config pointing at `http://127.0.0.1:8765/v1` |
 | `run_demo.py` | one-command end-to-end demo: starts mock, writes temp HOME, runs simulator, validates, builds contact sheet |
 | `run_scenarios.py` | automated feature checks: `/clear`, `/goal` round driver, compaction, voice, login (asserts on screens **and** the request log) |
+| `check_multi_instance.py` | starts two real `dst` instances on two ptys with the same HOME and asserts both render (the machine-wide singleton is gone; one instance per terminal remains) |
 | `make_demo_webp.py` | rebuilds the committed docs images from the simulator: `docs/demo.webp` (21 s screen recording of a real session: screen_sim records every ~110 ms frame, dedupes, and encodes a timed WebP), `docs/live-walkthrough.png`, `docs/live-creator.png` and the six-language login sheet (real `dst` binary, scripted mock model) |
 | `run_live.py` | optional common-usage visual walkthrough against the real local vLLM endpoint from `~/.dsh/settings.yaml`; only TTS/ASR are mocked (`DST_MOCK_SPEECH=1`) |
 | `scenarios/<name>/` | per-feature `config.yml` + `scenario.json` + `script.json` for `run_scenarios.py` |
