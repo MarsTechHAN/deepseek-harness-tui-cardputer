@@ -535,23 +535,17 @@ fn super_short(s: &str, n: usize) -> String {
     out.replace('\n', " ")
 }
 
-fn job_alloc_write(_a: &J) -> Access {
-    Access::Write("job_alloc".into())
+fn jobs_table_write(_a: &J) -> Access {
+    Access::Write("jobs_table".into())
 }
-fn job_alloc_read(_a: &J) -> Access {
-    Access::Read("job_alloc".into())
+fn jobs_table_read(_a: &J) -> Access {
+    Access::Read("jobs_table".into())
 }
 fn job_id_read(a: &J) -> Access {
     Access::Read(format!("job:{}", crate::tool::str_arg(a, "id").unwrap_or_default()))
 }
 fn job_id_write(a: &J) -> Access {
     Access::Write(format!("job:{}", crate::tool::str_arg(a, "id").unwrap_or_default()))
-}
-fn watcher_alloc_write(_a: &J) -> Access {
-    Access::Write("watcher_alloc".into())
-}
-fn watcher_alloc_read(_a: &J) -> Access {
-    Access::Read("watcher_alloc".into())
 }
 fn watcher_id_write(a: &J) -> Access {
     Access::Write(format!("watcher:{}", crate::tool::str_arg(a, "id").unwrap_or_default()))
@@ -571,7 +565,7 @@ job_output, wait with job_wait, stop with job_kill.",
                 Param::safeguard_reason(),
             ],
             concurrency_safe: false,
-            access: Some(job_alloc_write),
+            access: Some(jobs_table_write),
             timeout_ms: 10_000,
             execute: job_start_exec,
             render: status_render,
@@ -585,7 +579,7 @@ job_output, wait with job_wait, stop with job_kill.",
             description: "List background jobs with their status and age.",
             params: vec![],
             concurrency_safe: true,
-            access: Some(job_alloc_read),
+            access: Some(jobs_table_read),
             timeout_ms: 5_000,
             execute: job_list_exec,
             render: list_render,
@@ -658,7 +652,7 @@ process that emits lines over time. Stop it with watcher_stop.",
                 Param::safeguard_reason(),
             ],
             concurrency_safe: false,
-            access: Some(watcher_alloc_write),
+            access: Some(jobs_table_write),
             timeout_ms: 10_000,
             execute: watcher_start_exec,
             render: status_render,
@@ -672,7 +666,7 @@ process that emits lines over time. Stop it with watcher_stop.",
             description: "List active line watchers.",
             params: vec![],
             concurrency_safe: true,
-            access: Some(watcher_alloc_read),
+            access: Some(jobs_table_read),
             timeout_ms: 5_000,
             execute: watcher_list_exec,
             render: list_render,
