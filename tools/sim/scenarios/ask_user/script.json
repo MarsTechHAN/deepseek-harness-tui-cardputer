@@ -1,0 +1,50 @@
+{
+ "responses": [
+  {
+   "reasoning": "ask user for preferences",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "a1",
+     "name": "ask_user",
+     "arguments": {
+      "title": "Build choices",
+      "questions": [
+       {
+        "id": "mode",
+        "prompt": "Pick build mode:",
+        "options": [
+         {"id": "release", "label": "Release (Recommended)"},
+         {"id": "debug", "label": "Debug"}
+        ]
+       },
+       {
+        "id": "extras",
+        "prompt": "Select extras:",
+        "allow_multiple": true,
+        "options": [
+         {"id": "tests", "label": "Unit tests"},
+         {"id": "strip", "label": "Strip binary"}
+        ]
+       },
+       {
+        "id": "notes",
+        "prompt": "Any extra note?",
+        "options": [
+         {"id": "none", "label": "None"},
+         {"id": "fast", "label": "Keep it fast"}
+        ]
+       }
+      ]
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "got choices",
+   "content": "Using Debug with Unit tests and Strip binary.",
+   "finish_reason": "stop"
+  }
+ ]
+}

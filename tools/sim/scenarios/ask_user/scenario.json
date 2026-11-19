@@ -1,0 +1,24 @@
+{
+ "steps": [
+  {"wait_for": {"text": "dst", "timeout_ms": 10000}},
+  {"send": "configure the build"},
+  {"key": "Enter"},
+  {"wait_for": {"text": "Pick build mode:", "timeout_ms": 15000}, "snap": "q1"},
+  {"key": "Down"},
+  {"key": "Enter"},
+  {"wait_for": {"text": "Select extras:", "timeout_ms": 15000}, "snap": "q2"},
+  {"send": " "},
+  {"key": "Down"},
+  {"send": " "},
+  {"wait_ms": 200, "snap": "q2_checked"},
+  {"key": "Enter"},
+  {"wait_for": {"text": "Any extra note?", "timeout_ms": 15000}, "snap": "q3"},
+  {"key": "Down"},
+  {"key": "Down"},
+  {"key": "Enter"},
+  {"wait_for": {"text": "Type answer", "timeout_ms": 15000}, "snap": "q3_custom"},
+  {"send": "arm64 only"},
+  {"key": "Enter"},
+  {"wait_stable": {"stable_ms": 700, "timeout_ms": 15000}, "snap": "done"}
+ ]
+}

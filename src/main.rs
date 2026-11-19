@@ -13,6 +13,7 @@
 mod api;
 mod apps;
 mod art;
+mod ask;
 mod bg;
 mod checkpoint;
 mod cmd;
@@ -118,6 +119,8 @@ pub struct Scr {
     update_offer: Option<crate::update::UpdateInfo>,
     /// Strict-mode permission pop-up.
     approval: Option<ApprovalView>,
+    /// Interactive `ask_user` question modal.
+    ask: Option<AskView>,
     /// Creator mode is on: idle hint, app manager and system prompt follow it.
     creator: bool,
     /// Installed-app count, refreshed at mode/app lifecycle points so the idle
@@ -173,6 +176,20 @@ struct ApprovalView {
     tool: String,
     args: String,
     reason: String,
+}
+
+/// Full-screen `ask_user` selection panel.
+struct AskView {
+    title: String,
+    step: usize,
+    total_steps: usize,
+    prompt: String,
+    allow_multiple: bool,
+    options: Vec<String>,
+    checked: Vec<bool>,
+    sel: usize,
+    typing_custom: bool,
+    custom_buf: Vec<char>,
 }
 
 pub const K_NORM: u8 = 0;
@@ -347,6 +364,7 @@ impl Scr {
             state_line: None,
             update_offer: None,
             approval: None,
+            ask: None,
             creator: false,
             apps_count: 0,
             broken_apps: 0,
@@ -588,6 +606,10 @@ impl Scr {
     fn draw(&self) {
         if let Some(a) = &self.approval {
             self.draw_approval(a);
+            return;
+        }
+        if let Some(q) = &self.ask {
+            self.draw_ask(q);
             return;
         }
         if let Some(m) = &self.menu {
@@ -940,6 +962,112 @@ impl Scr {
         s.push_str("\x1b[1;33m");
         s.push_str(&fit(&format!(" {}", i18n::t("approval_keys")), self.cols));
         s.push_str("\x1b[0m\x1b[K");
+        let mut out = std::io::stdout();
+        let _ = out.write_all(s.as_bytes());
+        let _ = out.flush();
+    }
+
+    fn draw_ask(&self, v: &AskView) {
+        let mut s = String::with_capacity(2048);
+        s.push_str("\x1b[?25l\x1b[2J\x1b[H");
+        // Header row: title on left, step or scroll counter on right.
+        let counter = if v.total_steps > 1 {
+            format!("{}/{} ", v.step + 1, v.total_steps)
+        } else {
+            String::new()
+        };
+        let counter_w = dw(&counter);
+        let title_room = self.cols.saturating_sub(counter_w);
+        let mut head = fit(&format!(" {} ", v.title), title_room);
+        head.push_str(&" ".repeat(title_room.saturating_sub(dw(&head))));
+        head.push_str(&counter);
+        s.push_str("\x1b[1;36m");
+        s.push_str(&fit(&head, self.cols));
+        s.push_str("\x1b[0m\x1b[K\r\n");
+
+        // Prompt text: wrapped up to 2 rows.
+        let mut prompt_lines: Vec<String> = Vec::new();
+        Scr::wrap_into(&mut prompt_lines, &v.prompt, self.cols.saturating_sub(1).max(10));
+        prompt_lines.truncate(2);
+        for pl in &prompt_lines {
+            s.push_str("\x1b[1;37m");
+            s.push_str(&fit(&format!(" {pl}"), self.cols));
+            s.push_str("\x1b[0m\x1b[K\r\n");
+        }
+
+        let body_rows = self
+            .rows
+            .saturating_sub(2 + prompt_lines.len())
+            .max(1);
+
+        if v.typing_custom {
+            s.push_str("\x1b[K\r\n");
+            let typed: String = v.custom_buf.iter().collect();
+            let shown = fit(&format!(" > {typed}"), self.cols);
+            s.push_str("\x1b[1;33m");
+            s.push_str(&shown);
+            s.push_str("\x1b[0m\x1b[K\r\n");
+            for _ in 2..body_rows {
+                s.push_str("\x1b[K\r\n");
+            }
+            s.push_str("\x1b[90m");
+            s.push_str(&fit_ellipsis(i18n::t("ask_custom_hint"), self.cols));
+            s.push_str("\x1b[0m\x1b[K");
+            // Place cursor at end of custom input.
+            let cur_row = 1 + prompt_lines.len() + 2;
+            let cur_col = (dw(&shown) + 1).min(self.cols);
+            s.push_str(&format!("\x1b[{cur_row};{cur_col}H\x1b[?25h"));
+        } else {
+            let total_rows = v.options.len() + 1; // +1 for "Other..."
+            let start = if v.sel >= body_rows {
+                v.sel + 1 - body_rows
+            } else {
+                0
+            };
+            for i in 0..body_rows {
+                let idx = start + i;
+                if idx < total_rows {
+                    let selected = idx == v.sel;
+                    let mark = if selected { "\u{25b8}" } else { " " };
+                    let text = if idx < v.options.len() {
+                        if v.allow_multiple {
+                            let box_s = if v.checked.get(idx).copied().unwrap_or(false) {
+                                "[x]"
+                            } else {
+                                "[ ]"
+                            };
+                            format!("{mark} {box_s} {}", v.options[idx])
+                        } else {
+                            format!("{mark} {}. {}", idx + 1, v.options[idx])
+                        }
+                    } else {
+                        format!("{mark} {}", i18n::t("ask_other"))
+                    };
+                    let mut line = fit_ellipsis(&text, self.cols);
+                    let pad = self.cols.saturating_sub(dw(&line));
+                    line.push_str(&" ".repeat(pad));
+                    if selected {
+                        s.push_str("\x1b[7m");
+                    } else if idx == v.options.len() {
+                        s.push_str("\x1b[0;36m");
+                    } else {
+                        s.push_str("\x1b[0;37m");
+                    }
+                    s.push_str(&fit(&line, self.cols));
+                    s.push_str("\x1b[0m\x1b[K\r\n");
+                } else {
+                    s.push_str("\x1b[K\r\n");
+                }
+            }
+            let hint_key = if v.allow_multiple {
+                "ask_hint_multi"
+            } else {
+                "ask_hint_single"
+            };
+            s.push_str("\x1b[90m");
+            s.push_str(&fit_ellipsis(i18n::t(hint_key), self.cols));
+            s.push_str("\x1b[0m\x1b[K");
+        }
         let mut out = std::io::stdout();
         let _ = out.write_all(s.as_bytes());
         let _ = out.flush();
@@ -2827,6 +2955,11 @@ or a vision-capable model.
 - `skill`: when a task matches a package in the SKILLS catalog (including `hardware-info` \
 before probing or writing code for this Cardputer Zero's hardware), call `skill` with its \
 exact name before acting. Do not guess a skill's contents.
+- `ask_user`: ask the user structured multiple-choice questions on the panel (single-select \
+or `allow_multiple=true`; an 'Other...' custom text option is added automatically). Use it \
+ONLY when genuinely blocked on a user decision instead of listing choices in chat prose; \
+put a recommended option first with '(Recommended)' and keep prompts/labels concise for \
+the 53x12 screen.
 
 PROGRESS ROW
 - Call state_report ONCE at the start of every step that runs tools (every assistant step \
@@ -2956,7 +3089,7 @@ conversation.\n\
 `ocr`, `skill`, `memory_read`, `memory_search`, `todo_read`, `get_goal`, \
 `job_list`, `job_output`, `watcher_list`).\n\
 - Forbidden: never write, edit, run shell commands, mutate skills/apps/memory/\
-todos/goals, start jobs/watchers/schedules, call `artifact`, `speak`, or \
+todos/goals, start jobs/watchers/schedules, call `artifact`, `speak`, `ask_user`, or \
 `state_report`.\n\
 - Output: shown directly in a full-screen panel (nothing is saved to the main \
 conversation). Keep it <= 10 lines of <= 52 cells each, direct and grounded, \
@@ -3469,6 +3602,239 @@ impl<'a> harness::Ui for TermUi<'a> {
         // read_key_timeout leaves VMIN=1; the turn's pump needs VMIN=0 again.
         poll_mode(true);
         verdict
+    }
+
+    fn ask_user(
+        &mut self,
+        req: &crate::ask::AskRequest,
+    ) -> Result<crate::ask::AskResponse, String> {
+        let title = req
+            .title
+            .clone()
+            .unwrap_or_else(|| i18n::t("ask_title").to_string());
+        let total = req.questions.len();
+        let mut answers: Vec<Option<crate::ask::AskAnswer>> = vec![None; total];
+        let mut qi = 0usize;
+        let mut cancelled = false;
+
+        while qi < total {
+            let q = &req.questions[qi];
+            let opt_labels: Vec<String> = q.options.iter().map(|o| o.label.clone()).collect();
+            let mut checked = vec![false; q.options.len()];
+            if let Some(prev) = &answers[qi] {
+                for s in &prev.selected {
+                    if let Some(idx) = q.options.iter().position(|o| o.id == s.id) {
+                        checked[idx] = true;
+                    }
+                }
+            }
+            let mut view = AskView {
+                title: title.clone(),
+                step: qi,
+                total_steps: total,
+                prompt: q.prompt.clone(),
+                allow_multiple: q.allow_multiple,
+                options: opt_labels,
+                checked,
+                sel: 0,
+                typing_custom: false,
+                custom_buf: Vec::new(),
+            };
+            let mut utf8_buf: Vec<u8> = Vec::new();
+            let total_rows = q.options.len() + 1;
+            let other_idx = q.options.len();
+
+            enum StepNav {
+                Next(crate::ask::AskAnswer),
+                Back,
+                Cancel,
+            }
+
+            let nav = loop {
+                self.scr.ask = Some(AskView {
+                    title: view.title.clone(),
+                    step: view.step,
+                    total_steps: view.total_steps,
+                    prompt: view.prompt.clone(),
+                    allow_multiple: view.allow_multiple,
+                    options: view.options.clone(),
+                    checked: view.checked.clone(),
+                    sel: view.sel,
+                    typing_custom: view.typing_custom,
+                    custom_buf: view.custom_buf.clone(),
+                });
+                self.scr.draw();
+                let Some(ev) = self.scr.read_key_event() else {
+                    continue;
+                };
+                if view.typing_custom {
+                    match ev {
+                        KeyEvent::Esc => {
+                            view.typing_custom = false;
+                            utf8_buf.clear();
+                        }
+                        KeyEvent::Char(0x03) => break StepNav::Cancel,
+                        KeyEvent::Char(0x0d) | KeyEvent::Char(0x0a) => {
+                            let custom: String = view.custom_buf.iter().collect();
+                            let custom = custom.trim().to_string();
+                            if !custom.is_empty() {
+                                let selected: Vec<crate::ask::AskOption> = if q.allow_multiple {
+                                    q.options
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(i, _)| view.checked[*i])
+                                        .map(|(_, o)| o.clone())
+                                        .collect()
+                                } else {
+                                    Vec::new()
+                                };
+                                break StepNav::Next(crate::ask::AskAnswer {
+                                    id: q.id.clone(),
+                                    prompt: q.prompt.clone(),
+                                    selected,
+                                    custom_text: Some(custom),
+                                });
+                            }
+                        }
+                        KeyEvent::Char(0x7f) | KeyEvent::Char(0x08) => {
+                            view.custom_buf.pop();
+                            utf8_buf.clear();
+                        }
+                        KeyEvent::Char(b) if b >= 0x20 => {
+                            if b < 0x80 {
+                                utf8_buf.clear();
+                                if view.custom_buf.len() < 200 {
+                                    view.custom_buf.push(b as char);
+                                }
+                            } else {
+                                utf8_buf.push(b);
+                                let need = match utf8_buf[0] {
+                                    0xf0..=0xf4 => 4,
+                                    0xe0..=0xef => 3,
+                                    0xc0..=0xdf => 2,
+                                    _ => 1,
+                                };
+                                if utf8_buf.len() >= need {
+                                    if let Ok(s) = std::str::from_utf8(&utf8_buf) {
+                                        if let Some(ch) = s.chars().next() {
+                                            if view.custom_buf.len() < 200 {
+                                                view.custom_buf.push(ch);
+                                            }
+                                        }
+                                    }
+                                    utf8_buf.clear();
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                match ev {
+                    KeyEvent::Esc | KeyEvent::Char(0x03) => break StepNav::Cancel,
+                    KeyEvent::Up | KeyEvent::Char(b'k') => {
+                        view.sel = if view.sel == 0 {
+                            total_rows - 1
+                        } else {
+                            view.sel - 1
+                        };
+                    }
+                    KeyEvent::Down | KeyEvent::Char(b'j') => {
+                        view.sel = (view.sel + 1) % total_rows;
+                    }
+                    KeyEvent::PageUp => {
+                        view.sel = view.sel.saturating_sub(4);
+                    }
+                    KeyEvent::PageDown => {
+                        view.sel = (view.sel + 4).min(total_rows - 1);
+                    }
+                    KeyEvent::Left if qi > 0 => break StepNav::Back,
+                    KeyEvent::Char(b' ') if q.allow_multiple => {
+                        if view.sel < q.options.len() {
+                            view.checked[view.sel] = !view.checked[view.sel];
+                        } else {
+                            view.typing_custom = true;
+                        }
+                    }
+                    KeyEvent::Char(b) if (b'1'..=b'9').contains(&b) => {
+                        let idx = (b - b'1') as usize;
+                        if idx < q.options.len() {
+                            if q.allow_multiple {
+                                view.checked[idx] = !view.checked[idx];
+                                view.sel = idx;
+                            } else {
+                                break StepNav::Next(crate::ask::AskAnswer {
+                                    id: q.id.clone(),
+                                    prompt: q.prompt.clone(),
+                                    selected: vec![q.options[idx].clone()],
+                                    custom_text: None,
+                                });
+                            }
+                        }
+                    }
+                    KeyEvent::Char(0x0d) | KeyEvent::Char(0x0a) => {
+                        if view.sel == other_idx {
+                            view.typing_custom = true;
+                        } else if q.allow_multiple {
+                            let mut selected: Vec<crate::ask::AskOption> = q
+                                .options
+                                .iter()
+                                .enumerate()
+                                .filter(|(i, _)| view.checked[*i])
+                                .map(|(_, o)| o.clone())
+                                .collect();
+                            if selected.is_empty() {
+                                selected.push(q.options[view.sel].clone());
+                            }
+                            break StepNav::Next(crate::ask::AskAnswer {
+                                id: q.id.clone(),
+                                prompt: q.prompt.clone(),
+                                selected,
+                                custom_text: None,
+                            });
+                        } else {
+                            break StepNav::Next(crate::ask::AskAnswer {
+                                id: q.id.clone(),
+                                prompt: q.prompt.clone(),
+                                selected: vec![q.options[view.sel].clone()],
+                                custom_text: None,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            };
+
+            match nav {
+                StepNav::Next(ans) => {
+                    answers[qi] = Some(ans);
+                    qi += 1;
+                }
+                StepNav::Back => {
+                    qi = qi.saturating_sub(1);
+                }
+                StepNav::Cancel => {
+                    cancelled = true;
+                    break;
+                }
+            }
+        }
+
+        self.scr.ask = None;
+        self.scr.draw();
+        poll_mode(true);
+        if cancelled {
+            Ok(crate::ask::AskResponse {
+                cancelled: true,
+                answers: Vec::new(),
+            })
+        } else {
+            Ok(crate::ask::AskResponse {
+                cancelled: false,
+                answers: answers.into_iter().flatten().collect(),
+            })
+        }
     }
 
     fn pump(&mut self) -> Action {
@@ -6602,6 +6968,7 @@ fn build_registry(
     disabled: &[String],
 ) -> Vec<tool::ToolDef> {
     let mut reg = tools::registry(caps);
+    reg.extend(ask::tool_defs());
     reg.extend(goal::tool_defs());
     reg.extend(session::tool_defs());
     reg.extend(bg::tool_defs());
@@ -6980,6 +7347,7 @@ start another one in a different terminal or tmux window"
     let mut session_path: Option<std::path::PathBuf> = None;
     raw_mode(true);
     crate::apps::set_screen_available(true);
+    crate::ask::set_screen_available(true);
 
     scr.seed_splash(&cfg.model);
     onboarding(&mut scr, &config_rc);

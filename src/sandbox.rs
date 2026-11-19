@@ -323,7 +323,7 @@ pub fn classify_command(cmd: &str) -> Class {
 pub fn classify(name: &str, args: &J) -> Class {
     match name {
         "read_file" | "read_image" | "list_dir" | "glob" | "grep" | "search" | "fetch" | "ocr"
-        | "skill" | "speak"
+        | "skill" | "speak" | "ask_user"
         | "memory_read" | "memory_search" | "todo_read" | "todo_write"
         | "artifact" | "state_report" | "rename" | "get_goal" | "create_goal" | "update_goal"
         | "job_list" | "job_output" | "job_wait" | "job_kill"

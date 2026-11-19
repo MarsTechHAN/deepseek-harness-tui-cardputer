@@ -1602,6 +1602,7 @@ mod tests {
             "app_test",
             "artifact",
             "speak",
+            "ask_user",
             "state_report",
             "cron",
             "watch",

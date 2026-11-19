@@ -11,7 +11,7 @@
   {"key": "Enter"},
   {"wait_for": {"text": "reading /proc", "timeout_ms": 15000}},
   {"snap": "pinned"},
-  {"wait_for": {"text": "quick-done", "timeout_ms": 15000}},
+  {"wait_for": {"text": "↳ quick-done", "timeout_ms": 15000}},
   {"snap": "running"},
   {"key": "CtrlO"},
   {"wait_ms": 500, "snap": "ctrlo"},

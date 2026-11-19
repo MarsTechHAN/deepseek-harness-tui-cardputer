@@ -2555,7 +2555,34 @@ def check_voice_talk_send(screens, reqs, work):
     return checks
 
 
+def check_ask_user(screens, reqs, work):
+    q1 = screens.get("q1", "")
+    q2 = screens.get("q2_checked", "")
+    q3 = screens.get("q3_custom", "")
+    done = screens.get("done", "")
+    results = "\n".join(str(r.get("content") or "") for r in request_tool_results(reqs))
+    checks = []
+    checks.append(("Build choices" in q1 and "1/3" in q1 and "Pick build mode:" in q1,
+                   "single-select question renders with title and step counter"))
+    checks.append(("Other (custom text)" in q1,
+                   "Other custom-input option is automatically appended"))
+    checks.append(("[x] Unit tests" in q2 and "[x] Strip binary" in q2,
+                   "multi-select toggles multiple checkboxes with Space"))
+    checks.append(("Type answer" in q3,
+                   "choosing Other enters inline custom text input"))
+    checks.append(("- [mode] Debug (id: debug)" in results,
+                   "single-select answer reaches the model"))
+    checks.append(("Unit tests (id: tests)" in results and "Strip binary (id: strip)" in results,
+                   "multi-select answers reach the model"))
+    checks.append(("Other: \"arm64 only\"" in results,
+                   "custom Other answer reaches the model"))
+    checks.append(("Using Debug with Unit tests and Strip binary." in done,
+                   "model continues and replies after user selections"))
+    return checks
+
+
 CHECKS = {
+    "ask_user": check_ask_user,
     "creator_app_flow": check_creator_app_flow,
     "esc_queue": check_esc_queue,
     "voice_interrupt_send": check_voice_interrupt_send,

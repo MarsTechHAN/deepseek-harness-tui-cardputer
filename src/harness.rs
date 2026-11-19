@@ -177,6 +177,14 @@ pub trait Ui {
     fn steer(&mut self) -> Option<String> {
         None
     }
+    /// Interactive multiple-choice question prompt rendered on the panel.
+    fn ask_user(
+        &mut self,
+        _req: &crate::ask::AskRequest,
+    ) -> Result<crate::ask::AskResponse, String> {
+        Err("ask_user needs the interactive screen (the TUI); this front end cannot prompt the user"
+            .to_string())
+    }
     /// Creator mode: hand the panel to a saved app until it exits, is stopped
     /// by a long-press of Esc, or times out. Front ends without an interactive
     /// screen reject the request instead of hanging.
@@ -230,9 +238,10 @@ impl<'a> tool::ToolHost for UiHost<'a> {
         }
     }
     fn cancel(&mut self) -> bool {
-        // A tool may be waiting for the panel (creator mode app_run): service
-        // that request before pumping keys, so the app starts within 15 ms.
+        // Service interactive screen requests (app_run / ask_user) before
+        // pumping keys, so the modal opens within 15 ms.
         crate::apps::service_launch(self.ui);
+        crate::ask::service_prompt(self.ui);
         self.ui.pump() == Action::Cancel
     }
     fn tick(&mut self, name: &str, secs: f32) {

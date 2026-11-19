@@ -452,7 +452,9 @@ fn call_budget(def: &ToolDef, timeout_cap_ms: u64) -> std::time::Duration {
     } else {
         crate::tool::DEFAULT_TIMEOUT_MS
     };
-    if timeout_cap_ms > 0 {
+    // Interactive screen tools wait on human input; do not shrink their budget
+    // down to the general non-interactive tool cap.
+    if timeout_cap_ms > 0 && def.name != "ask_user" && def.name != "app_run" {
         budget_ms = budget_ms.min(timeout_cap_ms);
     }
     std::time::Duration::from_millis(budget_ms.max(1))
@@ -661,6 +663,24 @@ pub fn run_batch_with(
                             }
                         }
                         break;
+                    }
+                    // Drain results that settled while `host.cancel()` serviced
+                    // a synchronous interactive modal (ask_user / app_run).
+                    while done_count < n {
+                        match rx.try_recv() {
+                            Ok((k2, res2)) => {
+                                settle_msg(
+                                    k2,
+                                    res2,
+                                    &mut nodes,
+                                    &mut outs,
+                                    &mut active,
+                                    &mut done_count,
+                                    host,
+                                );
+                            }
+                            Err(_) => break,
+                        }
                     }
                     for nd in &mut nodes {
                         if nd.state == State::Running {
