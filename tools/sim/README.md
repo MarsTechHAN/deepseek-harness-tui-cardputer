@@ -554,6 +554,8 @@ request log:
 | `busy_commands` | the three input classes during a turn | `/usage` runs immediately, `/model` is refused, `/btw` runs as a separate read-only request with its answer in a panel, plain chat queues, and no command ever enters the model context |
 | `state_report_steps` | one report per working step | each tool step starts with `state_report`, the pinned row survives tool cards/text and is replaced by the next report, then joins the transcript when the turn ends |
 | `usage_ring_reset` | fresh-start context ring | a `usage.json` carrying a large previous-run context starts at `○ 0%`, not the old value |
+| `voice_dictation` | push-to-talk as voice input | text typed in the prompt first: holding Tab inserts the mocked ASR text at the cursor, does not submit on release, and Enter sends the combined prompt (mode=dictation in voice.log) |
+| `voice_talk_send` | hands-free voice send | empty prompt: holding Tab and releasing sends the mocked ASR text immediately (mode=send in voice.log), no Enter needed |
 | `update_offer` | startup self-update offer | a fake nightly feed (local HTTP server) makes the background check offer `[Y]es/[N]o` on startup; No/Esc dismiss, Yes downloads and refuses the bad checksum, and the running binary/config stay untouched |
 | `update_command` | `/update` wiring and channel config | `/update` checks the feed and reports an unreachable source as an error line, `/update stable` switches and persists `update.channel`, a bad channel prints usage, and no model request is spent |
 | `todo_plan` | DSH-style todo plan | `todo_write` sends the whole `{content,status}` list, the `done/total` badge moves 0/2 → 1/2, the result line is DSH's, and the list is cleared when the next turn starts |
@@ -570,7 +572,7 @@ request log:
 
 ```bash
 cd tools/sim
-python3 run_scenarios.py               # all 103 checked scenarios (~13 min)
+python3 run_scenarios.py               # all 105 checked scenarios (~13 min)
 python3 run_scenarios.py goal compact  # just some
 python3 check_memory.py                # 20-turn session, samples dst RSS
 python3 run_all.py                     # demo + scenarios + memory in one go

@@ -5,7 +5,7 @@ Method: every screen is exercised through the pty simulator, captured as text
 animated `docs/demo.webp`) are device-fidelity simulator renders of the real
 `dst` binary with scripted model replies, rebuilt by
 `python3 tools/sim/make_demo_webp.py`; `run_scenarios.py` supplies the
-deterministic assertions (103 checked scenarios). An optional real-endpoint pass
+deterministic assertions (105 checked scenarios). An optional real-endpoint pass
 (`run_live.py`, `live_creator_check.py`) can be re-run when an endpoint is
 available. See `docs/UX-LIVE.md`. All rows were inspected visually, not only
 asserted in code.
@@ -55,7 +55,7 @@ asserted in code.
 | Errors | provider 401 (bad key), 429 (rate limit) + automatic retry | fixed: one red `request failed: …` line, a highlighted yellow `→` recovery hint (`/key`, `/login`, `/model`), localized in all six languages; textual rate limits are retried like HTTP 429; the next prompt works normally |
 | Goal status | `/goal` report, badge, commands | fixed: report rows and the bottom-right badge are localized; the command list sits on its own row instead of wrapping its last command |
 | Sessions | resume preview metadata | fixed: title/model/turns/recent labels are localized |
-| Voice | push-to-talk REC, transcript insertion, `speak` tool card, mocked offline | ok: `DST_MOCK_SPEECH=1` fakes ASR/TTS so the whole voice path is reviewable on the simulator; `auto_send_voice` now actually applies |
+| Voice | push-to-talk REC, context-aware send vs dictation, `speak` tool card, mocked offline | fixed: push-to-talk decides its mode at key-down — an empty prompt sends the take hands-free on release, while text already in the prompt makes it a voice input method that inserts the transcript at the cursor without auto-sending or overwriting (Enter sends the combined prompt). The busy-turn `Tab` interrupt uses the same rule when the take lands. `DST_MOCK_SPEECH=1` fakes ASR/TTS so the whole path is reviewable on the simulator (`voice_dictation`, `voice_talk_send`, plus the existing `voice_input`/`voice_interrupt*`) |
 | i18n | en, zh, es, ja, de, it menus/help/approval/login pages/command feedback/dynamic labels | ok; every user-visible string is catalog-backed. Beyond the six-language parity test, a unit test now scans `src/*.rs` for literal `i18n::t("…")` keys and fails if the English catalog lacks one (this caught the config-menu hint disappearing when its key was dropped). Runtime notices (request failed, retries, compaction, goal notices, save/mic/speech failures), the `/goal` report/badge and the resume-preview labels are localized too. The simulator's PNG renderer paints all backgrounds before glyphs and fills the continuation cell behind a wide glyph, so selected (reverse-video) menu rows render CJK cleanly (verified in zh/ja/de config and help menus) |
 
 ## Fixes made during the audit

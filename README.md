@@ -293,9 +293,12 @@ refused.
   `/clear`, `/new`, `/compact`, `/resume`, `/rewind`, `/extensions`, `/help`,
   `/apps`) are refused with "press Esc first" instead of being queued or sent
   as chat. `Shift+Enter` steers chat text at the next step; `Esc` stops the
-  whole turn at once and text already typed becomes the next message; `Tab`
-  during a turn interrupts, starts recording immediately and sends the
-  transcript (`auto_send_voice` on) or leaves it in the prompt (off).
+  whole turn at once and text already typed becomes the next message. `Tab`
+  is push-to-talk with two modes: an empty prompt sends the take hands-free on
+  release (`auto_send_voice`), while text already in the prompt turns it into a
+  voice input method that inserts the transcript at the cursor without sending
+  or overwriting anything — Enter sends the combined prompt. During a turn
+  `Tab` interrupts first; the take then follows the same rule.
 - **Animated splash** — a deterministic whale breach, frame-scheduled rather
   than constant-rate; typing pauses it, the first message ends it, `/clear`
   brings it back.
@@ -336,8 +339,10 @@ package becomes runnable by adding a manifest.
 
 ### Voice
 
-Push-to-talk (`Tab`) records with `arecord`, posts to `/v1/tools/asr` and
-auto-sends the transcript; TTS (`/v1/tools/tts`) plays through `aplay`.
+Push-to-talk (`Tab`) records with `arecord` and posts to `/v1/tools/asr`; with
+an empty prompt the transcript is sent hands-free on release, while text already
+in the prompt makes it a dictation that is inserted at the cursor (nothing is
+sent or overwritten until Enter). TTS (`/v1/tools/tts`) plays through `aplay`.
 Resampling and WAV framing are done in Rust. Speech tools exist only on
 DeepSeek's official API — on a third-party endpoint they are removed from the
 registry and the model is told so.
@@ -590,7 +595,7 @@ cargo build                       # host binary
 
 cd tools/sim
 python3 run_demo.py               # splash → thinking → tool call → reply + contact sheet
-python3 run_scenarios.py          # 103 feature scenarios, asserts on screens *and* request logs
+python3 run_scenarios.py          # 105 feature scenarios, asserts on screens *and* request logs
 python3 run_live.py               # optional: visual pass against a real endpoint
 python3 check_memory.py           # samples RSS over 20 turns
 ```

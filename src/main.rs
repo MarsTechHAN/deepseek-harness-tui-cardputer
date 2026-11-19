@@ -68,6 +68,10 @@ pub struct Scr {
     /// A recorder already opened by the busy screen when Tab interrupted the
     /// turn: the mic is live before the turn unwinds, so no words are lost.
     pending_rec: Option<crate::voice::Recorder>,
+    /// Whether the prompt was empty when push-to-talk started. An empty prompt
+    /// plus auto-send means hands-free send; with text in the prompt the take is
+    /// inserted as dictation (append at the cursor, never overwrite, no send).
+    voice_start_empty: Option<bool>,
     /// Full-screen QR overlay (login).
     qr: Option<Vec<String>>,
     /// Whether speech (ASR/TTS) is available for the current endpoint.
@@ -318,6 +322,7 @@ impl Scr {
             busy: false,
             voice_pending: false,
             pending_rec: None,
+            voice_start_empty: None,
             speech_ok: true,
             think_lines: Vec::new(),
             think_active: false,
@@ -1455,20 +1460,23 @@ impl Scr {
         }
     }
 
-    fn voice_input(&mut self) {
-        self.voice_capture(None);
+    fn voice_input(&mut self) -> bool {
+        self.voice_capture(None)
     }
 
     /// Hold-to-talk capture. `pre` is a recorder the busy screen already opened
     /// when Tab interrupted the turn: the mic is live before the turn unwinds,
     /// so the first words are not lost, and the tap debounce is skipped because
     /// the keypress was deliberate (the user asked to talk, not to type).
-    fn voice_capture(&mut self, pre: Option<crate::voice::Recorder>) {
+    fn voice_capture(&mut self, pre: Option<crate::voice::Recorder>) -> bool {
+        // The mode is decided when the talk key went down: empty prompt means
+        // "talk and send" (hands-free), a non-empty prompt means dictation.
+        let start_empty = self.voice_start_empty.take().unwrap_or_else(|| self.input.is_empty());
         if !self.speech_ok {
             // A pre-opened recorder must not be dropped silently: dropping it
             // stops the capture (Drop impl), which is exactly the intent.
             self.push(i18n::t("voice_official_only"), K_ERR);
-            return;
+            return false;
         }
         let resume = pre.is_some();
         // Open the mic BEFORE the hold is confirmed: the codec takes a moment
@@ -1480,7 +1488,7 @@ impl Scr {
                 Ok(r) => r,
                 Err(e) => {
                     self.push(&i18n::tf("ui_mic_failed", &[&e.to_string()]), K_ERR);
-                    return;
+                    return false;
                 }
             },
         };
@@ -1489,7 +1497,7 @@ impl Scr {
         if !resume && !self.arm_tab() {
             rec.cancel();
             self.vlog("tap (not armed) - no recording");
-            return;
+            return false;
         }
         self.vlog(if resume { "armed (interrupt)" } else { "armed" });
         let t0 = std::time::Instant::now();
@@ -1532,7 +1540,7 @@ impl Scr {
             rec.cancel();
             self.note = None;
             self.draw();
-            return;
+            return false;
         }
         self.note = Some("\x1b[90m\u{2026} transcribing".into());
         self.draw();
@@ -1545,7 +1553,7 @@ impl Scr {
                 self.note = None;
                 self.draw();
                 self.push(&i18n::tf("ui_speech_failed", &[&e.to_string()]), K_ERR);
-                return;
+                return false;
             }
         };
         self.vlog(&format!(
@@ -1557,13 +1565,16 @@ impl Scr {
         // Very short take or a one-character result is noise, not speech.
         if t0.elapsed().as_secs_f32() < 0.6 || text.chars().count() < 2 {
             self.draw();
-            return;
+            return false;
         }
+        let send = start_empty && self.auto_send;
+        self.vlog(if send { "mode=send" } else { "mode=dictation" });
         for ch in tidy(&text).chars() {
             self.input.insert(self.cursor, ch);
             self.cursor += 1;
         }
         self.draw();
+        send
     }
 
     /// Interactive manager for background jobs and watchers: Up/Down select,
@@ -2205,8 +2216,8 @@ impl Scr {
                     continue;
                 }
                 0x09 => {
-                    self.voice_input();
-                    if self.auto_send && !self.input.is_empty() {
+                    self.voice_start_empty = Some(self.input.is_empty());
+                    if self.voice_input() {
                         let line: String = self.input.iter().collect();
                         self.input.clear();
                         self.cursor = 0;
@@ -3352,9 +3363,10 @@ impl<'a> harness::Ui for TermUi<'a> {
                 KeyEvent::Char(0x09) => {
                     // Voice interrupt: stop the turn (and any speech) right
                     // now, with the microphone already capturing, instead of
-                    // waiting for the turn to finish. The take is finished and
-                    // submitted (or left in the prompt, per auto_send) once the
-                    // driver unwinds.
+                    // waiting for the turn to finish. The take is finished once
+                    // the driver unwinds: an empty prompt sends it, text already
+                    // in the prompt makes it dictation.
+                    self.scr.voice_start_empty = Some(self.scr.input.is_empty());
                     crate::voice::request_stop();
                     if self.scr.pending_rec.is_none() {
                         match crate::voice::start_recording() {
@@ -7338,8 +7350,7 @@ start another one in a different terminal or tmux window"
             if scr.voice_pending || scr.pending_rec.is_some() {
                 scr.voice_pending = false;
                 let pre = scr.pending_rec.take();
-                scr.voice_capture(pre);
-                if scr.auto_send && !scr.input.is_empty() {
+                if scr.voice_capture(pre) {
                     let line: String = scr.input.iter().collect();
                     scr.input.clear();
                     scr.cursor = 0;

@@ -1,0 +1,19 @@
+{
+ "env": {"DST_MOCK_SPEECH": "1", "DST_MOCK_ASR_TEXT": "add more detail"},
+ "steps": [
+  {"wait_for": {"text": "dst", "timeout_ms": 15000}},
+  {"send": "note: "},
+  {"wait_ms": 150, "snap": "typed"},
+  {"key": "Tab"}, {"wait_ms": 150},
+  {"key": "Tab"}, {"wait_ms": 150},
+  {"key": "Tab"}, {"wait_ms": 150},
+  {"key": "Tab"}, {"wait_ms": 150},
+  {"key": "Tab"}, {"wait_ms": 150},
+  {"key": "Tab"}, {"wait_ms": 150},
+  {"key": "Tab"}, {"wait_ms": 1500},
+  {"wait_for": {"text": "add more detail", "timeout_ms": 15000}, "snap": "transcribed"},
+  {"key": "Enter"},
+  {"wait_for": {"text": "Got it.", "timeout_ms": 20000}},
+  {"wait_stable": {"stable_ms": 600, "timeout_ms": 15000}, "snap": "reply"}
+ ]
+}

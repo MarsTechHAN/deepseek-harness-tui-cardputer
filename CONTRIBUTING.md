@@ -48,7 +48,7 @@ device-fidelity renderer, scripted model; ~2 min). If you change the UI, include
 the regenerated images in the PR. A real-endpoint pass (`run_live.py`) is
 optional and documented in `docs/UX-LIVE.md`.
 
-`python3 tools/sim/run_all.py` runs everything offline: demo, 103 feature
+`python3 tools/sim/run_all.py` runs everything offline: demo, 105 feature
 scenarios, login-page checks and the 20-turn memory check.
 
 ## CI and releases

@@ -36,7 +36,7 @@ voice:
 
 tui:
   queued_default: true        # typing during a turn queues instead of interrupting
-  auto_send_voice: true       # send the ASR transcript when the key is released
+  auto_send_voice: true       # empty prompt: send on release; with text: insert as dictation
   hw_survey_done: false       # first run offered the hardware-info scan
   language: en                # en | zh | es | ja | de | it
   mode: normal                # normal | creator
@@ -108,7 +108,7 @@ Setting `key` clears `dsh_token`, so the newer credential is never shadowed.
 | key | default | meaning |
 | --- | --- | --- |
 | `tui.queued_default` | `true` | queue input while a turn runs (`Shift+Enter` overtakes) |
-| `tui.auto_send_voice` | `true` | send the transcript when push-to-talk is released |
+| `tui.auto_send_voice` | `true` | send on release when the prompt was empty; with text in the prompt the take is always inserted as dictation (no auto-send, no overwrite) |
 | `tui.language` | `en` | UI language: `en`, `zh`, `es`, `ja`, `de`, `it` |
 | `tui.mode` | `normal` | `normal` or `creator` (see `docs/CREATOR.md`) |
 | `tui.tips_shown` | `false` | one-time first-run tips already shown |

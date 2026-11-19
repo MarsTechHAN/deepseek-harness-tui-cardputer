@@ -2519,6 +2519,42 @@ def check_update_offer(screens, reqs, work):
     return checks
 
 
+def check_voice_dictation(screens, reqs, work):
+    typed = screens.get("typed", "")
+    transcribed = screens.get("transcribed", "")
+    reply = screens.get("reply", "")
+    voice_log = read_file(os.path.join(work, "home", ".dst", "logs", "voice.log"))
+    checks = []
+    checks.append(("note:" in typed and "add more detail" not in typed,
+                   "text was typed before talking"))
+    checks.append(("note: add more detail" in transcribed,
+                   "with text in the prompt the take is inserted, not sent"))
+    checks.append(("Got it." not in transcribed,
+                   "dictation does not submit on release"))
+    checks.append(("mode=dictation" in voice_log,
+                   "voice.log records the dictation mode"))
+    users = [str(m.get("content") or "") for m in (reqs[-1].get("messages") or [])
+             if m.get("role") == "user"] if reqs else []
+    checks.append((bool(users) and users[-1] == "note: add more detail",
+                   "Enter then sends the combined prompt (no overwrite)"))
+    checks.append(("Got it." in reply, "the combined prompt gets an answer"))
+    return checks
+
+
+def check_voice_talk_send(screens, reqs, work):
+    reply = screens.get("reply", "")
+    voice_log = read_file(os.path.join(work, "home", ".dst", "logs", "voice.log"))
+    checks = []
+    checks.append(("Heard: hello from voice." in reply,
+                   "an empty prompt sends the take on release"))
+    checks.append(("mode=send" in voice_log, "voice.log records the send mode"))
+    users = [str(m.get("content") or "") for b in reqs for m in (b.get("messages") or [])
+             if m.get("role") == "user"]
+    checks.append((users == ["hello from voice"],
+                   "the spoken text reached the model without pressing Enter"))
+    return checks
+
+
 CHECKS = {
     "creator_app_flow": check_creator_app_flow,
     "esc_queue": check_esc_queue,
@@ -2552,6 +2588,8 @@ CHECKS = {
     "extensions_toggle": check_extensions_toggle,
     "usage_zh": check_usage_zh,
     "voice_input": check_voice_input,
+    "voice_dictation": check_voice_dictation,
+    "voice_talk_send": check_voice_talk_send,
     "voice_interrupt": check_voice_interrupt,
     "voice_speak": check_voice_speak,
     "queue_edit": check_queue_edit,
