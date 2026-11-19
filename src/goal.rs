@@ -662,6 +662,13 @@ pub fn guidance() -> &'static str {
     GUIDANCE
 }
 
+fn goal_read_access(_a: &J) -> tool::Access {
+    tool::Access::Read("goal".into())
+}
+fn goal_write_access(_a: &J) -> tool::Access {
+    tool::Access::Write("goal".into())
+}
+
 /// The three goal tools, appended to the registry at startup.
 pub fn tool_defs() -> Vec<ToolDef> {
     vec![
@@ -669,7 +676,8 @@ pub fn tool_defs() -> Vec<ToolDef> {
             name: "get_goal",
             description: "Read the current session goal, including the id and revision that update_goal requires.",
             params: vec![],
-            concurrency_safe: false,
+            concurrency_safe: true,
+            access: Some(goal_read_access),
             timeout_ms: 5_000,
             execute: get_exec,
             render: goal_render,
@@ -691,9 +699,11 @@ pub fn tool_defs() -> Vec<ToolDef> {
                     "max_goal_rounds",
                     "integer",
                     "Optional limit on automatic continuation rounds. 0 means unlimited.",
-                ),
+                )
+                .min(0),
             ],
             concurrency_safe: false,
+            access: Some(goal_write_access),
             timeout_ms: 5_000,
             execute: create_exec,
             render: goal_render,
@@ -707,14 +717,14 @@ pub fn tool_defs() -> Vec<ToolDef> {
             description: "Update the current goal.",
             params: vec![
                 Param::req("goal_id", "string", "Exact id returned by get_goal."),
-                Param::req("revision", "integer", "Exact positive revision returned by get_goal."),
+                Param::req("revision", "integer", "Exact positive revision returned by get_goal.").min(1),
                 Param::one_of(
                     "action",
                     "edit, pause, and resume require a direct top-level human request. complete and blocked are also allowed during an automatic continuation of this goal; blocked is rejected before the configured minimum round count.",
                     &["edit", "pause", "resume", "complete", "blocked"],
                 ),
                 Param::opt("objective", "string", "Replacement objective; valid only with action edit."),
-                Param::opt("max_goal_rounds", "integer", "Replacement cap; valid only with action edit. 0 means unlimited."),
+                Param::opt("max_goal_rounds", "integer", "Replacement cap; valid only with action edit. 0 means unlimited.").min(0),
                 Param::opt(
                     "blocked_reason",
                     "string",
@@ -722,6 +732,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 ),
             ],
             concurrency_safe: false,
+            access: Some(goal_write_access),
             timeout_ms: 5_000,
             execute: update_exec,
             render: goal_render,

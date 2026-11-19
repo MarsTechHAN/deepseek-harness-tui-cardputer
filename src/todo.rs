@@ -237,6 +237,13 @@ pub fn clear() {
     }
 }
 
+fn todo_write_access(_a: &J) -> crate::tool::Access {
+    crate::tool::Access::Write("todo".into())
+}
+fn todo_read_access(_a: &J) -> crate::tool::Access {
+    crate::tool::Access::Read("todo".into())
+}
+
 pub fn tool_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
@@ -252,6 +259,7 @@ done. Every call replaces the whole list: send the COMPLETE list every time.",
 with status 'pending' | 'in_progress' | 'completed'.",
             )],
             concurrency_safe: false,
+            access: Some(todo_write_access),
             timeout_ms: 5_000,
             execute: write_exec,
             render,
@@ -268,6 +276,7 @@ with status 'pending' | 'in_progress' | 'completed'.",
             description: "Read the current turn's todo list (items and statuses).",
             params: vec![],
             concurrency_safe: true,
+            access: Some(todo_read_access),
             timeout_ms: 5_000,
             execute: read_exec,
             render,

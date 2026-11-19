@@ -9,7 +9,7 @@
 
 use crate::api::Cfg;
 use crate::json::{parse, J};
-use crate::tools;
+use crate::tool::{self, Call, NullHost, ToolDef};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -230,6 +230,7 @@ fn trim_history(msgs: &mut Vec<J>) {
 
 fn run_prompt(
     cfg: &Cfg,
+    reg: &[ToolDef],
     tdefs: &J,
     msgs: &Msgs,
     scr: &mut crate::Scr,
@@ -268,15 +269,36 @@ fn run_prompt(
                     break;
                 }
                 msgs.borrow_mut().push(assistant(&acc, &out.calls));
-                for c in &out.calls {
-                    scr.push(&format!("⚙ {}({})", c.name, short(&c.args, 50)), crate::K_TOOL);
-                    let res = tools::exec(&c.name, &c.args);
-                    scr.push(&format!("  ↳ {}", res.lines().take(2).collect::<Vec<_>>().join(" ")), crate::K_RES);
+                let calls: Vec<Call> = out
+                    .calls
+                    .iter()
+                    .map(|c| {
+                        scr.push(&format!("⚙ {}({})", c.name, short(&c.args, 50)), crate::K_TOOL);
+                        Call {
+                            id: c.id.clone(),
+                            name: c.name.clone(),
+                            raw_args: c.args.clone(),
+                        }
+                    })
+                    .collect();
+                let mut host = NullHost;
+                let outcomes = tool::run_batch(reg, &calls, &mut host);
+                for o in outcomes {
+                    scr.push(
+                        &format!("  ↳ {}", o.content.lines().take(2).collect::<Vec<_>>().join(" ")),
+                        crate::K_RES,
+                    );
                     msgs.borrow_mut().push(J::o(vec![
                         ("role", J::s("tool")),
-                        ("tool_call_id", J::s(&c.id)),
-                        ("content", J::s(&res)),
+                        ("tool_call_id", J::s(&o.call_id)),
+                        ("content", J::s(&o.content)),
                     ]));
+                    if let Some(ctx) = o.context {
+                        msgs.borrow_mut().push(J::o(vec![
+                            ("role", J::s("user")),
+                            ("content", J::s(&ctx)),
+                        ]));
+                    }
                 }
             }
             Err(e) => {
@@ -313,7 +335,7 @@ fn short(s: &str, n: usize) -> String {
 }
 
 /// Called from the TUI idle loop. Fires at most one due job per call.
-pub fn poll(cfg: &Cfg, tdefs: &J, msgs: &Msgs, scr: &mut crate::Scr) {
+pub fn poll(cfg: &Cfg, reg: &[ToolDef], tdefs: &J, msgs: &Msgs, scr: &mut crate::Scr) {
     let window = scr.ctx_window;
     let mut jobs = load();
     if jobs.is_empty() {
@@ -352,5 +374,5 @@ pub fn poll(cfg: &Cfg, tdefs: &J, msgs: &Msgs, scr: &mut crate::Scr) {
     }
     save(&jobs);
     let tag = if kind == "cron" { "cron" } else { "watch" };
-    run_prompt(cfg, tdefs, msgs, scr, &prompt, &format!("{tag} {spec}"), window);
+    run_prompt(cfg, reg, tdefs, msgs, scr, &prompt, &format!("{tag} {spec}"), window);
 }

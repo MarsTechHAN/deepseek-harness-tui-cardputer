@@ -30,6 +30,14 @@ pub const MAX_OUT: usize = 6000;
 /// above every built-in tool and still short of a wedged turn.
 pub const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 
+/// Default value advertised in JSON Schema for an optional parameter.
+#[derive(Clone, Copy)]
+pub enum DefaultVal {
+    Bool(bool),
+    Int(i64),
+    Str(&'static str),
+}
+
 /// A declared tool parameter. Rules live on the parameter, not the tool
 /// description (DSH tool-design: "put parameter rules on the parameter").
 pub struct Param {
@@ -39,28 +47,136 @@ pub struct Param {
     pub description: &'static str,
     /// Non-empty means this parameter is an `enum`.
     pub values: &'static [&'static str],
+    pub min: Option<i64>,
+    pub max: Option<i64>,
+    pub default: Option<DefaultVal>,
 }
 
 impl Param {
     pub fn req(name: &'static str, kind: &'static str, description: &'static str) -> Self {
-        Param { name, kind, required: true, description, values: &[] }
+        Param {
+            name,
+            kind,
+            required: true,
+            description,
+            values: &[],
+            min: None,
+            max: None,
+            default: None,
+        }
     }
     pub fn opt(name: &'static str, kind: &'static str, description: &'static str) -> Self {
-        Param { name, kind, required: false, description, values: &[] }
+        Param {
+            name,
+            kind,
+            required: false,
+            description,
+            values: &[],
+            min: None,
+            max: None,
+            default: None,
+        }
     }
     pub fn one_of(
         name: &'static str,
         description: &'static str,
         values: &'static [&'static str],
     ) -> Self {
-        Param { name, kind: "string", required: true, description, values }
+        Param {
+            name,
+            kind: "string",
+            required: true,
+            description,
+            values,
+            min: None,
+            max: None,
+            default: None,
+        }
     }
     pub fn one_of_opt(
         name: &'static str,
         description: &'static str,
         values: &'static [&'static str],
     ) -> Self {
-        Param { name, kind: "string", required: false, description, values }
+        Param {
+            name,
+            kind: "string",
+            required: false,
+            description,
+            values,
+            min: None,
+            max: None,
+            default: None,
+        }
+    }
+    pub fn min(mut self, min: i64) -> Self {
+        self.min = Some(min);
+        self
+    }
+    pub fn range(mut self, min: i64, max: i64) -> Self {
+        self.min = Some(min);
+        self.max = Some(max);
+        self
+    }
+    pub fn default_int(mut self, v: i64) -> Self {
+        self.default = Some(DefaultVal::Int(v));
+        self
+    }
+    pub fn default_bool(mut self, v: bool) -> Self {
+        self.default = Some(DefaultVal::Bool(v));
+        self
+    }
+    pub fn default_str(mut self, v: &'static str) -> Self {
+        self.default = Some(DefaultVal::Str(v));
+        self
+    }
+    /// Safeguard escalation flag attached to permission-gated tools.
+    pub fn safeguard_approval() -> Self {
+        Param::opt(
+            "request_user_approval",
+            "boolean",
+            "Set to true ONLY when retrying a call just blocked by the safeguard and you judge it is genuinely necessary; opens the user confirmation pop-up.",
+        )
+        .default_bool(false)
+    }
+    /// Safeguard explanation shown to the user in the approval pop-up.
+    pub fn safeguard_reason() -> Self {
+        Param::opt(
+            "approval_reason",
+            "string",
+            "When request_user_approval is true, pass the prior safeguard block reason and briefly explain why this action is necessary.",
+        )
+    }
+}
+
+/// Resource access pattern of a single tool invocation for parallel scheduling.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Access {
+    /// No shared mutable resource (e.g. network read, progress row).
+    Free,
+    /// Shared read of a named resource (e.g. "file:<path>", "fs", "memory").
+    Read(String),
+    /// Exclusive mutation of a named resource.
+    Write(String),
+    /// Global barrier: waits for all earlier calls and blocks all later calls.
+    Barrier,
+}
+
+fn keys_overlap(a: &str, b: &str) -> bool {
+    a == b
+        || (a == "fs" && b.starts_with("file:"))
+        || (b == "fs" && a.starts_with("file:"))
+}
+
+/// True when an earlier call with `a` must finish before a later call with `b`.
+pub fn access_conflicts(a: &Access, b: &Access) -> bool {
+    match (a, b) {
+        (Access::Barrier, _) | (_, Access::Barrier) => true,
+        (Access::Free, _) | (_, Access::Free) => false,
+        (Access::Read(_), Access::Read(_)) => false,
+        (Access::Write(k1), Access::Read(k2))
+        | (Access::Read(k1), Access::Write(k2))
+        | (Access::Write(k1), Access::Write(k2)) => keys_overlap(k1, k2),
     }
 }
 
@@ -80,12 +196,12 @@ pub struct ToolDef {
     pub name: &'static str,
     pub description: &'static str,
     pub params: Vec<Param>,
-    /// DSH `isConcurrencySafe`: may this call overlap a sibling call?
-    /// Only `true` opts in; everything else runs exclusively, in model order.
-    /// dst executes batches strictly in model order on the A53, so this is
-    /// metadata for future parallel dispatch rather than a scheduler input.
-    #[allow(dead_code)]
+    /// DSH `isConcurrencySafe`: default scheduling hint when `access` is `None`.
     pub concurrency_safe: bool,
+    /// Optional per-call resource access descriptor for fine-grained parallel
+    /// execution. When `None`, `concurrency_safe=true` maps to `Access::Free`
+    /// and `false` maps to `Access::Barrier`.
+    pub access: Option<fn(&J) -> Access>,
     /// DSH `timeoutMs`: cooperative deadline budget owned by the executor.
     /// Never sent to the model.
     pub timeout_ms: u64,
@@ -102,6 +218,16 @@ pub struct ToolDef {
     pub schema_override: Option<String>,
     /// Dynamic executor taking the tool name, for tools registered at runtime.
     pub dynamic: Option<fn(&str, &J) -> Result<J, Fail>>,
+}
+
+impl ToolDef {
+    pub fn access_for(&self, args: &J) -> Access {
+        match self.access {
+            Some(f) => f(args),
+            None if self.concurrency_safe => Access::Free,
+            None => Access::Barrier,
+        }
+    }
 }
 
 /// One tool call as the model emitted it.
@@ -151,13 +277,34 @@ fn err_out(c: &Call, message: impl Into<String>) -> Outcome {
     }
 }
 
-/// `tools/pre-execute`: parse, then validate required/typed parameters.
-/// Returns the parsed args or the denial reason.
+/// `tools/pre-execute`: parse, then validate parameter names, types, enums and
+/// bounds. Returns the parsed args or an actionable denial reason.
 fn pre_execute(def: &ToolDef, c: &Call) -> Result<J, String> {
     let raw = if c.raw_args.trim().is_empty() { "{}" } else { c.raw_args.as_str() };
     let args = crate::json::parse(raw).ok_or_else(|| "invalid JSON arguments".to_string())?;
-    if !matches!(args, J::Obj(_)) {
-        return Err("arguments must be a JSON object".to_string());
+    let pairs = match &args {
+        J::Obj(kv) => kv,
+        _ => return Err("arguments must be a JSON object".to_string()),
+    };
+    // Tools with a custom JSON schema (e.g. MCP or DSH-compat todo_write) own
+    // their own field validation inside `execute`.
+    if def.schema_override.is_some() {
+        return Ok(args);
+    }
+    for (k, _) in pairs {
+        if !def.params.iter().any(|p| p.name == k) {
+            let allowed = def
+                .params
+                .iter()
+                .map(|p| p.name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return if allowed.is_empty() {
+                Err(format!("unknown parameter '{k}' (tool '{}' takes no parameters)", def.name))
+            } else {
+                Err(format!("unknown parameter '{k}' (allowed: {allowed})"))
+            };
+        }
     }
     for p in &def.params {
         let v = args.get(p.name);
@@ -167,8 +314,11 @@ fn pre_execute(def: &ToolDef, c: &Call) -> Result<J, String> {
         if let Some(v) = v {
             let ok = match p.kind {
                 "string" => v.as_str().is_some(),
-                "integer" | "number" => v.as_num().is_some(),
+                "integer" => v.as_num().map(|n| n.is_finite() && n.fract() == 0.0).unwrap_or(false),
+                "number" => v.as_num().map(|n| n.is_finite()).unwrap_or(false),
                 "boolean" => matches!(v, J::Bool(_)),
+                "array" => v.as_arr().is_some(),
+                "object" => matches!(v, J::Obj(_)),
                 _ => true,
             };
             if !ok {
@@ -183,6 +333,18 @@ fn pre_execute(def: &ToolDef, c: &Call) -> Result<J, String> {
                             p.name,
                             p.values.join(", ")
                         ))
+                    }
+                }
+            }
+            if let Some(n) = v.as_num() {
+                if let Some(min) = p.min {
+                    if n < min as f64 {
+                        return Err(format!("parameter '{}' must be >= {min}", p.name));
+                    }
+                }
+                if let Some(max) = p.max {
+                    if n > max as f64 {
+                        return Err(format!("parameter '{}' must be <= {max}", p.name));
                     }
                 }
             }
@@ -243,10 +405,62 @@ pub fn run_batch(reg: &[ToolDef], calls: &[Call], host: &mut dyn ToolHost) -> Ve
     run_batch_with(reg, calls, 0, host)
 }
 
+/// Maximum tool calls executed simultaneously. Capped to stay responsive on
+/// the 4-core / 512 MB Cardputer Zero without spawning unbounded threads.
+const MAX_CONCURRENT_TOOLS: usize = 6;
+
+fn settle_outcome(
+    c: &Call,
+    def: &ToolDef,
+    args: &J,
+    res: Result<J, String>,
+) -> Outcome {
+    match res {
+        Ok(value) => {
+            let rendered = (def.render)(args, &value);
+            let content = finalize(c, rendered, false);
+            let context = match def.post {
+                Some(hook) => hook(args, &value),
+                None => None,
+            };
+            Outcome {
+                call_id: c.id.clone(),
+                name: c.name.clone(),
+                content,
+                is_error: false,
+                context,
+                value: Some(value),
+            }
+        }
+        Err(message) => {
+            let content = finalize(c, message, true);
+            Outcome {
+                call_id: c.id.clone(),
+                name: c.name.clone(),
+                content,
+                is_error: true,
+                context: None,
+                value: None,
+            }
+        }
+    }
+}
+
+fn call_budget(def: &ToolDef, timeout_cap_ms: u64) -> std::time::Duration {
+    let mut budget_ms = if def.timeout_ms > 0 {
+        def.timeout_ms
+    } else {
+        crate::tool::DEFAULT_TIMEOUT_MS
+    };
+    if timeout_cap_ms > 0 {
+        budget_ms = budget_ms.min(timeout_cap_ms);
+    }
+    std::time::Duration::from_millis(budget_ms.max(1))
+}
+
 /// Run one batch with a global timeout cap (ms; 0 = use each tool's own
-/// `timeout_ms`). The cap lets `tools.call_timeout_ms` tighten every tool on a
-/// slow device without editing each definition; a tool's own budget is still
-/// honoured when it is tighter.
+/// `timeout_ms`). Contiguous `concurrency_safe` calls run in parallel (up to
+/// `MAX_CONCURRENT_TOOLS`); any exclusive tool acts as a barrier in model order.
 pub fn run_batch_with(
     reg: &[ToolDef],
     calls: &[Call],
@@ -297,116 +511,189 @@ pub fn run_batch_with(
         }
     }
 
-    // ---- tools/execute, pumping the host between polls ----
+    // ---- tools/execute via resource-aware parallel DAG scheduler ----
     //
-    // `tool/result` is emitted the moment a call settles, not after the whole
-    // batch: the UI has already shown `tool/call`, and a slow sibling must not
-    // delay the result of a fast one. The returned vector stays in model order.
-    let mut cancelled = false;
-    for (i, def, args) in queue {
-        let c = &calls[i];
-        if cancelled {
-            let o = err_out(c, "cancelled by user");
-            host.call(PipeEvent::Made(o.clone()));
-            outs[i] = Some(o);
-            continue;
-        }
-        let (tx, rx) = std::sync::mpsc::channel();
-        let exec = def.execute;
-        let dyn_fn = def.dynamic;
-        let tool_name = def.name;
-        let args_c = args.clone();
-        std::thread::spawn(move || {
-            let r = match dyn_fn {
-                Some(f) => f(tool_name, &args_c),
-                None => exec(&args_c),
-            };
-            let _ = tx.send(r);
-        });
+    // Calls whose resource accesses do not conflict run in parallel (up to
+    // MAX_CONCURRENT_TOOLS); conflicting calls wait for earlier conflicting
+    // calls in model order. `tool/result` is emitted immediately as each call
+    // settles, while the returned vector stays strictly in model order.
+    let n = queue.len();
+    if n > 0 {
+        let accesses: Vec<Access> = queue
+            .iter()
+            .map(|(_, def, args)| def.access_for(args))
+            .collect();
+        let deps: Vec<Vec<usize>> = (0..n)
+            .map(|k| {
+                (0..k)
+                    .filter(|&j| access_conflicts(&accesses[j], &accesses[k]))
+                    .collect()
+            })
+            .collect();
 
-        // `timeoutMs` is an executor-owned deadline (DSH `dsh-timeout`). A tool
-        // that overruns is abandoned: its worker thread is detached and any
-        // child process it owns keeps the per-tool deadline it set itself.
-        let mut budget_ms = if def.timeout_ms > 0 {
-            def.timeout_ms
-        } else {
-            crate::tool::DEFAULT_TIMEOUT_MS
-        };
-        if timeout_cap_ms > 0 {
-            budget_ms = budget_ms.min(timeout_cap_ms);
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum State {
+            Pending,
+            Running,
+            Done,
         }
-        let budget = std::time::Duration::from_millis(budget_ms.max(1));
-        let started = std::time::Instant::now();
-        let mut last_tick = started;
-        let mut settled: Option<Result<J, String>> = None;
-        let mut timed_out = false;
-        loop {
-            match rx.recv_timeout(std::time::Duration::from_millis(15)) {
-                Ok(Ok(v)) => {
-                    settled = Some(Ok(v));
+        struct Node<'a> {
+            call_idx: usize,
+            def: &'a ToolDef,
+            args: J,
+            budget: std::time::Duration,
+            started: Option<std::time::Instant>,
+            state: State,
+        }
+        let mut nodes: Vec<Node<'_>> = queue
+            .into_iter()
+            .map(|(call_idx, def, args)| Node {
+                call_idx,
+                def,
+                args,
+                budget: call_budget(def, timeout_cap_ms),
+                started: None,
+                state: State::Pending,
+            })
+            .collect();
+
+        let (tx, rx) = std::sync::mpsc::channel::<(usize, Result<J, Fail>)>();
+        let mut active = 0usize;
+        let mut done_count = 0usize;
+        let mut last_tick = std::time::Instant::now();
+
+        while done_count < n {
+            // Launch every ready node whose dependencies have all settled.
+            for k in 0..n {
+                if active >= MAX_CONCURRENT_TOOLS {
                     break;
                 }
-                Ok(Err(f)) => {
-                    settled = Some(Err(f.message));
-                    break;
+                if nodes[k].state != State::Pending {
+                    continue;
+                }
+                if deps[k].iter().all(|&d| nodes[d].state == State::Done) {
+                    let tx_c = tx.clone();
+                    let exec = nodes[k].def.execute;
+                    let dyn_fn = nodes[k].def.dynamic;
+                    let tool_name = nodes[k].def.name;
+                    let args_c = nodes[k].args.clone();
+                    nodes[k].started = Some(std::time::Instant::now());
+                    nodes[k].state = State::Running;
+                    active += 1;
+                    std::thread::spawn(move || {
+                        let r = match dyn_fn {
+                            Some(f) => f(tool_name, &args_c),
+                            None => exec(&args_c),
+                        };
+                        let _ = tx_c.send((k, r));
+                    });
+                }
+            }
+
+            let settle_msg = |k: usize,
+                              res: Result<J, Fail>,
+                              nodes: &mut [Node<'_>],
+                              outs: &mut [Option<Outcome>],
+                              active: &mut usize,
+                              done_count: &mut usize,
+                              host: &mut dyn ToolHost| {
+                if nodes[k].state == State::Running {
+                    nodes[k].state = State::Done;
+                    *active = active.saturating_sub(1);
+                    *done_count += 1;
+                    let c = &calls[nodes[k].call_idx];
+                    let o = settle_outcome(
+                        c,
+                        nodes[k].def,
+                        &nodes[k].args,
+                        res.map_err(|f| f.message),
+                    );
+                    host.call(PipeEvent::Made(o.clone()));
+                    outs[nodes[k].call_idx] = Some(o);
+                }
+            };
+
+            match rx.recv_timeout(std::time::Duration::from_millis(15)) {
+                Ok((k, res)) => {
+                    settle_msg(k, res, &mut nodes, &mut outs, &mut active, &mut done_count, host);
+                    while done_count < n {
+                        match rx.try_recv() {
+                            Ok((k2, res2)) => {
+                                settle_msg(
+                                    k2,
+                                    res2,
+                                    &mut nodes,
+                                    &mut outs,
+                                    &mut active,
+                                    &mut done_count,
+                                    host,
+                                );
+                            }
+                            Err(_) => break,
+                        }
+                    }
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     if last_tick.elapsed().as_millis() >= 200 {
                         last_tick = std::time::Instant::now();
-                        host.tick(c.name.as_str(), started.elapsed().as_secs_f32());
+                        if let Some(first_active) =
+                            nodes.iter().find(|nd| nd.state == State::Running)
+                        {
+                            let label = if active > 1 {
+                                format!("{} (+{})", calls[first_active.call_idx].name, active - 1)
+                            } else {
+                                calls[first_active.call_idx].name.clone()
+                            };
+                            let secs = first_active
+                                .started
+                                .map(|t| t.elapsed().as_secs_f32())
+                                .unwrap_or(0.0);
+                            host.tick(&label, secs);
+                        }
                     }
                     if host.cancel() {
-                        cancelled = true;
+                        for nd in &mut nodes {
+                            if nd.state != State::Done {
+                                nd.state = State::Done;
+                                let o = err_out(&calls[nd.call_idx], "cancelled by user");
+                                host.call(PipeEvent::Made(o.clone()));
+                                outs[nd.call_idx] = Some(o);
+                            }
+                        }
                         break;
                     }
-                    if started.elapsed() >= budget {
-                        timed_out = true;
-                        break;
+                    for nd in &mut nodes {
+                        if nd.state == State::Running {
+                            if let Some(started) = nd.started {
+                                if started.elapsed() >= nd.budget {
+                                    nd.state = State::Done;
+                                    active = active.saturating_sub(1);
+                                    done_count += 1;
+                                    let secs = nd.budget.as_secs_f64();
+                                    let o = err_out(
+                                        &calls[nd.call_idx],
+                                        format!("tool timed out after {secs:.1}s"),
+                                    );
+                                    host.call(PipeEvent::Made(o.clone()));
+                                    outs[nd.call_idx] = Some(o);
+                                }
+                            }
+                        }
                     }
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    settled = Some(Err("tool worker exited".into()));
+                    for nd in &mut nodes {
+                        if nd.state != State::Done {
+                            nd.state = State::Done;
+                            let o = err_out(&calls[nd.call_idx], "tool worker exited");
+                            host.call(PipeEvent::Made(o.clone()));
+                            outs[nd.call_idx] = Some(o);
+                        }
+                    }
                     break;
                 }
             }
         }
-
-        let outcome = match settled {
-            None if timed_out => {
-                let secs = budget.as_secs_f64();
-                err_out(c, format!("tool timed out after {secs:.1}s"))
-            }
-            None => err_out(c, "cancelled by user"),
-            Some(Ok(value)) => {
-                let rendered = (def.render)(&args, &value);
-                let content = finalize(c, rendered, false);
-                let context = match def.post {
-                    Some(hook) => hook(&args, &value),
-                    None => None,
-                };
-                Outcome {
-                    call_id: c.id.clone(),
-                    name: c.name.clone(),
-                    content,
-                    is_error: false,
-                    context,
-                    value: Some(value),
-                }
-            }
-            Some(Err(message)) => {
-                let content = finalize(c, message, true);
-                Outcome {
-                    call_id: c.id.clone(),
-                    name: c.name.clone(),
-                    content,
-                    is_error: true,
-                    context: None,
-                    value: None,
-                }
-            }
-        };
-        host.call(PipeEvent::Made(outcome.clone()));
-        outs[i] = Some(outcome);
     }
 
     outs.into_iter()
@@ -440,6 +727,20 @@ pub fn definitions(reg: &[ToolDef]) -> J {
                     "enum".to_string(),
                     J::Arr(p.values.iter().map(|v| J::s(v)).collect()),
                 ));
+            }
+            if let Some(min) = p.min {
+                o.push(("minimum".to_string(), J::Num(min as f64)));
+            }
+            if let Some(max) = p.max {
+                o.push(("maximum".to_string(), J::Num(max as f64)));
+            }
+            if let Some(d) = p.default {
+                let jv = match d {
+                    DefaultVal::Bool(b) => J::Bool(b),
+                    DefaultVal::Int(n) => J::Num(n as f64),
+                    DefaultVal::Str(s) => J::s(s),
+                };
+                o.push(("default".to_string(), jv));
             }
             props.push((p.name.to_string(), J::Obj(o)));
             if p.required {
@@ -498,6 +799,7 @@ mod tests {
             description: "test",
             params: vec![],
             concurrency_safe: false,
+            access: None,
             timeout_ms,
             execute: body,
             render: |_a, v| v.dump(),
@@ -566,5 +868,102 @@ mod tests {
             outs[0].content
         );
         assert_eq!(h.events.len(), 2, "call and result still both emitted");
+    }
+
+    fn sleep_ms(a: &J) -> Result<J, Fail> {
+        let ms = num_arg(a, "ms").unwrap_or(100.0) as u64;
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+        Ok(J::s(&format!("slept-{ms}")))
+    }
+
+    #[test]
+    fn concurrency_safe_calls_run_in_parallel_and_return_in_model_order() {
+        let mut d = def("nap", 2_000, sleep_ms);
+        d.concurrency_safe = true;
+        d.params = vec![Param::opt("ms", "integer", "duration").range(1, 1000)];
+        let reg = vec![d];
+        let calls = vec![
+            Call { id: "a".into(), name: "nap".into(), raw_args: r#"{"ms":120}"#.into() },
+            Call { id: "b".into(), name: "nap".into(), raw_args: r#"{"ms":120}"#.into() },
+            Call { id: "c".into(), name: "nap".into(), raw_args: r#"{"ms":120}"#.into() },
+        ];
+        let t0 = std::time::Instant::now();
+        let outs = run_batch(&reg, &calls, &mut NullHost);
+        let elapsed = t0.elapsed().as_millis();
+        assert!(elapsed < 300, "parallel wave should overlap, took {elapsed}ms");
+        assert_eq!(outs.len(), 3);
+        assert_eq!(outs[0].call_id, "a");
+        assert_eq!(outs[1].call_id, "b");
+        assert_eq!(outs[2].call_id, "c");
+        assert!(outs.iter().all(|o| !o.is_error));
+    }
+
+    #[test]
+    fn pre_execute_rejects_unknown_params_floats_and_out_of_range() {
+        let mut d = def("bounded", 1_000, fast);
+        d.params = vec![
+            Param::req("count", "integer", "item count").range(1, 10).default_int(5),
+        ];
+        let reg = vec![d];
+        let schema = definitions(&reg).dump();
+        assert!(schema.contains(r#""minimum":1"#), "{schema}");
+        assert!(schema.contains(r#""maximum":10"#), "{schema}");
+        assert!(schema.contains(r#""default":5"#), "{schema}");
+
+        let bad_calls = vec![
+            Call { id: "1".into(), name: "bounded".into(), raw_args: r#"{"count":5,"extra":1}"#.into() },
+            Call { id: "2".into(), name: "bounded".into(), raw_args: r#"{"count":2.5}"#.into() },
+            Call { id: "3".into(), name: "bounded".into(), raw_args: r#"{"count":0}"#.into() },
+            Call { id: "4".into(), name: "bounded".into(), raw_args: r#"{"count":11}"#.into() },
+        ];
+        let outs = run_batch(&reg, &bad_calls, &mut NullHost);
+        assert!(outs[0].is_error && outs[0].content.contains("unknown parameter 'extra'"));
+        assert!(outs[1].is_error && outs[1].content.contains("must be integer"));
+        assert!(outs[2].is_error && outs[2].content.contains(">= 1"));
+        assert!(outs[3].is_error && outs[3].content.contains("<= 10"));
+    }
+
+    #[test]
+    fn dag_runs_independent_writes_in_parallel_while_serializing_same_resource() {
+        static ORDER: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+        fn record(a: &J) -> Result<J, Fail> {
+            let tag = str_arg(a, "tag").unwrap_or_default();
+            let ms = num_arg(a, "ms").unwrap_or(0.0) as u64;
+            if ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+            }
+            ORDER.lock().unwrap().push(tag.clone());
+            Ok(J::s(&tag))
+        }
+        fn key_access(a: &J) -> Access {
+            Access::Write(format!("file:{}", str_arg(a, "res").unwrap_or_default()))
+        }
+        let mut w = def("write_res", 2_000, record);
+        w.access = Some(key_access);
+        w.params = vec![
+            Param::req("res", "string", "resource"),
+            Param::req("tag", "string", "tag"),
+            Param::opt("ms", "integer", "delay"),
+        ];
+        ORDER.lock().unwrap().clear();
+        let reg = vec![w];
+        // a1 (120ms) and a2 share "a" -> a2 MUST run after a1.
+        // b1 (120ms) touches "b" -> runs in parallel with a1!
+        let calls = vec![
+            Call { id: "1".into(), name: "write_res".into(), raw_args: r#"{"res":"a","tag":"a1","ms":120}"#.into() },
+            Call { id: "2".into(), name: "write_res".into(), raw_args: r#"{"res":"a","tag":"a2","ms":10}"#.into() },
+            Call { id: "3".into(), name: "write_res".into(), raw_args: r#"{"res":"b","tag":"b1","ms":120}"#.into() },
+        ];
+        let t0 = std::time::Instant::now();
+        let outs = run_batch(&reg, &calls, &mut NullHost);
+        let elapsed = t0.elapsed().as_millis();
+        assert!(elapsed < 230, "independent writes should overlap, took {elapsed}ms");
+        assert_eq!(outs[0].call_id, "1");
+        assert_eq!(outs[1].call_id, "2");
+        assert_eq!(outs[2].call_id, "3");
+        let order = ORDER.lock().unwrap().clone();
+        let p_a1 = order.iter().position(|x| x == "a1").unwrap();
+        let p_a2 = order.iter().position(|x| x == "a2").unwrap();
+        assert!(p_a1 < p_a2, "same-resource calls must stay ordered: {order:?}");
     }
 }

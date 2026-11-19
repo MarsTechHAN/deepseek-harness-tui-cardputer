@@ -6,8 +6,73 @@
 //! policy could be attached without touching a tool body.
 
 use crate::json::J;
-use crate::tool::{num_arg, obj, str_arg, Call, Fail, NullHost, Param, ToolDef};
+use crate::tool::{num_arg, obj, str_arg, Access, Fail, Param, ToolDef};
 use std::process::Command;
+
+/// Lexically normalise a file path into a stable resource key for parallel
+/// conflict detection (`file:<abs>`).
+fn file_key(raw: &str) -> String {
+    use std::path::{Component, Path, PathBuf};
+    let expanded = expand_tilde(raw);
+    let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let candidate = Path::new(&expanded);
+    let joined = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        base.join(candidate)
+    };
+    let mut norm = PathBuf::new();
+    for comp in joined.components() {
+        match comp {
+            Component::ParentDir => {
+                norm.pop();
+            }
+            Component::CurDir => {}
+            other => norm.push(other.as_os_str()),
+        }
+    }
+    format!("file:{}", norm.display())
+}
+
+fn bash_access(args: &J) -> Access {
+    let cmd = str_arg(args, "command").unwrap_or_default();
+    if crate::sandbox::classify_command(&cmd) == crate::sandbox::Class::Safe {
+        Access::Read("fs".into())
+    } else {
+        Access::Barrier
+    }
+}
+
+fn file_read_access(args: &J) -> Access {
+    Access::Read(file_key(&str_arg(args, "path").unwrap_or_default()))
+}
+
+fn file_write_access(args: &J) -> Access {
+    Access::Write(file_key(&str_arg(args, "path").unwrap_or_default()))
+}
+
+fn image_read_access(args: &J) -> Access {
+    let p = str_arg(args, "file_path")
+        .or_else(|| str_arg(args, "path"))
+        .unwrap_or_default();
+    Access::Read(file_key(&p))
+}
+
+fn fs_read_access(_args: &J) -> Access {
+    Access::Read("fs".into())
+}
+
+fn skill_read_access(args: &J) -> Access {
+    let name = str_arg(args, "name")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    Access::Read(format!("skill:{name}"))
+}
+
+fn schedule_write_access(_args: &J) -> Access {
+    Access::Write("schedule".into())
+}
 
 /// API config, installed once at startup so tools can reach DeepSeek's
 /// server-side tool endpoints without every tool taking a config argument.
@@ -93,19 +158,28 @@ fn registry_all() -> Vec<ToolDef> {
         ToolDef {
             name: "bash",
             description: "Run a shell command and return its exit status and output. \
-Use it for anything the other tools do not cover: inspecting the system, \
-audio/display checks, package queries.",
+Use it for anything dedicated tools do not cover: system/hardware inspection, \
+running scripts/tests, git, audio/display checks, package queries.",
             params: vec![
                 Param::req("command", "string", "The shell command to execute, run with `sh -c`."),
                 Param::opt(
                     "timeout_s",
                     "integer",
-                    "Seconds before the command is killed. Defaults to 60. A command \
-that legitimately runs longer should be started in the background with `&` and \
-polled with a later call.",
+                    "Seconds before the command is killed. For long-running commands, \
+use `job_start` instead.",
+                )
+                .range(1, 600)
+                .default_int(60),
+                Param::opt(
+                    "cwd",
+                    "string",
+                    "Working directory for the command (supports ~/). Defaults to the current directory.",
                 ),
+                Param::safeguard_approval(),
+                Param::safeguard_reason(),
             ],
             concurrency_safe: false,
+            access: Some(bash_access),
             timeout_ms: 65_000,
             execute: bash_exec,
             schema_override: None,
@@ -119,11 +193,12 @@ polled with a later call.",
             description: "Read a text file, optionally a line range. Returns numbered lines \
 so a later edit can address them.",
             params: vec![
-                Param::req("path", "string", "Path to the file. Relative paths resolve against the current directory."),
-                Param::opt("offset", "integer", "1-based first line to return. Defaults to 1."),
-                Param::opt("limit", "integer", "Maximum lines to return. Defaults to 400."),
+                Param::req("path", "string", "Path to the file (supports ~/). Relative paths resolve against the current directory."),
+                Param::opt("offset", "integer", "1-based first line to return.").min(1).default_int(1),
+                Param::opt("limit", "integer", "Maximum lines to return.").range(1, 2000).default_int(400),
             ],
             concurrency_safe: true,
+            access: Some(file_read_access),
             timeout_ms: 10_000,
             execute: read_exec,
             schema_override: None,
@@ -145,6 +220,7 @@ workspace would answer the question. Requires an image-capable model.",
                 "Path to the image file, resolved by the filesystem backend.",
             )],
             concurrency_safe: true,
+            access: Some(image_read_access),
             timeout_ms: 10_000,
             execute: read_image_exec,
             schema_override: None,
@@ -158,10 +234,13 @@ workspace would answer the question. Requires an image-capable model.",
             description: "Create or overwrite a text file with the given content. \
 Parent directories are created as needed. Read a file before overwriting it.",
             params: vec![
-                Param::req("path", "string", "Path to write."),
+                Param::req("path", "string", "Path to write (supports ~/)."),
                 Param::req("content", "string", "Full file content. This replaces the file, it does not append."),
+                Param::safeguard_approval(),
+                Param::safeguard_reason(),
             ],
             concurrency_safe: false,
+            access: Some(file_write_access),
             timeout_ms: 10_000,
             execute: write_exec,
             schema_override: None,
@@ -176,9 +255,10 @@ Parent directories are created as needed. Read a file before overwriting it.",
             params: vec![Param::opt(
                 "path",
                 "string",
-                "Directory to list. Defaults to the current directory.",
+                "Directory to list (supports ~/). Defaults to the current directory.",
             )],
             concurrency_safe: true,
+            access: Some(fs_read_access),
             timeout_ms: 10_000,
             execute: list_exec,
             schema_override: None,
@@ -192,9 +272,10 @@ Parent directories are created as needed. Read a file before overwriting it.",
             description: "Find files by glob pattern (e.g. **/*.rs) under the current directory or a given path. Returns relative paths, bounded to 400 results.",
             params: vec![
                 Param::req("pattern", "string", "Glob pattern; ** matches across directories."),
-                Param::opt("path", "string", "Directory to search (default: current directory)."),
+                Param::opt("path", "string", "Directory to search (supports ~/, default: current directory)."),
             ],
             concurrency_safe: true,
+            access: Some(fs_read_access),
             timeout_ms: 20_000,
             execute: glob_exec,
             render: glob_render,
@@ -205,12 +286,17 @@ Parent directories are created as needed. Read a file before overwriting it.",
         },
         ToolDef {
             name: "grep",
-            description: "Search file contents with an extended regex under a path. Returns file:line matches, bounded output; use it before editing a file.",
+            description: "Search file contents with an extended regex under a path. Returns file:line matches (or file paths with files_only=true), bounded output; use it before editing a file.",
             params: vec![
                 Param::req("pattern", "string", "Extended regular expression."),
-                Param::opt("path", "string", "File or directory to search (default: current directory)."),
+                Param::opt("path", "string", "File or directory to search (supports ~/, default: current directory)."),
+                Param::opt("glob", "string", "Optional filename glob filter, e.g. \"*.rs\" (--include)."),
+                Param::opt("ignore_case", "boolean", "Case-insensitive search (-i).").default_bool(false),
+                Param::opt("context", "integer", "Context lines before and after each match (-C).").range(0, 10).default_int(0),
+                Param::opt("files_only", "boolean", "Return only matching file paths (-l).").default_bool(false),
             ],
             concurrency_safe: true,
+            access: Some(fs_read_access),
             timeout_ms: 30_000,
             execute: grep_exec,
             render: grep_render,
@@ -223,12 +309,15 @@ Parent directories are created as needed. Read a file before overwriting it.",
             name: "edit_file",
             description: "Replace an exact string in a text file in place. Read the file first; old_string must be unique unless replace_all is true. Use write_file for new files.",
             params: vec![
-                Param::req("path", "string", "File to edit."),
+                Param::req("path", "string", "File to edit (supports ~/)."),
                 Param::req("old_string", "string", "Exact text to replace (must match verbatim)."),
-                Param::req("new_string", "string", "Replacement text."),
-                Param::opt("replace_all", "boolean", "Replace every occurrence (default false)."),
+                Param::req("new_string", "string", "Replacement text (must differ from old_string)."),
+                Param::opt("replace_all", "boolean", "Replace every occurrence.").default_bool(false),
+                Param::safeguard_approval(),
+                Param::safeguard_reason(),
             ],
             concurrency_safe: false,
+            access: Some(file_write_access),
             timeout_ms: 10_000,
             execute: edit_exec,
             render: edit_render,
@@ -250,6 +339,7 @@ your reply text.",
 Longer input is rejected outright \u{2014} shorten it and call again.",
             )],
             concurrency_safe: false,
+            access: None,
             timeout_ms: 30_000,
             execute: speak_exec,
             schema_override: None,
@@ -269,6 +359,7 @@ the SKILLS section of your system prompt; calling this returns the full text.",
                 "Skill name exactly as listed in the SKILLS section.",
             )],
             concurrency_safe: true,
+            access: Some(skill_read_access),
             timeout_ms: 10_000,
             execute: skill_exec,
             schema_override: None,
@@ -287,6 +378,7 @@ When a job fires its prompt runs as a new turn, so keep prompts self-contained."
                 Param::opt("prompt", "string", "Prompt to run when the job fires. Required for add."),
             ],
             concurrency_safe: false,
+            access: Some(schedule_write_access),
             timeout_ms: 10_000,
             execute: cron_exec,
             schema_override: None,
@@ -305,6 +397,7 @@ A job fires at most once per change and runs its prompt as a new turn.",
                 Param::opt("prompt", "string", "Prompt to run when the file changes. Required for add."),
             ],
             concurrency_safe: false,
+            access: Some(schedule_write_access),
             timeout_ms: 10_000,
             execute: watch_exec,
             schema_override: None,
@@ -326,17 +419,19 @@ each page. Use it to find current information; do not guess at facts it can answ
                 Param::opt(
                     "count",
                     "integer",
-                    "How many results to return, 1-50. Defaults to 10; on this small \
-screen 3-5 is usually enough.",
-                ),
+                    "How many results to return; on this small screen 3-5 is usually enough.",
+                )
+                .range(1, 50)
+                .default_int(10),
                 Param::opt(
                     "need_content",
                     "boolean",
-                    "Also return the full page text in each result. Defaults to false: \
-it is large, so prefer the summary and fetch a specific page instead.",
-                ),
+                    "Also return the full page text in each result; prefer summaries and fetch a specific page instead.",
+                )
+                .default_bool(false),
             ],
             concurrency_safe: true,
+            access: None,
             timeout_ms: 65_000,
             execute: search_exec,
             schema_override: None,
@@ -355,6 +450,7 @@ Use it after search when a specific result needs reading.",
                 "Absolute http(s) URL of the page to read, without embedded credentials.",
             )],
             concurrency_safe: true,
+            access: None,
             timeout_ms: 65_000,
             execute: fetch_exec,
             schema_override: None,
@@ -368,15 +464,16 @@ Use it after search when a specific result needs reading.",
             description: "Extract text from a PDF, Word, PowerPoint or image file on this \
 device, returning the text page by page.",
             params: vec![
-                Param::req("path", "string", "Path to the file to recognise."),
+                Param::req("path", "string", "Path to the file to recognise (supports ~/)."),
                 Param::one_of_opt(
                     "purpose",
-                    "Defaults to text_recognition. Use rich_layout_recognition when the \
-page layout itself matters.",
+                    "Use rich_layout_recognition when page layout or tables matter.",
                     &["text_recognition", "rich_layout_recognition"],
-                ),
+                )
+                .default_str("text_recognition"),
             ],
-            concurrency_safe: false,
+            concurrency_safe: true,
+            access: Some(file_read_access),
             timeout_ms: 300_000,
             execute: ocr_exec,
             schema_override: None,
@@ -402,6 +499,7 @@ code, diagrams, step lists, comparisons. It stays up until the user dismisses it
                 ),
             ],
             concurrency_safe: false,
+            access: None,
             timeout_ms: 10_000,
             execute: artifact_exec,
             schema_override: None,
@@ -426,6 +524,7 @@ a few words in the user's language.",
 Say what is happening now, in the user's language: \"scanning /proc\".",
             )],
             concurrency_safe: true,
+            access: None,
             timeout_ms: 5_000,
             execute: state_report_exec,
             schema_override: None,
@@ -562,13 +661,34 @@ pub const VIEW_TOOL_NAMES: &[&str] = &[
     "watcher_list",
 ];
 
-/// The tool set for a read-only subagent: only viewing tools, and only those
-/// the endpoint actually supports (same capability filtering as the main set).
+/// The tool set for a read-only subagent: all viewing tools across core and
+/// feature modules, capability-filtered to what the endpoint supports.
 pub fn view_registry(caps: crate::config::Capabilities) -> Vec<ToolDef> {
-    registry(caps)
-        .into_iter()
+    let mut all = registry(caps);
+    all.extend(crate::goal::tool_defs());
+    all.extend(crate::bg::tool_defs());
+    all.extend(crate::instructions::tool_defs());
+    all.extend(crate::todo::tool_defs());
+    let mut seen = std::collections::HashSet::new();
+    all.into_iter()
         .filter(|t| VIEW_TOOL_NAMES.contains(&t.name))
+        .filter(|t| seen.insert(t.name))
         .collect()
+}
+
+/// Expand leading `~` or `~/` against `$HOME` so file tools accept paths like
+/// `~/notes.txt` and `~/.dst/skills/...` consistently with `read_image`.
+pub fn expand_tilde(path: &str) -> String {
+    let p = path.trim();
+    if p == "~" {
+        return std::env::var("HOME").unwrap_or_else(|_| p.to_string());
+    }
+    if let Some(rest) = p.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return format!("{}/{}", home.trim_end_matches('/'), rest);
+        }
+    }
+    p.to_string()
 }
 
 /// Tools available for this endpoint. Server-side tools (search/fetch/ocr) and
@@ -670,6 +790,14 @@ fn bash_exec(args: &J) -> Result<J, Fail> {
     let cmd = str_arg(args, "command").ok_or_else(|| Fail::new("missing 'command'"))?;
     let secs = num_arg(args, "timeout_s").unwrap_or(60.0).max(1.0) as u64;
     let secs = secs.min(600);
+    let cwd = str_arg(args, "cwd")
+        .map(|d| expand_tilde(&d))
+        .filter(|d| !d.is_empty());
+    if let Some(dir) = &cwd {
+        if !std::path::Path::new(dir).is_dir() {
+            return Err(Fail::new(format!("cwd is not a directory: {dir}")));
+        }
+    }
 
     let mut c = Command::new("timeout");
     c.arg("-k")
@@ -678,6 +806,9 @@ fn bash_exec(args: &J) -> Result<J, Fail> {
         .arg("sh")
         .arg("-c")
         .arg(&cmd);
+    if let Some(dir) = &cwd {
+        c.current_dir(dir);
+    }
     let (code, stdout, out_total, out_trunc, stderr, err_total, err_trunc) =
         match run_capped(c) {
             Ok(v) => v,
@@ -688,6 +819,9 @@ fn bash_exec(args: &J) -> Result<J, Fail> {
                 }
                 let mut plain = Command::new("sh");
                 plain.arg("-c").arg(&cmd);
+                if let Some(dir) = &cwd {
+                    plain.current_dir(dir);
+                }
                 match run_capped(plain) {
                     Ok(v) => v,
                     Err(e) => return Err(e),
@@ -755,7 +889,8 @@ fn bash_render(_args: &J, v: &J) -> String {
 // ---------------------------------------------------------------------------
 
 fn read_exec(args: &J) -> Result<J, Fail> {
-    let path = str_arg(args, "path").ok_or_else(|| Fail::new("missing 'path'"))?;
+    let raw_path = str_arg(args, "path").ok_or_else(|| Fail::new("missing 'path'"))?;
+    let path = expand_tilde(&raw_path);
     let off = num_arg(args, "offset").unwrap_or(1.0).max(1.0) as usize;
     let lim = num_arg(args, "limit").unwrap_or(400.0).max(1.0) as usize;
     // Stream only the requested range: reading a 100 MB log into a String (and
@@ -835,7 +970,8 @@ Call read_file again with offset={} to continue.",
 // ---------------------------------------------------------------------------
 
 fn write_exec(args: &J) -> Result<J, Fail> {
-    let path = str_arg(args, "path").ok_or_else(|| Fail::new("missing 'path'"))?;
+    let raw_path = str_arg(args, "path").ok_or_else(|| Fail::new("missing 'path'"))?;
+    let path = expand_tilde(&raw_path);
     let content = str_arg(args, "content").unwrap_or_default();
     if let Some(parent) = std::path::Path::new(&path).parent() {
         if !parent.as_os_str().is_empty() {
@@ -858,7 +994,8 @@ fn write_render(_args: &J, v: &J) -> String {
 }
 
 fn list_exec(args: &J) -> Result<J, Fail> {
-    let path = str_arg(args, "path").unwrap_or_else(|| ".".to_string());
+    let raw_path = str_arg(args, "path").unwrap_or_else(|| ".".to_string());
+    let path = expand_tilde(&raw_path);
     let rd = std::fs::read_dir(&path).map_err(|e| Fail::new(format!("{path}: {e}")))?;
     let mut items: Vec<String> = Vec::new();
     for e in rd.flatten() {
@@ -910,7 +1047,7 @@ fn glob_match(pattern: &str, name: &str) -> bool {
 
 fn glob_exec(args: &J) -> Result<J, Fail> {
     let pattern = str_arg(args, "pattern").ok_or_else(|| Fail::new("missing 'pattern'"))?;
-    let base = str_arg(args, "path").unwrap_or_else(|| ".".into());
+    let base = expand_tilde(&str_arg(args, "path").unwrap_or_else(|| ".".into()));
     let mut out: Vec<String> = Vec::new();
     fn walk(dir: &std::path::Path, base: &std::path::Path, pattern: &str, depth: usize, out: &mut Vec<String>) {
         if depth > 6 || out.len() >= 400 { return; }
@@ -942,14 +1079,38 @@ fn glob_render(_a: &J, v: &J) -> String {
 
 fn grep_exec(args: &J) -> Result<J, Fail> {
     let pattern = str_arg(args, "pattern").ok_or_else(|| Fail::new("missing 'pattern'"))?;
-    let path = str_arg(args, "path").unwrap_or_else(|| ".".into());
+    let path = expand_tilde(&str_arg(args, "path").unwrap_or_else(|| ".".into()));
+    let ignore_case = matches!(args.get("ignore_case"), Some(J::Bool(true)));
+    let files_only = matches!(args.get("files_only"), Some(J::Bool(true)));
+    let context = num_arg(args, "context").unwrap_or(0.0).clamp(0.0, 10.0) as u32;
+    let glob = str_arg(args, "glob").filter(|g| !g.trim().is_empty());
+
     let mut c = Command::new("grep");
-    c.args(["-rnE", "--exclude-dir=.git", "--exclude-dir=target", "-m", "200", &pattern, &path]);
+    c.args(["-rE", "--exclude-dir=.git", "--exclude-dir=target"]);
+    if files_only {
+        c.arg("-l");
+    } else {
+        c.args(["-n", "-m", "200"]);
+        if context > 0 {
+            c.args(["-C", &context.to_string()]);
+        }
+    }
+    if ignore_case {
+        c.arg("-i");
+    }
+    if let Some(g) = &glob {
+        c.arg(format!("--include={g}"));
+    }
+    c.args(["--", &pattern, &path]);
     let (code, stdout, _total, out_trunc, _stderr, _, _) = run_capped(c)?;
     let mut text = String::from_utf8_lossy(&stdout).to_string();
     let mut truncated = out_trunc;
     if text.len() > 6000 {
-        text.truncate(6000);
+        let mut end = 6000;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
         truncated = true;
     }
     if truncated {
@@ -969,12 +1130,15 @@ fn grep_render(_a: &J, v: &J) -> String {
 }
 
 fn edit_exec(args: &J) -> Result<J, Fail> {
-    let path = str_arg(args, "path").ok_or_else(|| Fail::new("missing 'path'"))?;
+    let path = expand_tilde(&str_arg(args, "path").ok_or_else(|| Fail::new("missing 'path'"))?);
     let old = str_arg(args, "old_string").ok_or_else(|| Fail::new("missing 'old_string'"))?;
     let new = str_arg(args, "new_string").ok_or_else(|| Fail::new("missing 'new_string'"))?;
     let all = matches!(args.get("replace_all"), Some(J::Bool(true)));
     if old.is_empty() {
         return Err(Fail::new("old_string must not be empty (use write_file to create a file)"));
+    }
+    if old == new {
+        return Err(Fail::new("new_string is identical to old_string; no change to make"));
     }
     // Editing needs the whole file in memory; refuse a monster instead of
     // letting a 100 MB log allocate several hundred MB.
@@ -989,7 +1153,15 @@ fn edit_exec(args: &J) -> Result<J, Fail> {
     let text = std::fs::read_to_string(&path).map_err(|e| Fail::new(format!("{path}: {e}")))?;
     let count = text.matches(&old).count();
     if count == 0 {
-        return Err(Fail::new("old_string not found in file; read the file first"));
+        let trim_old: Vec<&str> = old.lines().map(|l| l.trim()).collect();
+        let trim_file: Vec<&str> = text.lines().map(|l| l.trim()).collect();
+        let fuzzy = !trim_old.is_empty()
+            && trim_file.windows(trim_old.len()).any(|w| w == trim_old.as_slice());
+        return Err(Fail::new(if fuzzy {
+            "old_string not found verbatim (indentation or whitespace differs); read the file and copy exact lines"
+        } else {
+            "old_string not found in file; read the file first"
+        }));
     }
     if count > 1 && !all {
         return Err(Fail::new(format!(
@@ -1058,8 +1230,6 @@ fn speak_exec(args: &J) -> Result<J, Fail> {
 Summarise what matters to the user and call speak again, or put the detail in your reply text."
         )));
     }
-    let helper = "/home/hanxiao/dsh-lite/voice/voice_helper.py";
-    let _ = helper;
     crate::voice::tts(&text).map_err(Fail::new)?;
     Ok(obj(vec![
         ("spoken", J::s(&text)),
@@ -1102,22 +1272,6 @@ fn jobs_render(_args: &J, v: &J) -> String {
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string()
-}
-
-// ---------------------------------------------------------------------------
-// compatibility shim for the job runner, which executes a single prompt
-// ---------------------------------------------------------------------------
-
-pub fn exec(name: &str, raw_args: &str) -> String {
-    let reg = registry_all();
-    let calls = vec![Call {
-        id: "j".to_string(),
-        name: name.to_string(),
-        raw_args: raw_args.to_string(),
-    }];
-    let mut host = NullHost;
-    let mut outs = crate::tool::run_batch(&reg, &calls, &mut host);
-    outs.pop().map(|o| o.content).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -1216,7 +1370,7 @@ fn fetch_render(_args: &J, v: &J) -> String {
 }
 
 fn ocr_exec(args: &J) -> Result<J, Fail> {
-    let path = str_arg(args, "path").ok_or_else(|| Fail::new("missing 'path'"))?;
+    let path = expand_tilde(&str_arg(args, "path").ok_or_else(|| Fail::new("missing 'path'"))?);
     if !std::path::Path::new(&path).is_file() {
         return Err(Fail::new(format!("no such file: {path}")));
     }
@@ -1416,7 +1570,24 @@ mod tests {
         };
         let view = view_registry(caps);
         let names: Vec<&str> = view.iter().map(|t| t.name).collect();
-        for required in ["read_file", "read_image", "list_dir", "glob", "grep"] {
+        for required in [
+            "read_file",
+            "read_image",
+            "list_dir",
+            "glob",
+            "grep",
+            "search",
+            "fetch",
+            "ocr",
+            "skill",
+            "memory_read",
+            "memory_search",
+            "todo_read",
+            "get_goal",
+            "job_list",
+            "job_output",
+            "watcher_list",
+        ] {
             assert!(names.contains(&required), "missing {required}");
         }
         for forbidden in [
@@ -1462,5 +1633,63 @@ mod tests {
             .expect("read_image registered");
         assert!(def.concurrency_safe);
         assert!(def.params.iter().any(|p| p.name == "file_path" && p.required));
+    }
+
+    #[test]
+    fn grep_supports_flags_and_utf8_safe_truncation() {
+        let dir = std::env::temp_dir().join(format!("dst-grep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cjk = "中文测试行".repeat(500); // > 7500 bytes of multi-byte UTF-8
+        std::fs::write(dir.join("a.rs"), format!("Hello World\n{cjk}\n")).unwrap();
+        std::fs::write(dir.join("b.txt"), "hello world\n").unwrap();
+
+        let args = crate::json::parse(&format!(
+            r#"{{"pattern":"hello","path":"{}","ignore_case":true,"glob":"*.rs","files_only":true}}"#,
+            dir.display()
+        ))
+        .unwrap();
+        let v = grep_exec(&args).unwrap_or_else(|e| panic!("{}", e.message));
+        let out = v.get("output").and_then(|s| s.as_str()).unwrap_or("");
+        assert!(out.contains("a.rs") && !out.contains("b.txt"), "{out}");
+
+        let big = crate::json::parse(&format!(
+            r#"{{"pattern":"中文","path":"{}"}}"#,
+            dir.display()
+        ))
+        .unwrap();
+        let v2 = grep_exec(&big).unwrap_or_else(|e| panic!("{}", e.message));
+        assert!(matches!(v2.get("truncated"), Some(J::Bool(true))));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn edit_rejects_noop_and_hints_on_whitespace_mismatch() {
+        let p = std::env::temp_dir().join(format!("dst-edit-{}.txt", std::process::id()));
+        std::fs::write(&p, "    let x = 1;\n").unwrap();
+        let noop = crate::json::parse(&format!(
+            r#"{{"path":"{}","old_string":"let x = 1;","new_string":"let x = 1;"}}"#,
+            p.display()
+        ))
+        .unwrap();
+        assert!(edit_exec(&noop).unwrap_err().message.contains("identical"));
+
+        let ws = crate::json::parse(&format!(
+            r#"{{"path":"{}","old_string":"\tlet x = 1;","new_string":"\tlet x = 2;"}}"#,
+            p.display()
+        ))
+        .unwrap();
+        assert!(edit_exec(&ws).unwrap_err().message.contains("indentation"));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn expand_tilde_resolves_against_home() {
+        if let Ok(home) = std::env::var("HOME") {
+            let h = home.trim_end_matches('/');
+            assert_eq!(expand_tilde("~"), home);
+            assert_eq!(expand_tilde("~/notes.txt"), format!("{h}/notes.txt"));
+        }
+        assert_eq!(expand_tilde("/tmp/a.txt"), "/tmp/a.txt");
     }
 }

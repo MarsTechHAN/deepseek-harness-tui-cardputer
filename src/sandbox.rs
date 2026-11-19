@@ -146,7 +146,8 @@ const DANGER: &[&str] = &[
 
 /// System paths that make a write dangerous even from an otherwise safe tool.
 fn path_is_system(path: &str) -> bool {
-    let p = path.trim().trim_matches('"').trim_matches('\'');
+    let raw = path.trim().trim_matches('"').trim_matches('\'');
+    let p = crate::tools::expand_tilde(raw);
     [("/etc/", true), ("/boot/", true), ("/usr/", true), ("/lib/", true),
      ("/sys/", true), ("/proc/", true), ("/dev/", true), ("/var/", true)]
         .iter()
@@ -371,8 +372,9 @@ fn workspace_path(path: &str) -> bool {
     if path.trim().is_empty() {
         return false;
     }
+    let expanded = crate::tools::expand_tilde(path);
     let base = cwd();
-    let candidate = Path::new(path);
+    let candidate = Path::new(&expanded);
     let joined = if candidate.is_absolute() {
         candidate.to_path_buf()
     } else {
@@ -423,7 +425,64 @@ fn human_detail(name: &str, args: &J) -> String {
     }
 }
 
+/// True when the model explicitly escalated a previously blocked call to ask
+/// the user through the native approval pop-up.
+pub fn requested_user_approval(args: &J) -> bool {
+    matches!(args.get("request_user_approval"), Some(J::Bool(true)))
+}
+
+/// Optional explanation carried by an escalated call for the approval pop-up.
+pub fn approval_reason(args: &J) -> Option<String> {
+    crate::tool::str_arg(args, "approval_reason")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Remove safeguard meta-parameters before forwarding arguments to an external
+/// tool handler (e.g. an MCP server whose schema does not declare them).
+pub fn strip_meta_args(args: &J) -> J {
+    match args {
+        J::Obj(kv) => J::Obj(
+            kv.iter()
+                .filter(|(k, _)| k != "request_user_approval" && k != "approval_reason")
+                .cloned()
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+enum JudgeVerdict {
+    Safe,
+    Unsafe(String),
+    Error(String),
+}
+
+fn ask_user(
+    name: &str,
+    pretty: String,
+    reason: String,
+    confirmer: &mut dyn Confirmer,
+) -> Result<(), String> {
+    let req = Approval {
+        tool: name.to_string(),
+        args: pretty,
+        reason,
+    };
+    if confirmer.confirm(&req) {
+        Ok(())
+    } else {
+        Err("rejected by the user".to_string())
+    }
+}
+
 /// Authorise one call. `Err(reason)` becomes a failed tool result.
+///
+/// In `auto` mode, disallowed calls are first reported back to the model with
+/// the concrete block reason. If the model decides the operation is genuinely
+/// necessary (and no safer alternative exists), it retries the exact call with
+/// `request_user_approval: true` and `approval_reason`, which skips re-running
+/// the auto-judge and asks the user directly via the confirmation pop-up.
 pub fn authorize(
     name: &str,
     args: &J,
@@ -436,43 +495,51 @@ pub fn authorize(
         return Ok(());
     }
     let pretty = human_detail(name, args);
+    let escalated = requested_user_approval(args);
+    let default_reason = if class == Class::Danger {
+        crate::i18n::t("sandbox_reason_danger")
+    } else {
+        crate::i18n::t("sandbox_reason_unsafe")
+    };
     match settings.mode {
         Mode::Full => Ok(()),
         Mode::Auto => {
+            if escalated {
+                let reason = approval_reason(args).unwrap_or_else(|| default_reason.to_string());
+                return ask_user(name, pretty, reason, confirmer);
+            }
             if class == Class::Danger {
                 return Err(format!(
-                    "blocked by sandbox: system-configuration change ({name}); \
-use full mode or ask the user"
+                    "blocked by sandbox: system-configuration change ({name}). \
+Evaluate whether this action is truly necessary or if a safer workspace-local/read-only \
+alternative works. If it is genuinely necessary, retry this exact call with \
+request_user_approval=true and approval_reason set to this block reason to ask the user."
                 ));
             }
             match judge(api_cfg, settings, name, &pretty) {
-                Ok(true) => Ok(()),
-                Ok(false) => Err("rejected by the auto permission judge".to_string()),
-                Err(e) => Err(format!("permission judge unavailable ({e}); fail closed")),
+                JudgeVerdict::Safe => Ok(()),
+                JudgeVerdict::Unsafe(reason) => Err(format!(
+                    "blocked by sandbox (permission judge: {reason}). \
+Evaluate whether this action is truly necessary or if a safer alternative works. \
+If it is genuinely necessary, retry this exact call with request_user_approval=true \
+and approval_reason set to this block reason to ask the user."
+                )),
+                JudgeVerdict::Error(e) => Err(format!(
+                    "permission judge unavailable ({e}); fail closed. \
+If this action is genuinely necessary, retry this exact call with request_user_approval=true \
+and approval_reason explaining why to ask the user."
+                )),
             }
         }
         Mode::Strict => {
-            let reason = if class == Class::Danger {
-                crate::i18n::t("sandbox_reason_danger")
-            } else {
-                crate::i18n::t("sandbox_reason_unsafe")
-            };
-            let req = Approval {
-                tool: name.to_string(),
-                args: pretty,
-                reason: reason.to_string(),
-            };
-            if confirmer.confirm(&req) {
-                Ok(())
-            } else {
-                Err("rejected by the user".to_string())
-            }
+            let reason = approval_reason(args).unwrap_or_else(|| default_reason.to_string());
+            ask_user(name, pretty, reason, confirmer)
         }
     }
 }
 
 /// The short LLM decision used by auto mode. One line answer, tiny budget.
-fn judge(api_cfg: &Cfg, settings: &Settings, name: &str, args: &str) -> Result<bool, String> {
+fn judge(api_cfg: &Cfg, settings: &Settings, name: &str, args: &str) -> JudgeVerdict {
     let mut cfg = api_cfg.clone();
     if !settings.judge_model.is_empty() {
         cfg.model = settings.judge_model.clone();
@@ -494,7 +561,10 @@ Decide whether this tool call is safe to run without human confirmation."
         crate::harness::msg("user", &user),
     ]);
     let tools = J::Arr(Vec::new());
-    let out = api::chat_stream(&cfg, &messages, &tools, |_| {})?;
+    let out = match api::chat_stream(&cfg, &messages, &tools, |_| {}) {
+        Ok(o) => o,
+        Err(e) => return JudgeVerdict::Error(e),
+    };
     let text = out.text.trim().to_ascii_uppercase();
     let reason = out
         .text
@@ -503,11 +573,11 @@ Decide whether this tool call is safe to run without human confirmation."
         .map(|(_, r)| r.trim().to_string())
         .unwrap_or_else(|| out.text.trim().chars().take(80).collect());
     if text.contains("UNSAFE") || text.contains("DENY") {
-        Err(format!("permission judge: {reason}"))
+        JudgeVerdict::Unsafe(reason)
     } else if text.contains("SAFE") || text.contains("ALLOW") {
-        Ok(true)
+        JudgeVerdict::Safe
     } else {
-        Err("permission judge returned an unusable answer".into())
+        JudgeVerdict::Error("permission judge returned an unusable answer".into())
     }
 }
 
@@ -582,5 +652,55 @@ mod tests {
         assert_eq!(Mode::Auto.next(), Mode::Strict);
         assert_eq!(Mode::Strict.next(), Mode::Full);
         assert_eq!(Mode::Full.next(), Mode::Auto);
+    }
+
+    #[test]
+    fn auto_mode_notifies_model_first_then_escalates_to_user_approval() {
+        let settings = Settings::default();
+        let api_cfg = Cfg {
+            base: "http://127.0.0.1:1/v1".into(),
+            key: String::new(),
+            token: String::new(),
+            model: "test".into(),
+            max_tokens: 64,
+            effort: "auto".into(),
+        };
+
+        // Phase 1: blocked without popping up a user dialog; model is told how to escalate.
+        let mut prompted = false;
+        let first_args = J::o(vec![("command", J::s("systemctl restart cpzterm"))]);
+        let err = authorize("bash", &first_args, &settings, &api_cfg, &mut |_: &Approval| {
+            prompted = true;
+            true
+        })
+        .unwrap_err();
+        assert!(!prompted, "first block must notify the model before prompting the user");
+        assert!(err.contains("system-configuration change"), "{err}");
+        assert!(err.contains("request_user_approval=true"), "{err}");
+
+        // Phase 2 (approved): model escalates with request_user_approval=true -> user approves.
+        let mut seen_reason = String::new();
+        let escalated = J::o(vec![
+            ("command", J::s("systemctl restart cpzterm")),
+            ("request_user_approval", J::Bool(true)),
+            ("approval_reason", J::s("restart panel service as requested")),
+        ]);
+        let res = authorize("bash", &escalated, &settings, &api_cfg, &mut |req: &Approval| {
+            seen_reason = req.reason.clone();
+            true
+        });
+        assert!(res.is_ok(), "user approval must allow the escalated call");
+        assert_eq!(seen_reason, "restart panel service as requested");
+
+        // Phase 2 (rejected): user denies the popup.
+        let denied = authorize("bash", &escalated, &settings, &api_cfg, &mut |_: &Approval| false)
+            .unwrap_err();
+        assert_eq!(denied, "rejected by the user");
+
+        // strip_meta_args leaves real parameters intact.
+        let clean = strip_meta_args(&escalated);
+        assert!(clean.get("command").is_some());
+        assert!(clean.get("request_user_approval").is_none());
+        assert!(clean.get("approval_reason").is_none());
     }
 }

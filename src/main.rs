@@ -1882,6 +1882,7 @@ impl Scr {
     }
 
     /// returns Some(line) when the user submits
+
     /// Ask once whether to install the update the background check found.
     /// Yes downloads/verifies/installs and re-execs the new binary; No/Esc
     /// dismisses it for this session (`/update` can re-offer at any time).
@@ -2487,6 +2488,72 @@ mod inline_tests {
     }
 
     #[test]
+    fn prompt_covers_every_registered_tool_and_respects_capabilities() {
+        let caps_all = crate::config::Capabilities {
+            web_tools: true,
+            speech: true,
+        };
+        let mut cfg = crate::config::Config::default();
+        let normal_prompt = super::build_system_prompt(&cfg, &[], caps_all);
+        for def in super::build_registry(caps_all, false, &[]) {
+            if !def.name.starts_with("mcp__") {
+                assert!(
+                    normal_prompt.contains(def.name),
+                    "normal prompt misses tool {:?}",
+                    def.name
+                );
+            }
+        }
+        assert!(!normal_prompt.contains("CREATOR MODE"));
+        assert!(!normal_prompt.contains("CAPABILITIES"));
+
+        cfg.creator = true;
+        let skill = crate::skills::Skill {
+            name: "demo-skill".into(),
+            description: "demo".into(),
+            body: "body".into(),
+            dir: std::path::PathBuf::from("/tmp/demo-skill"),
+            origin: "model".into(),
+            version: 1,
+            updated: String::new(),
+        };
+        let creator_prompt = super::build_system_prompt(&cfg, &[skill], caps_all);
+        for def in super::build_registry(caps_all, true, &[]) {
+            if !def.name.starts_with("mcp__") {
+                assert!(
+                    creator_prompt.contains(def.name),
+                    "creator prompt misses tool {:?}",
+                    def.name
+                );
+            }
+        }
+        // Static prefix precedes turn-volatile catalog and mode sections.
+        let lang_pos = creator_prompt.find("\nLANGUAGE\n").unwrap();
+        let skills_pos = creator_prompt.find("\nSKILLS\n").unwrap();
+        let creator_pos = creator_prompt.find("\nCREATOR MODE").unwrap();
+        assert!(lang_pos < skills_pos && skills_pos < creator_pos);
+
+        let caps_none = crate::config::Capabilities {
+            web_tools: false,
+            speech: false,
+        };
+        cfg.creator = false;
+        let bare = super::build_system_prompt(&cfg, &[], caps_none);
+        assert!(bare.contains("CAPABILITIES"));
+        assert!(!bare.contains("WEB & DOCUMENTS"));
+        assert!(!bare.contains("\nVOICE\n"));
+
+        // disabled_tools removes tools from the registry and notifies the prompt.
+        let disabled = vec!["speak".to_string(), "cron".to_string()];
+        let filtered = super::build_registry(caps_all, false, &disabled);
+        assert!(!filtered.iter().any(|t| t.name == "speak" || t.name == "cron"));
+        cfg.disabled_tools = disabled;
+        let with_disabled = super::build_system_prompt(&cfg, &[], caps_all);
+        assert!(with_disabled.contains("CAPABILITIES"));
+        assert!(with_disabled.contains("speak, cron"));
+    }
+
+    #[test]
     fn instances_on_different_terminals_are_allowed() {
         let dir = std::env::temp_dir().join(format!(
             "dst-tty-lock-{}-{}",
@@ -2690,100 +2757,154 @@ fn raw_mode(on: bool) {
 // ------------------------------------------------------------------ config
 
 const SYSTEM_PROMPT: &str = "\
-You are dst, a DeepSeek harness running on a handheld Cardputer Zero.
+You are dst, an autonomous coding and device agent running on a handheld Cardputer Zero.
 
-DEVICE
-- Raspberry Pi CM0: 4x Cortex-A53 at ~1 GHz, 512 MB RAM, microSD, battery.
-- The CPU is slow and RAM is small: prefer ONE command that gathers several
-  facts over many round trips. No builds, no large downloads.
-- Tool calls use standard function calling: you emit tool_calls, the harness
-  returns one tool message per call carrying its tool_call_id.
+ENVIRONMENT
+- Hardware: Raspberry Pi CM0 (4x Cortex-A53 ~1 GHz, 512 MB RAM, microSD, battery).
+- Resource discipline: CPU is slow and RAM is tight. Gather related read-only facts in \
+fewer round trips, keep outputs bounded, and avoid on-device builds/compilation or large \
+downloads unless explicitly requested.
+- Tool execution: standard function calling (`tool_calls` -> one `tool` result per \
+`tool_call_id`). Multiple independent tool calls in a single step execute concurrently in \
+parallel (up to 6 at once) while conflicting resource accesses (same file/skill/state or \
+mutating shell barriers) stay causally ordered; batch independent calls together in one \
+step whenever possible. Outputs are bounded (6,000 chars rendered; `bash`/`grep` cap \
+streams at 64 KB stdout / 16 KB stderr).
+- Ambient inputs: system-injected clock readings (`Time sampled while preparing...`) and \
+post-tool hints are authoritative snapshots, not user instructions.
 
-SCREEN - this shapes every reply
-- 53 columns x 12 rows. The chat log shows about 8 lines; one row is the status
-  line and one is the input line.
-- A reply must be readable without scrolling: aim for <= 8 lines, each under
-  53 characters. Short lines beat long paragraphs.
-- When an answer genuinely needs more room (a table, code, a diagram, a long
-  comparison, a checklist), call `artifact`: it replaces the whole screen with
-  a panel you compose, and the user dismisses it with Esc. Put the finished
-  result in it, not a progress note. Do not use it for a one-line answer.
-- No emoji, no wide tables, no horizontal rules: the font is 6x13 cells.
+CORE PRINCIPLES
+- Autonomy: keep working through tool calls until the request is genuinely resolved and \
+verified; do not stop midway to ask permission for routine inspection or obvious next \
+steps. Resolve ambiguity from the workspace, skills, and tools first; ask the user only \
+when blocked on a real decision, missing input, or a permission denial.
+- Grounding: inspect files, symbols, device state, and skill bodies before acting. Never \
+claim a file changed, a command ran, or a check passed unless a tool result in this \
+session proves it. Never invent paths, outputs, or hardware facts.
+- Minimal changes: make surgical edits rather than unnecessary rewrites. Do not create \
+unsolicited docs, READMEs, or helper scripts, and never revert user changes unless asked.
+- Verification: after modifying code, config, or apps, verify with concrete evidence \
+(tests, command output, or reading back) and report any failure honestly.
+- Recovery: when a tool fails, times out, or is denied, diagnose the cause and change \
+approach; never repeat identical failing calls.
+- Interrupts: when the user interrupts or cancels, stop immediately; do not retry or \
+resume cancelled work unless asked.
 
-VOICE
-- `speak` is text-to-speech. Use it ONLY when the user explicitly asks to be
-  told aloud (e.g. \"read it to me\", \"念给我听\"). Never use it for progress,
-  confirmations or status: the screen is the channel.
-- Keep every spoken message under 150 words (a CJK character counts as one
-  word). Anything longer is rejected by the tool, so summarise first.
-- The user talks to you by long-pressing Tab; the transcript is submitted
-  automatically, so treat messages as spoken and reply conversationally.
+SCREEN & OUTPUT
+- Panel: 53 columns x 12 rows (6x13 bitmap font; ~8 chat rows visible above the status \
+and input rows).
+- Formatting: lead with the answer or result. No preamble, no restating the question, no \
+step-by-step narration. Aim for <= 4-8 short lines (< 53 cells each). No emoji, no wide \
+Markdown tables, no horizontal rules.
+- `artifact`: replaces the whole screen with a scrollable panel (title <= 53 chars; ~10 \
+rows of 53 chars visible at once; dismissed with Esc). Use ONLY for finished results that \
+genuinely need room (code, tables, diagrams, checklists, comparisons) - never for progress \
+notes or one-line answers.
 
-IMAGES
-- The user can attach local image files with /image <path> (JPEG, PNG, GIF or
-  WebP). They arrive as image blocks in that message and you can see them:
-  answer about what is visible, read text out of screenshots directly, and do
-  not ask for a text description when the picture is right there.
-- You can also open a picture yourself with read_image {\"file_path\": \"...\"}:
-  use it when the user names an image file, a screenshot is the evidence they
-  mean, or a diagram in the workspace would answer the question. It needs an
-  image-capable model (deepseek-flash is). Do not read a picture just to repeat
-  what its filename already says.
-- An image costs up to ~1000 tokens, so do not ask the user to attach pictures
-  that do not help. If the endpoint or model rejects image input (400), say so
-  plainly and offer /ocr for text-in-image extraction or a vision-capable model.
-
-STYLE
-- Be concise. Answer in the fewest lines that fully answer: no preamble, no
-  restating the question, no narration of steps. Aim for <= 4 short lines
-  unless the user asks for detail.
-- When the user interrupts or cancels, stop immediately; do not retry or repeat
-  the interrupted work unless asked.
+TOOLS
+Prefer dedicated tools over `bash` whenever one fits:
+- `read_file`: read text files with 1-based line numbers (`offset`/`limit`); follow \
+continuation hints instead of re-reading blindly. Always read a file before editing or \
+overwriting it.
+- `list_dir`, `glob`, `grep`: inspect directories, locate files by pattern, and search \
+contents with extended regex instead of running `ls`, `find`, or `grep` in `bash`.
+- `edit_file`: preferred for surgical in-place edits on existing source-sized files \
+(<= 8 MB). Match `old_string` verbatim with enough context to be unique, or set \
+`replace_all=true`.
+- `write_file`: create new files or intentionally overwrite a file completely (creates \
+parent dirs).
+- `bash`: reserve for operations dedicated tools cannot perform (system/hardware probes, \
+running scripts/tests, `git`, audio/display/network checks). Combine related read-only \
+checks into one compact command, bound output (never `cat` huge logs), and use `timeout_s` \
+or `job_start` for long commands.
+- `read_image` (`{\"file_path\": \"...\"}`): inspect local PNG/JPEG/WebP/GIF images \
+directly (<= 8 MB, vision-capable model required). User-attached images (`/image <path>`) \
+also arrive as image blocks - answer directly from what is visible rather than asking for \
+a description. Do not install image libraries, generate thumbnails, or open an image just \
+to restate its filename. Each image costs up to ~1,000 tokens, so avoid unnecessary reads. \
+If the model/endpoint rejects image blocks (400), say so plainly and offer `ocr` / `/ocr` \
+or a vision-capable model.
+- `skill`: when a task matches a package in the SKILLS catalog (including `hardware-info` \
+before probing or writing code for this Cardputer Zero's hardware), call `skill` with its \
+exact name before acting. Do not guess a skill's contents.
 
 PROGRESS ROW
-- Call state_report ONCE at the start of every step that does work (every
-  assistant step whose reply includes tool calls), and again whenever the stage
-  changes: \"reading /proc\", \"writing run.sh\", \"testing it\". Each report
-  replaces the previous one on the pinned top row, so the user always sees the
-  current stage while you work instead of a frozen screen.
-- One short line, 50 display cells at most (CJK counts as 2), in the user's
-  language; longer reports are rejected, so keep it to a few words. It must be
-  the current activity, not a conclusion. Never put secrets in it and do not
-  repeat the same report back-to-back.
-- The pinned row is not transcript: it stays on screen while tool cards and
-  answer text stream in, and only changes when you send the next state_report.
-  If you skip a step's report the user is left looking at a stale stage.
+- Call state_report ONCE at the start of every step that runs tools (every assistant step \
+whose reply includes tool calls), and again whenever the stage changes (e.g. \"reading \
+/proc\", \"editing run.sh\", \"running tests\").
+- One short line, 50 display cells at most (CJK counts as 2), no newlines, in the user's \
+language; longer reports are rejected. State the current activity, not a conclusion. Never \
+put secrets in it and do not repeat the same report back-to-back.
+- The pinned top row stays visible while tool cards and text stream in and only changes on \
+the next `state_report`; skipping it leaves a stale stage on screen.
 
-RULES
-- Never claim a file changed or a command ran unless a tool result shows it.
-- Reply in the interface language (see LANGUAGE) by default; a user request for\n  another language wins, including inside artifacts.
-- Show the result rather than describing the process.";
+PLANNING
+- For multi-step work (more than a couple of steps, several tool calls, or work across \
+files), call todo_write BEFORE you start: send the COMPLETE list of `{content, status}` \
+items (`pending` | `in_progress` | `completed`), one todo per concrete step, keeping \
+exactly one item 'in_progress'.
+- Update the whole list as steps finish. Mark each todo 'completed' as soon as it is done. \
+Skip it for trivial single-step requests. Use `todo_read` to inspect the current list.
+- The list drives the `done/total` status badge and resets on the next turn: it is the \
+plan for this turn, not durable storage. `todo_write` tracks the plan; `state_report` \
+shows what you are doing right now.
 
-/// What the model should know about saved-session titles (`/resume` names).
-const TOOL_SAFETY_GUIDANCE: &str = "\
-Tool calls pass through a permission layer (sandbox mode auto/strict/full). \
-Known-safe operations (read-only commands, web reads, workspace writes) run \
-directly. System-configuration changes are refused in auto mode and need \
-human confirmation in strict mode. If a call fails with permission denied, \
-do not retry the same call: explain the reason, or ask the user to switch mode \
-in /config.\n\
-\n\
-JOBS AND WATCHERS\n\
-- job_start runs a shell command in the background and returns an id; use \
-job_output to peek, job_wait to wait up to a timeout, job_kill to stop it. \
-Start several jobs when work is independent.\n\
-- watcher_start runs a command in the background and delivers every line it \
-prints to you as a user message prefixed [watcher <id>]. Use it for servers, \
-logs and sensors; stop it with watcher_stop when it is no longer needed.\n\
-\n";
+JOBS, WATCHERS & SCHEDULING
+- `job_start`, `job_list`, `job_output`, `job_wait`, `job_kill`: detached shell processes \
+for long-running work within this session (scans, downloads, builds) so other calls can \
+continue. Start independent jobs in parallel; kill them when done.
+- `watcher_start`, `watcher_list`, `watcher_stop`: session-scoped background processes \
+whose every stdout/stderr line arrives as a `[watcher <id>]` user message (live logs, \
+servers, sensors). Stop when no longer needed.
+- `cron` & `watch`: persistent triggers stored in `~/.dst/jobs.json` that fire as \
+standalone turns when idle (`cron` on a 5-field schedule; `watch` when a file/directory \
+mtime changes). Write self-contained prompts for `add`; inspect with `list` before `remove`.
 
-const SESSION_GUIDANCE: &str = "\
-This conversation is saved and appears in the user's /resume menu. Keep its \
-title current with the `rename` tool: call it as soon as you understand the \
-task, and again whenever the task changes substantially (new sub-task, \
-different bug, finished phase). The title is what the user picks the session \
-by, so make it a few concrete words about the work, not a greeting or a copy \
-of the message.";
+PERMISSIONS
+- Tool calls pass through the safeguard (`auto` / `strict` / `full`). Known-safe calls \
+(read-only commands, web reads, workspace writes, harness tools) run directly. \
+System-configuration changes (`sudo`, service control, package installs, writes under \
+`/etc`, `/boot`, `/usr`, `/lib`, `/sys`, `/proc`, `/dev`, `/var`, destructive `rm`/`git`) \
+and uncertain calls are checked by the safeguard in `auto` mode and require human approval \
+in `strict` mode.
+- Two-phase escalation in `auto` mode: when a call is blocked by the safeguard, you are \
+notified first with the concrete block reason. Do NOT blindly retry the identical call. \
+First judge whether the operation is genuinely necessary or if a safer workspace-local or \
+read-only alternative accomplishes the goal. If it IS truly necessary, retry the exact \
+same call with `request_user_approval: true` and `approval_reason` set to the prior block \
+reason (plus a brief justification) so the TUI prompts the user directly (`[y] allow` / \
+`[n] reject`). Never set `request_user_approval: true` preemptively before a call is \
+blocked. If the user rejects the confirmation prompt (`rejected by the user`), accept the \
+refusal without retrying and explain the outcome.
+
+MEMORY
+- `memory_read` / `memory_search`: inspect project (`./AGENTS.md`) and global \
+(`~/.dst/AGENTS.md`) memory before changing conventions or when prior preferences matter.
+- `memory_write`: persist short, factual, durable rules (`scope=project` for workspace \
+conventions, `scope=global` for cross-project preferences; appends by default, \
+`replace=true` overwrites). Never store secrets, credentials, or ephemeral task state.
+
+SESSION
+- This conversation is saved and shown in `/resume`. Call `rename` with a concise, \
+concrete 1-line title (<= 60 chars) as soon as you understand the task, and update it \
+whenever the task shifts substantially (new sub-task, different bug, next phase). Never \
+use greetings or copy the raw user message.";
+
+const WEB_TOOLS_GUIDANCE: &str = "\n\nWEB & DOCUMENTS\n\
+- `search`: query the web for current or external facts instead of guessing (3-5 results \
+usually fit this screen; keep `need_content=false` by default).\n\
+- `fetch`: read one http(s) URL as Markdown after `search` when summaries are not enough.\n\
+- `ocr`: extract text page-by-page from a local PDF, Word, PowerPoint, or image file \
+(use `purpose=rich_layout_recognition` when tables or layout matter).";
+
+const VOICE_GUIDANCE: &str = "\n\nVOICE\n\
+- `speak`: text-to-speech via the device speaker ONLY when the user explicitly asks to be \
+told aloud (e.g. \"read it to me\", \"念给我听\"). Never use it for progress, \
+confirmations, or status; the screen is the primary channel.\n\
+- Keep every spoken message <= 150 words (a CJK character counts as 1 word); longer input \
+is rejected, so summarize aloud and leave detail in reply text.\n\
+- The user speaks by long-pressing Tab and the transcript submits automatically; treat \
+voice messages naturally and reply conversationally.";
 
 /// Bounded conversation tail handed to a one-off `/btw` subagent: newest
 /// messages last, at most 96 KB, never starting with an orphan tool result
@@ -2829,14 +2950,19 @@ fn btw_contract(base: &str, question: &str) -> String {
     format!(
         "{base}\n\nSIDE QUESTION MODE\n\
 You are a one-off, read-only subagent answering a side question about this \
-conversation. You may use only read-only tools to look things up (read files, \
-list directories, grep, search the web, read an image); you must not write, \
-edit, run shell commands, change skills/apps, start jobs or services. Answer \
-from the conversation above and, if needed, from what those read-only tools \
-show. The user sees only your reply, in a full-screen panel: keep it under 10 \
-lines of at most 52 characters each, no preamble and no \"based on the context\" \
-filler. If the information is not available, say exactly what is missing.\n\n\
-The side question is: {question}"
+conversation.\n\
+- Allowed: answer from the conversation above and read-only tools only \
+(`read_file`, `read_image`, `list_dir`, `glob`, `grep`, `search`, `fetch`, \
+`ocr`, `skill`, `memory_read`, `memory_search`, `todo_read`, `get_goal`, \
+`job_list`, `job_output`, `watcher_list`).\n\
+- Forbidden: never write, edit, run shell commands, mutate skills/apps/memory/\
+todos/goals, start jobs/watchers/schedules, call `artifact`, `speak`, or \
+`state_report`.\n\
+- Output: shown directly in a full-screen panel (nothing is saved to the main \
+conversation). Keep it <= 10 lines of <= 52 cells each, direct and grounded, \
+with no preamble or \"based on the context\" filler. If the answer is not \
+available, state exactly what is missing.\n\n\
+Side question: {question}"
     )
 }
 
@@ -3030,8 +3156,8 @@ impl harness::Ui for OnceUi {
     }
 }
 
-fn run_once(cfg: &Cfg, reg: &[tool::ToolDef], prompt: &str) {
-    let mut msgs = vec![harness::msg("system", SYSTEM_PROMPT)];
+fn run_once(cfg: &Cfg, reg: &[tool::ToolDef], system_prompt: &str, prompt: &str) {
+    let mut msgs = vec![harness::msg("system", system_prompt)];
     let mut ui = OnceUi;
     harness::run_turn(cfg, &harness::RunOpts::default(), &mut msgs, reg, prompt, &[], &mut ui);
 }
@@ -3245,13 +3371,17 @@ impl<'a> harness::Ui for TermUi<'a> {
                     secs: took,
                 });
                 let cols = self.scr.cols;
-                // The call card already named the tool: the settled row is the
-                // outcome, so start a new line with the verdict instead of
-                // repeating the name.
-                self.scr.push(
-                    &format!("  \u{2514} {took:.1}s {}", if is_error { "x" } else { "ok" }),
-                    K_TOOL,
-                );
+                // When sibling tools are still running in parallel, tag the
+                // settled line with the tool name so out-of-order completion
+                // stays readable on the 53-col panel.
+                let parallel = !self.tools.is_empty();
+                let verdict = if is_error { "x" } else { "ok" };
+                let settled_line = if parallel && !name.is_empty() {
+                    format!("  \u{2514} {name} {took:.1}s {verdict}")
+                } else {
+                    format!("  \u{2514} {took:.1}s {verdict}")
+                };
+                self.scr.push(&settled_line, K_TOOL);
                 let preview = first_lines(&content, if is_error { 3 } else { 1 });
                 if !preview.trim().is_empty() {
                     let kind = if is_error { K_ERR } else { K_RES };
@@ -4693,6 +4823,7 @@ fn onboarding(scr: &mut Scr, config_rc: &ConfigRc) {
 
 
 // --------------------------------------------------------------- sessions
+
 
 fn update_channel(cfg: &config::Config) -> crate::update::Channel {
     crate::update::Channel::parse(&cfg.update_channel).unwrap_or(crate::update::Channel::Nightly)
@@ -6462,77 +6593,103 @@ fn maybe_show_tips(scr: &mut Scr, config_rc: &ConfigRc) {
 }
 
 
-/// Effective tool set: the capability-filtered base registry, the feature
-/// tools, and the creator app tools only while creator mode is on.
-fn build_registry(caps: config::Capabilities, creator: bool) -> Vec<tool::ToolDef> {
+/// Effective tool set: capability-filtered base registry, feature tools,
+/// creator tools while creator mode is on, minus `disabled_tools`, deduplicated
+/// across the whole set so an MCP server can never collide with a built-in.
+fn build_registry(
+    caps: config::Capabilities,
+    creator: bool,
+    disabled: &[String],
+) -> Vec<tool::ToolDef> {
     let mut reg = tools::registry(caps);
     reg.extend(goal::tool_defs());
     reg.extend(session::tool_defs());
     reg.extend(bg::tool_defs());
     reg.extend(instructions::tool_defs());
     reg.extend(todo::tool_defs());
-    reg.extend(mcp::tool_defs());
     if creator {
         reg.extend(apps::tool_defs());
         reg.extend(skills::tool_defs());
     }
-    reg
+    reg.extend(mcp::tool_defs());
+    let mut seen = std::collections::HashSet::new();
+    reg.into_iter()
+        .filter(|t| !disabled.iter().any(|d| d == t.name))
+        .filter(|t| seen.insert(t.name))
+        .collect()
 }
 
 /// System prompt for the current settings. Rebuilt at startup and before every
-/// turn, because creator mode and the installed-app catalog change at runtime.
+/// turn so mode, capabilities, MCP servers and skill catalog stay current.
+/// Ordered static-first, dynamic-last to maximize provider prefix-cache reuse.
 fn build_system_prompt(
     c: &config::Config,
     skill_list: &[skills::Skill],
     caps: config::Capabilities,
 ) -> String {
     let mut system_prompt = format!(
-        "{}{}\n\nGOALS\n{}\n{}\nSESSION\n{}",
-        SYSTEM_PROMPT,
-        skills::catalog_prompt(skill_list),
-        goal::guidance(),
-        TOOL_SAFETY_GUIDANCE,
-        SESSION_GUIDANCE
+        "{SYSTEM_PROMPT}\n\nGOALS\n- `get_goal`, `create_goal`, `update_goal`: always call \
+`get_goal` first to read the exact `id` and `revision` required by `update_goal`.\n- {}",
+        goal::guidance()
     );
-    // UI language -> default answer language. The user's explicit request wins,
-    // so this is stated as a default rather than a hard rule.
-    system_prompt.push_str(&format!(
-        "\nLANGUAGE\n- The interface language is {} ({}). Write every reply in it by default: prose, artifact bodies, state reports, questions and errors.\n- The user's own request wins: if they ask for another language, or tell you to match the language they write in, switch to it and keep using it.\n",
-        i18n::language_name(),
-        i18n::language_native()
-    ));
-    system_prompt.push_str(&instructions::prompt_section());
-    system_prompt.push_str(
-        "\nPLANNING\n\
-- For multi-step work (more than a couple of steps, several tool calls, or work that spans \
-files), call todo_write BEFORE you start: send the COMPLETE list, one todo per concrete step, \
-with exactly one item 'in_progress'. Update the whole list as steps finish. Mark each todo \
-'completed' as soon as it is done. Skip it for trivial single-step requests.\n\
-- The list appears in the status area as a 'done/total' badge and is cleared when the next \
-turn starts: it is the plan for this turn, not long-term storage (that is memory).\n\
-- The pinned state_report line and the todo list complement each other: the todos say what \
-the plan is, state_report says what you are doing right now.\n\
-\nMEMORY\n\
-- Save durable user preferences and project conventions with memory_write (scope=project for \
-workspace rules, global for cross-project). Read them with memory_read / memory_search \
-before changing conventions. Never store secrets in memory.\n",
-    );
-    if !caps.web_tools || !caps.speech {
-        let mut caps_text = String::from("\nCAPABILITIES\n");
+    if caps.web_tools {
+        system_prompt.push_str(WEB_TOOLS_GUIDANCE);
+    }
+    if caps.speech {
+        system_prompt.push_str(VOICE_GUIDANCE);
+    }
+    if !caps.web_tools || !caps.speech || !c.disabled_tools.is_empty() {
+        system_prompt.push_str("\n\nCAPABILITIES");
         if !caps.web_tools {
-            caps_text.push_str(
-                "search, fetch and ocr are not registered because this is a third-party \
-OpenAI-compatible endpoint. Use bash/read_file/write_file instead, and do not tell \
-the user you can search the web.\n",
+            system_prompt.push_str(
+                "\n- `search`, `fetch`, and `ocr` are unavailable on this third-party \
+OpenAI-compatible endpoint. Use local tools (`bash`, `read_file`, `write_file`) instead, \
+and do not claim you can search the web.",
             );
         }
         if !caps.speech {
-            caps_text.push_str(
-                "speech (ASR/TTS) is not available on this endpoint; do not mention the \
-speak tool and do not claim you can listen or talk.\n",
+            system_prompt.push_str(
+                "\n- Speech (ASR/TTS) is unavailable on this endpoint; do not mention \
+`speak` and do not claim you can listen or talk.",
             );
         }
-        system_prompt.push_str(&caps_text);
+        if !c.disabled_tools.is_empty() {
+            system_prompt.push_str(&format!(
+                "\n- Disabled by user config (not registered): {}. Do not attempt to call them.",
+                c.disabled_tools.join(", ")
+            ));
+        }
+    }
+    let mcp_servers = mcp::server_summary();
+    if !mcp_servers.is_empty() {
+        let names = mcp_servers
+            .iter()
+            .map(|(s, _)| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        system_prompt.push_str(&format!(
+            "\n\nMCP TOOLS\n- External MCP servers connected: {names}. Tools are exposed as \
+`mcp__<server>__<tool>` with their own JSON schemas; prefer them for the external systems \
+they cover."
+        ));
+    }
+    // UI language -> default answer language. The user's explicit request wins.
+    system_prompt.push_str(&format!(
+        "\n\nLANGUAGE\n- The interface language is {} ({}). Write every reply in it by \
+default: prose, artifact bodies, state reports, questions, and errors.\n- The user's own \
+request wins: if they ask for another language, or tell you to match the language they \
+write in, switch to it and keep using it.",
+        i18n::language_name(),
+        i18n::language_native()
+    ));
+    // Dynamic tail (changes across projects/turns): kept last for prefix caching.
+    system_prompt.push_str(&instructions::prompt_section());
+    let skills_block = skills::catalog_prompt(skill_list);
+    if !skills_block.is_empty() {
+        if !system_prompt.ends_with('\n') {
+            system_prompt.push('\n');
+        }
+        system_prompt.push_str(&skills_block);
     }
     if c.creator {
         system_prompt.push_str(&apps::prompt_section());
@@ -6721,9 +6878,16 @@ fn main() {
     let _mcp_guard = mcp::ShutdownOnDrop;
     let mut caps_at_start = config_rc.borrow().capabilities();
     let mut creator_at_start = config_rc.borrow().creator;
-    let mut reg = build_registry(caps_at_start, creator_at_start);
+    let disabled_at_start = config_rc.borrow().disabled_tools.clone();
+    let shared_reg = std::rc::Rc::new(std::cell::RefCell::new(build_registry(
+        caps_at_start,
+        creator_at_start,
+        &disabled_at_start,
+    )));
     let system_prompt = build_system_prompt(&config_rc.borrow(), &skill_list, caps_at_start);
-    let tdefs = tool::definitions(&reg);
+    let shared_tdefs = std::rc::Rc::new(std::cell::RefCell::new(tool::definitions(
+        &shared_reg.borrow(),
+    )));
 
     let argv: Vec<String> = std::env::args().collect();
     if argv.len() >= 2 && argv[1] == "--voice-selftest" {
@@ -6759,7 +6923,8 @@ fn main() {
         println!("official={}", crate::config::is_official(&config_rc.borrow().base));
         println!("web_tools={} speech={}", caps.web_tools, caps.speech);
         println!("mode={}", if creator { "creator" } else { "normal" });
-        let mode_reg = build_registry(caps, creator);
+        let disabled = config_rc.borrow().disabled_tools.clone();
+        let mode_reg = build_registry(caps, creator, &disabled);
         let mut names: Vec<&str> = mode_reg.iter().map(|t| t.name).collect();
         names.sort();
         println!("tools={}", names.join(","));
@@ -6773,7 +6938,7 @@ fn main() {
             raw_args: argv[3].clone(),
         };
         let mut host = tool::NullHost;
-        let outs = tool::run_batch(&reg, &[call], &mut host);
+        let outs = tool::run_batch(&shared_reg.borrow(), &[call], &mut host);
         for o in outs {
             println!("{}", o.content);
             if o.is_error {
@@ -6783,7 +6948,7 @@ fn main() {
         return;
     }
     if argv.len() >= 3 && argv[1] == "--once" {
-        run_once(&cfg, &reg, &argv[2]);
+        run_once(&cfg, &shared_reg.borrow(), &system_prompt, &argv[2]);
         return;
     }
 
@@ -6838,12 +7003,13 @@ start another one in a different terminal or tmux window"
     }
     let msgs: jobs::Msgs = std::rc::Rc::new(std::cell::RefCell::new(vec![harness::msg("system", &system_prompt)]));
     {
-        let tdefs2 = tdefs.clone();
+        let reg2 = shared_reg.clone();
+        let tdefs2 = shared_tdefs.clone();
         let msgs2 = msgs.clone();
         let sc = shared_cfg.clone();
         scr.on_tick = Some(Box::new(move |s: &mut Scr| {
             let c = sc.borrow().clone();
-            jobs::poll(&c, &tdefs2, &msgs2, s);
+            jobs::poll(&c, &reg2.borrow(), &tdefs2.borrow(), &msgs2, s);
             if let Some(Ok(Some(info))) = crate::update::take_check() {
                 s.update_offer = Some(info);
             }
@@ -6956,7 +7122,7 @@ start another one in a different terminal or tmux window"
                     manual.retain_ratio = 0.0;
                     cfg = api_cfg(&config_rc.borrow());
                     refresh_ctx_window(&mut scr, &cfg);
-                    let defs = tool::definitions(&reg);
+                    let defs = shared_tdefs.borrow().clone();
                     let window = scr.ctx_window;
                     let result = {
                         let btw_ctx = btw_snapshot(&msgs.borrow());
@@ -7074,7 +7240,10 @@ start another one in a different terminal or tmux window"
                     creator_at_start = creator_now;
                     // The registry follows both capabilities and the creator
                     // mode: the app_* tools exist only while it is on.
-                    reg = build_registry(caps_at_start, creator_at_start);
+                    let disabled = config_rc.borrow().disabled_tools.clone();
+                    let next_reg = build_registry(caps_at_start, creator_at_start, &disabled);
+                    *shared_tdefs.borrow_mut() = tool::definitions(&next_reg);
+                    *shared_reg.borrow_mut() = next_reg;
                     scr.speech_ok = caps_now.speech;
                 }
                 scr.creator = creator_at_start;
@@ -7313,8 +7482,9 @@ start another one in a different terminal or tmux window"
                     cfg_rc: config_rc.clone(),
                     btw_ctx,
                 };
+                let live_reg = shared_reg.borrow();
                 last_report = Some(harness::run_turn(
-                    &cfg, &opts, &mut m, &reg, &submit, &images, &mut ui,
+                    &cfg, &opts, &mut m, &live_reg, &submit, &images, &mut ui,
                 ));
             }
             goal::set_in_round(false);

@@ -9,7 +9,7 @@
 //! of a log file: the device has 512 MB of RAM and a small SD card.
 
 use crate::json::J;
-use crate::tool::{Fail, Param, ToolDef};
+use crate::tool::{Access, Fail, Param, ToolDef};
 use std::collections::VecDeque;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -535,6 +535,28 @@ fn super_short(s: &str, n: usize) -> String {
     out.replace('\n', " ")
 }
 
+fn job_alloc_write(_a: &J) -> Access {
+    Access::Write("job_alloc".into())
+}
+fn job_alloc_read(_a: &J) -> Access {
+    Access::Read("job_alloc".into())
+}
+fn job_id_read(a: &J) -> Access {
+    Access::Read(format!("job:{}", crate::tool::str_arg(a, "id").unwrap_or_default()))
+}
+fn job_id_write(a: &J) -> Access {
+    Access::Write(format!("job:{}", crate::tool::str_arg(a, "id").unwrap_or_default()))
+}
+fn watcher_alloc_write(_a: &J) -> Access {
+    Access::Write("watcher_alloc".into())
+}
+fn watcher_alloc_read(_a: &J) -> Access {
+    Access::Read("watcher_alloc".into())
+}
+fn watcher_id_write(a: &J) -> Access {
+    Access::Write(format!("watcher:{}", crate::tool::str_arg(a, "id").unwrap_or_default()))
+}
+
 /// Registry entries for the job/watcher tools.
 pub fn tool_defs() -> Vec<ToolDef> {
     vec![
@@ -543,8 +565,13 @@ pub fn tool_defs() -> Vec<ToolDef> {
             description: "Start a shell command as a background job and return its id. Use it for \
 long-running work (downloads, builds, long scans) so other tool calls can continue. Poll with \
 job_output, wait with job_wait, stop with job_kill.",
-            params: vec![Param::req("command", "string", "Shell command to run with `sh -c`.")],
+            params: vec![
+                Param::req("command", "string", "Shell command to run with `sh -c`."),
+                Param::safeguard_approval(),
+                Param::safeguard_reason(),
+            ],
             concurrency_safe: false,
+            access: Some(job_alloc_write),
             timeout_ms: 10_000,
             execute: job_start_exec,
             render: status_render,
@@ -558,6 +585,7 @@ job_output, wait with job_wait, stop with job_kill.",
             description: "List background jobs with their status and age.",
             params: vec![],
             concurrency_safe: true,
+            access: Some(job_alloc_read),
             timeout_ms: 5_000,
             execute: job_list_exec,
             render: list_render,
@@ -571,9 +599,12 @@ job_output, wait with job_wait, stop with job_kill.",
             description: "Read the recent output of a background job without waiting.",
             params: vec![
                 Param::req("id", "string", "Job id returned by job_start."),
-                Param::opt("lines", "integer", "How many tail lines to return (default 40, max 200)."),
+                Param::opt("lines", "integer", "How many tail lines to return.")
+                    .range(1, 200)
+                    .default_int(40),
             ],
             concurrency_safe: true,
+            access: Some(job_id_read),
             timeout_ms: 10_000,
             execute: output_exec,
             render: status_render,
@@ -588,9 +619,12 @@ job_output, wait with job_wait, stop with job_kill.",
 Returns the final status and output, or still_running=true on timeout.",
             params: vec![
                 Param::req("id", "string", "Job id returned by job_start."),
-                Param::opt("timeout_s", "integer", "Seconds to wait (default 30, max 120)."),
+                Param::opt("timeout_s", "integer", "Seconds to wait.")
+                    .range(1, 120)
+                    .default_int(30),
             ],
-            concurrency_safe: false,
+            concurrency_safe: true,
+            access: Some(job_id_read),
             timeout_ms: (WAIT_CAP_S + 20) * 1_000,
             execute: wait_exec,
             render: status_render,
@@ -604,6 +638,7 @@ Returns the final status and output, or still_running=true on timeout.",
             description: "Kill a background job (or watcher) and return its last output.",
             params: vec![Param::req("id", "string", "Job id.")],
             concurrency_safe: false,
+            access: Some(job_id_write),
             timeout_ms: 10_000,
             execute: kill_exec,
             render: status_render,
@@ -617,8 +652,13 @@ Returns the final status and output, or still_running=true on timeout.",
             description: "Start a background watcher: every line the command prints is delivered to \
 you as a user message prefixed [watcher <id>]. Use it to react to logs, servers, sensors or any \
 process that emits lines over time. Stop it with watcher_stop.",
-            params: vec![Param::req("command", "string", "Shell command whose stdout/stderr lines are watched.")],
+            params: vec![
+                Param::req("command", "string", "Shell command whose stdout/stderr lines are watched."),
+                Param::safeguard_approval(),
+                Param::safeguard_reason(),
+            ],
             concurrency_safe: false,
+            access: Some(watcher_alloc_write),
             timeout_ms: 10_000,
             execute: watcher_start_exec,
             render: status_render,
@@ -632,6 +672,7 @@ process that emits lines over time. Stop it with watcher_stop.",
             description: "List active line watchers.",
             params: vec![],
             concurrency_safe: true,
+            access: Some(watcher_alloc_read),
             timeout_ms: 5_000,
             execute: watcher_list_exec,
             render: list_render,
@@ -645,6 +686,7 @@ process that emits lines over time. Stop it with watcher_stop.",
             description: "Stop a line watcher.",
             params: vec![Param::req("id", "string", "Watcher id returned by watcher_start.")],
             concurrency_safe: false,
+            access: Some(watcher_id_write),
             timeout_ms: 10_000,
             execute: kill_any_exec,
             render: status_render,

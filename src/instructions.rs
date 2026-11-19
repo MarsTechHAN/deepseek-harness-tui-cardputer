@@ -164,6 +164,13 @@ fn mem_render(_a: &crate::json::J, v: &crate::json::J) -> String {
     v.dump()
 }
 
+fn mem_read_access(_a: &crate::json::J) -> crate::tool::Access {
+    crate::tool::Access::Read("memory".into())
+}
+fn mem_write_access(_a: &crate::json::J) -> crate::tool::Access {
+    crate::tool::Access::Write("memory".into())
+}
+
 /// Claude-Code-aligned memory tools: read, write (append/replace), search.
 pub fn tool_defs() -> Vec<crate::tool::ToolDef> {
     use crate::tool::{Param, ToolDef};
@@ -171,8 +178,8 @@ pub fn tool_defs() -> Vec<crate::tool::ToolDef> {
         ToolDef {
             name: "memory_read",
             description: "Read the project memory (AGENTS.md in the workspace) and/or the global memory (~/.dst/AGENTS.md). Use it before changing conventions or when you need previously saved preferences.",
-            params: vec![Param::opt("file", "string", "project | global | all (default all).")],
-            concurrency_safe: true, timeout_ms: 5_000,
+            params: vec![Param::opt("file", "string", "project | global | all, or a file path.").default_str("all")],
+            concurrency_safe: true, access: Some(mem_read_access), timeout_ms: 5_000,
             execute: mem_read_exec, render: mem_render,
             present: |_a| "memory_read".into(), post: None,
             schema_override: None, dynamic: None,
@@ -183,9 +190,11 @@ pub fn tool_defs() -> Vec<crate::tool::ToolDef> {
             params: vec![
                 Param::one_of("scope", "project or global.", &["project", "global"]),
                 Param::req("content", "string", "Markdown text to save."),
-                Param::opt("replace", "boolean", "Replace the file instead of appending."),
+                Param::opt("replace", "boolean", "Replace the file instead of appending.").default_bool(false),
+                Param::safeguard_approval(),
+                Param::safeguard_reason(),
             ],
-            concurrency_safe: false, timeout_ms: 10_000,
+            concurrency_safe: false, access: Some(mem_write_access), timeout_ms: 10_000,
             execute: mem_write_exec, render: mem_render,
             present: |a| format!("memory_write {}: {}", crate::tool::str_arg(a, "scope").unwrap_or_else(|| "project".into()), crate::tool::str_arg(a, "content").unwrap_or_default().chars().take(24).collect::<String>()),
             post: None, schema_override: None, dynamic: None,
@@ -194,7 +203,7 @@ pub fn tool_defs() -> Vec<crate::tool::ToolDef> {
             name: "memory_search",
             description: "Search project and global memory files for a keyword; returns matching lines with file:line.",
             params: vec![Param::req("query", "string", "Keyword to find in memory files.")],
-            concurrency_safe: true, timeout_ms: 5_000,
+            concurrency_safe: true, access: Some(mem_read_access), timeout_ms: 5_000,
             execute: mem_search_exec, render: mem_render,
             present: |a| format!("memory_search {}", crate::tool::str_arg(a, "query").unwrap_or_default()),
             post: None, schema_override: None, dynamic: None,

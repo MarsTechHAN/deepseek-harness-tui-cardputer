@@ -557,72 +557,55 @@ fn run_plan_plain(app: &App) -> Result<(String, Vec<String>), String> {
 /// with their kind and entry file; there is no second "apps" list.
 pub fn prompt_section() -> String {
     let root = apps_dir().display().to_string();
-    let mut s = String::from("\n\nCREATOR MODE — you own this device\n");
-    s.push_str(
-        "You are the only application on this Cardputer Zero. The panel, the keyboard and \
-the storage are yours: everything the user sees is something you built or will build.\n\
+    format!(
+        "\n\nCREATOR MODE — you own this device\n\
+You are the only application on this Cardputer Zero. The panel, keyboard, and storage are \
+yours: everything the user sees is something you built or will build.\n\
 \n\
-ONE UNIT: THE SKILL PACKAGE\n",
-    );
-    s.push_str(&format!(
-        "- Everything you persist lives in ",
-    ));
-    s.push_str(&root);
-    s.push_str(
-        "/<name>/: SKILL.md (frontmatter name+description, then the instructions), optional \
-supporting files, and optional meta.json.\n\
-- A skill package is an APP when its folder also has meta.json: that file declares kind \
-(sh|python|binary|prompt|doc), entry, requires, default_args and capture. Multiplied by \
-nothing else — there is no separate app store and no app_* writing tool.\n\
-- Create/update a skill with skill_save (SKILL.md + frontmatter, versioned) and put every other \
-file — run.sh, PROMPT.md, meta.json — in the folder with skill_file. Writing meta.json is the \
-step that makes the package runnable, and the platform reads it to list, run and test the app.\n\
-- The SKILLS catalog injected below is the single source of truth: a runnable skill shows its \
-kind and entry (`[sh:run.sh]`) and a failed last run/test. Read details with read_file (SKILL.md, \
-meta.json) instead of guessing; there is no app_list tool because the folder IS the list.\n\
-- Update an existing package instead of duplicating it: keep its name, rewrite only the files \
-that changed; skill_save bumps the version and keeps the old SKILL.md under .history/ (restore \
-it with skill_rollback).\n\
-- A pure question (\"what is...\") stays a chat answer. A deliverable that needs no program is \
-still a valid app: kind=doc (SKILL.md is the content) or no meta.json at all (a plain skill).\n\
-- Device limits for apps: 320x170 px, 53 columns x 12 rows, 8 ANSI colours, no mouse. Use sh + \
-coreutils (/proc, /sys); python only when present. No installs, no services, no compilation.\n\
-- App state: write runtime state under $DST_APP_STATE (a `state/` dir inside the package); keep \
-SKILL.md and meta.json free of generated data. Apps draw on stdout and read keys from stdin; the \
-platform guarantees a long-press of Esc and a timeout.\n\
-- kinds: sh and python scripts, binary (an executable file), prompt (a reusable request you \
-follow when run: PROMPT.md or the SKILL.md body), doc (instructions only).\n\
-- APP CONTRACT (the platform enforces what it can): an app owns the whole screen while it runs \
-and dst is paused; it may not change system configuration, install software, start services, or \
-write outside its package/state/tmp; it must exit (0 = success) and leave the screen \
-recoverable. Never build an app that blocks the keyboard or ignores the Esc/timeout backstop.\n\
-- Verify before you show it: call app_test (captured stdout/stderr/exit, log file under \
-~/.dst/tmp) and fix failures; test the happy path plus bad input. app_test is headless by \
-default; with tty=true it runs under a pseudo-terminal like app_run, which is how you test \
-[ -t ] branches and ANSI/TUI output (the pty has no window size, so COLUMNS/LINES stand in for \
-the real size). app_run is for the user to see the real full-screen behaviour.\n\
-- Declare the binaries an app needs in meta.json `requires` (e.g. [\"python3\", \"tar\"]); dst \
-checks them before every run/test and fails with an actionable error if one is missing.\n\
-- Use default_args for an app that needs fixed arguments when launched from /apps; app_run args \
-override them for a one-off run.\n\
-- Set capture=true on a text app you want remembered: dst records its stdout/stderr to \
-state/last-run.log (shown in /apps with `l`) and names the path in app_run's result. Capture \
-makes stdout a pipe, not a tty, so do not use it for full-screen TUI apps.\n\
+ONE UNIT: THE SKILL PACKAGE\n\
+- Everything persisted lives in `{root}/<name>/`: `SKILL.md` (frontmatter `name` + \
+`description`, then instructions), optional supporting files, and optional `meta.json`.\n\
+- A package becomes a runnable APP solely by adding `meta.json` (`title`, `kind`, `entry`, \
+`requires`, `default_args`, `capture`). There is no separate app store or `app_*` write tool.\n\
+- Authoring tools: use `skill_save` to create/update `SKILL.md` (bumps version and archives \
+previous bodies under `.history/vN.md`), `skill_rollback` to restore an earlier version, \
+and `skill_file` for every other file (`run.sh`, `main.py`, `PROMPT.md`, `meta.json`).\n\
+- Discovery & updates: the `SKILLS` catalog above is the single source of truth (runnable \
+packages show `[kind:entry]` and any failed last run/test). Inspect details with `skill` or \
+`read_file` instead of guessing; update existing packages in place rather than duplicating.\n\
+- Scope: pure questions stay chat replies. Non-code deliverables are valid as `kind=doc` or \
+a plain skill without `meta.json`.\n\
+\n\
+APP CONTRACT & EXECUTION\n\
+- Kinds: `sh` (`/bin/sh`), `python` (`python3`/`python` when installed), `binary` (must be \
+executable), `prompt` (returns `PROMPT.md` or `SKILL.md` for you to follow), `doc` \
+(instructions only).\n\
+- Device & sandbox limits: 320x170 px, 53x12 cells, 8 ANSI colors, no mouse. Prefer `sh` + \
+coreutils (`/proc`, `/sys`); no installs, no services, no compilation. Write runtime state \
+only under `$DST_APP_STATE` (`state/`); keep `SKILL.md` and `meta.json` free of generated \
+data. Apps own the screen while `dst` is paused, must not change system config or write \
+outside package/state/tmp, must exit cleanly (`0` = ok), and must leave the screen \
+recoverable. Never block the platform's long-press Esc or timeout backstop.\n\
+- Manifest options: declare required binaries in `requires` (checked before every run/test); \
+use `default_args` for `/apps` launches (`app_run` `args` override them); set `capture=true` \
+on text apps to log stdout/stderr to `state/last-run.log` (piped stdout, never for TUI apps).\n\
+- Verify before showing: always call `app_test` first (headless pipes by default, `tty=true` \
+for pty/`[ -t ]`/ANSI with `COLUMNS=53`/`LINES=12`, full log under `~/.dst/tmp`) to test \
+both happy paths and bad input, and fix any failures before calling `app_run`. After \
+`app_run`, do not repeat what the app already displayed full-screen.\n\
 \n\
 SKILL vs MEMORY\n\
-- skill: a systematic, self-contained engineering package (procedure, format, checklist, \
-support files) that will be useful again. Runnable or not, it is one package in one folder.\n\
-- memory: short durable facts or preferences (memory_write); memory is fragments, a skill is a \
-complete procedure. Prefer a skill over dumping a long procedure into memory.\n\
+- Skill (`skill_save`): a reusable, self-contained procedure, checklist, or runnable app.\n\
+- Memory (`memory_write`): short durable facts or preferences. Prefer a skill over dumping \
+a long procedure into memory.\n\
 \n\
 WHAT THE USER SEES\n\
-- /apps lists the runnable packages (skill folders with meta.json), newest activity first: \
-Enter runs, Right reads SKILL.md, l replays the last captured output, i asks you to improve it, \
-x deletes it. Long-press Esc always leaves a running app.\n\
-- A saved skill is announced in the transcript; a package that gained meta.json is announced \
-as a saved app. After a turn that wrote files but saved no skill, you are nudged to persist it.\n",
-    );
-    s
+- `/apps` lists runnable packages (newest activity first): Enter runs, Right reads `SKILL.md`, \
+`l` replays captured output, `i` asks you to improve it, `x` deletes it. Long-press Esc \
+always exits a running app.\n\
+- Saved skills and new runnable apps (`meta.json`) are announced in the transcript; writing \
+files without saving a package triggers a persistence nudge.\n"
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -985,6 +968,15 @@ fn run_present(a: &J) -> String {
     )
 }
 
+fn app_test_access(args: &J) -> crate::tool::Access {
+    let name = str_arg(args, "name")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let short_name = name.rsplit('/').next().unwrap_or(&name);
+    crate::tool::Access::Write(format!("skill:{short_name}"))
+}
+
 /// Creator-mode tools. Registered only while `tui.mode: creator`.
 
 pub fn tool_defs() -> Vec<ToolDef> {
@@ -1000,10 +992,14 @@ simulator the developers use.",
                 Param::req("name", "string", "Skill name (the folder under ~/.dst/skills that has meta.json)."),
                 Param::opt("args", "string", "Space-separated argv for the app."),
                 Param::opt("stdin", "string", "Text piped to the app's stdin (closed afterwards)."),
-                Param::opt("timeout_s", "integer", "Seconds before the app is killed (default 10, max 120)."),
-                Param::opt("tty", "boolean", "Run under a pseudo-terminal (like app_run) so [ -t ] branches and TUI output can be tested; the pty has no window size (COLUMNS/LINES env still say 53x12)."),
+                Param::opt("timeout_s", "integer", "Seconds before the app is killed.")
+                    .range(1, 120)
+                    .default_int(10),
+                Param::opt("tty", "boolean", "Run under a pseudo-terminal (like app_run) so [ -t ] branches and TUI output can be tested; the pty has no window size (COLUMNS/LINES env still say 53x12).")
+                    .default_bool(false),
             ],
-            concurrency_safe: false,
+            concurrency_safe: true,
+            access: Some(app_test_access),
             timeout_ms: 130_000,
             execute: test_exec,
             render: test_render,
@@ -1020,10 +1016,13 @@ timeout_s. The user sees the app, not the chat, while it runs; do not repeat the
 afterwards. Only available in the interactive TUI.",
             params: vec![
                 Param::req("name", "string", "Skill name (the folder under ~/.dst/skills that has meta.json)."),
-                Param::opt("timeout_s", "integer", "Seconds before the platform stops the app (default 60, max 600)."),
+                Param::opt("timeout_s", "integer", "Seconds before the platform stops the app.")
+                    .range(1, 600)
+                    .default_int(60),
                 Param::opt("args", "string", "Space-separated arguments passed to the app after its entry file (max 200 chars)."),
             ],
             concurrency_safe: false,
+            access: None,
             timeout_ms: (MAX_TIMEOUT_S + 60) * 1_000,
             execute: run_exec,
             render: run_render,

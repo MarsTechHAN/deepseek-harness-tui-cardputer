@@ -202,6 +202,10 @@ fn rename_render(_args: &J, value: &J) -> String {
     }
 }
 
+fn session_write_access(_a: &J) -> crate::tool::Access {
+    crate::tool::Access::Write("session".into())
+}
+
 /// Add `rename` to the registry: the model keeps the resume title current.
 pub fn tool_defs() -> Vec<ToolDef> {
     vec![ToolDef {
@@ -215,6 +219,7 @@ when the task changes substantially (a new sub-task, a different bug, a finished
             "New session title: one line, a few words, at most 60 characters.",
         )],
         concurrency_safe: false,
+        access: Some(session_write_access),
         timeout_ms: 5_000,
         execute: rename_exec,
         render: rename_render,

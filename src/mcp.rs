@@ -386,7 +386,8 @@ pub fn call_entry(full_name: &str, args: &J) -> Result<J, crate::tool::Fail> {
     let mgr = guard
         .as_mut()
         .ok_or_else(|| crate::tool::Fail::new("mcp not started"))?;
-    match mgr.call(full_name, args) {
+    let clean_args = crate::sandbox::strip_meta_args(args);
+    match mgr.call(full_name, &clean_args) {
         Ok(v) => {
             if v.get("error").map(|e| matches!(e, J::Bool(true))).unwrap_or(false) {
                 return Err(crate::tool::Fail::new(
@@ -397,6 +398,10 @@ pub fn call_entry(full_name: &str, args: &J) -> Result<J, crate::tool::Fail> {
         }
         Err(e) => Err(crate::tool::Fail::new(e)),
     }
+}
+
+fn mcp_access(_a: &J) -> crate::tool::Access {
+    crate::tool::Access::Write("mcp".into())
 }
 
 /// Tool definitions for every MCP tool discovered at startup.
@@ -421,6 +426,7 @@ pub fn tool_defs() -> Vec<crate::tool::ToolDef> {
             schema_override: Some(t.schema.clone()),
             params: Vec::new(),
             concurrency_safe: false,
+            access: Some(mcp_access),
             timeout_ms: 65_000,
             execute: |_| Err(crate::tool::Fail::new("mcp tool needs dynamic dispatch")),
             dynamic: Some(call_entry),

@@ -84,16 +84,19 @@ pub fn kill(pid: u32) {
 /// a string lets the caller serialise it once instead of deep-cloning a `J`
 /// tree per step just to dump it again (`body_json` used to do both).
 fn body_json_raw(cfg: &Cfg, messages_json: &str, tools_json: &str) -> String {
+    let has_tools = tools_json.trim() != "[]";
     let mut s = String::with_capacity(messages_json.len() + tools_json.len() + 256);
     s.push_str("{\"model\":");
     s.push_str(&J::s(&cfg.model).dump());
     s.push_str(",\"messages\":");
     s.push_str(messages_json);
-    s.push_str(",\"tools\":");
-    s.push_str(tools_json);
+    if has_tools {
+        s.push_str(",\"tools\":");
+        s.push_str(tools_json);
+        s.push_str(",\"tool_choice\":\"auto\",\"parallel_tool_calls\":true");
+    }
     s.push_str(",\"stream\":true,\"max_tokens\":");
     s.push_str(&cfg.max_tokens.to_string());
-    s.push_str(",\"tool_choice\":\"auto\",\"parallel_tool_calls\":true");
     s.push_str(",\"stream_options\":{\"include_usage\":true}");
     if cfg.effort != "auto" && !cfg.effort.is_empty() {
         s.push_str(",\"reasoning_effort\":");
@@ -159,7 +162,7 @@ fn apply_line(line: &str, out: &mut StreamOut, tx: &std::sync::mpsc::Sender<ApiE
     if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_arr()) {
         for tc in tcs {
             let idx = tc.get("index").and_then(|i| i.as_num()).unwrap_or(0.0) as usize;
-            if idx > 15 {
+            if idx >= 64 {
                 continue;
             }
             while out.calls.len() <= idx {
@@ -271,6 +274,7 @@ pub fn spawn_chat_json(cfg: &Cfg, messages_json: &str, tools: &J) -> Result<Chat
             };
             let _ = tx.send(ApiEv::Failed(msg));
         } else {
+            out.calls.retain(|c| !c.name.trim().is_empty());
             let _ = tx.send(ApiEv::Done(out));
         }
     });

@@ -501,6 +501,17 @@ fn rollback_present(a: &J) -> String {
     format!("rollback {}", crate::tool::str_arg(a, "name").unwrap_or_default())
 }
 
+fn skill_write_access(args: &J) -> crate::tool::Access {
+    let slug = crate::tool::str_arg(args, "name")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-");
+    crate::tool::Access::Write(format!("skill:{slug}"))
+}
+
 /// Creator-mode tools for writing the model's own skills. Registered only while
 /// creator mode is on; reading/using skills works in every mode.
 pub fn tool_defs() -> Vec<crate::tool::ToolDef> {
@@ -521,6 +532,7 @@ the SKILLS catalog on your next turn.",
                 Param::req("instructions", "string", "The complete self-contained markdown body (max 12000 chars)."),
             ],
             concurrency_safe: false,
+            access: Some(skill_write_access),
             timeout_ms: 10_000,
             execute: save_exec,
             render: save_render,
@@ -536,9 +548,10 @@ keeps .history/v<N>.md snapshots). The current body is archived first and the re
 becomes a new version, so a rollback is reversible. Omit 'version' to go back one step.",
             params: vec![
                 Param::req("name", "string", "Skill name."),
-                Param::opt("version", "integer", "History version to restore (e.g. 1); omit for the previous version."),
+                Param::opt("version", "integer", "History version to restore (e.g. 1); omit for the previous version.").min(1),
             ],
             concurrency_safe: false,
+            access: Some(skill_write_access),
             timeout_ms: 10_000,
             execute: rollback_exec,
             render: rollback_render,
@@ -559,6 +572,7 @@ what turns the package into a runnable app: {\"title\", \"kind\": sh|python|bina
                 Param::req("content", "string", "Full file content (max 32 KB)."),
             ],
             concurrency_safe: false,
+            access: Some(skill_write_access),
             timeout_ms: 10_000,
             execute: file_exec,
             render: file_render,

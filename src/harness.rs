@@ -900,9 +900,20 @@ pub fn run_turn(
         }
 
         // Identical-call detection (DSH thresholds 3/5/8; the first two are
-        // enough on a 512 MB device).
-        if let Some(first) = calls.first() {
-            let sig = format!("{}|{}", first.name, first.raw_args);
+        // enough on a 512 MB device). Ignore leading `state_report` calls so
+        // varying progress text cannot mask a stuck tool loop.
+        let tracked: Vec<&Call> = calls.iter().filter(|c| c.name != "state_report").collect();
+        let tracked_slice: Vec<&Call> = if tracked.is_empty() {
+            calls.iter().collect()
+        } else {
+            tracked
+        };
+        if let Some(first) = tracked_slice.first() {
+            let sig = tracked_slice
+                .iter()
+                .map(|c| format!("{}|{}", c.name, c.raw_args))
+                .collect::<Vec<_>>()
+                .join("\x1f");
             if sig == repeat_sig {
                 repeat_count += 1;
             } else {
