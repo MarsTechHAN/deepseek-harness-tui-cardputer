@@ -1,0 +1,10 @@
+model: deepseek-flash
+effort: auto
+max_tokens: 512
+api:
+  key: test
+tui:
+  tips_shown: true
+  hw_survey_done: true
+context:
+  time: false

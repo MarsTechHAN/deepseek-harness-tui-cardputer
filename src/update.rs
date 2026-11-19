@@ -3,14 +3,16 @@
 //! Two channels, selected in `~/.dst/config.yml` (`update.channel`, default
 //! `nightly`):
 //!   * `nightly` — the rolling `nightly` prerelease, replaced on every commit to
-//!     `main`. "Newer" means the published binary differs from the running one,
-//!     compared by SHA-256.
-//!   * `stable` — the newest versioned release. "Newer" means its `vX.Y.Z` tag
-//!     is greater than the running binary's version.
+//!     `main`.
+//!   * `stable` — the latest official release (`releases/latest`).
+//!
+//! Both channels detect updates by comparing the published asset's SHA-256 in
+//! `SHA256SUMS` against the running binary's SHA-256 (never by version string),
+//! so switching channels or rebuilding the same version always converges.
 //!
 //! No crates and no HTTP client dependency: metadata and the binary come from
-//! `curl`, hashes from `sha256sum`/`shasum`, and the replacement is verified and
-//! atomic (write `.dst.update.<pid>` next to the binary, then rename over it),
+//! `curl`, hashes are computed in-process (SHA-256), and replacement is atomic
+//! (write `.dst.update.<pid>` next to the binary, then rename over it),
 //! followed by re-exec so the new build is running immediately.
 //!
 //! The startup check runs on a background thread and only *offers* an update;
@@ -52,11 +54,13 @@ impl Channel {
 #[derive(Clone, Debug)]
 pub struct UpdateInfo {
     pub channel: Channel,
-    /// Version tag for stable (`v0.2.0`), or `nightly` for the rolling build.
+    /// Release tag label for stable (`v0.2.0` / `stable`), or `nightly`.
     pub version: String,
     pub asset: String,
     pub url: String,
     pub sha256: String,
+    /// SHA-256 of the running binary when the check ran.
+    pub local_sha256: String,
 }
 
 fn base() -> String {
@@ -117,7 +121,7 @@ fn final_url(url: &str) -> Result<String, String> {
     Ok(text)
 }
 
-/// `v0.2.0` / `0.2.0` -> the numeric version string.
+/// `v0.2.0` / `0.2.0` -> the normalized version label.
 pub fn tag_version(tag: &str) -> Option<String> {
     let v = tag.trim();
     let v = v.strip_prefix('v').unwrap_or(v);
@@ -134,21 +138,19 @@ pub fn tag_version(tag: &str) -> Option<String> {
     }
 }
 
-fn version_parts(v: &str) -> Vec<u64> {
-    v.split('.')
-        .map(|p| p.parse::<u64>().unwrap_or(0))
-        .collect()
+/// True when the published asset's SHA-256 differs from the running binary's.
+pub fn needs_update(local_sha256: &str, remote_sha256: &str) -> bool {
+    !local_sha256.eq_ignore_ascii_case(remote_sha256)
 }
 
-/// Is `a` strictly newer than `b`? Numeric dotted comparison; missing parts are
-/// padded with zero (`0.2` == `0.2.0`).
-pub fn version_newer(a: &str, b: &str) -> bool {
-    let mut av = version_parts(a);
-    let mut bv = version_parts(b);
-    let n = av.len().max(bv.len());
-    av.resize(n, 0);
-    bv.resize(n, 0);
-    av > bv
+/// Short hex prefix for UI display (8 chars).
+pub fn short_sha(sha: &str) -> &str {
+    let end = sha
+        .char_indices()
+        .nth(8)
+        .map(|(i, _)| i)
+        .unwrap_or(sha.len());
+    &sha[..end]
 }
 
 /// `SHA256SUMS` text -> map of file name -> hex digest.
@@ -166,42 +168,54 @@ pub fn parse_sha256sums(text: &str) -> std::collections::HashMap<String, String>
     out
 }
 
-/// SHA-256 of a file, via coreutils (`sha256sum`) or BSD (`shasum -a 256`).
+fn hex_lower(bytes: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(64);
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
+
+/// SHA-256 of a file, computed in-process (no external sha256sum dependency).
 pub fn file_sha256(path: &Path) -> Option<String> {
-    if let Ok(out) = std::process::Command::new("sha256sum").arg(path).output() {
-        if out.status.success() {
-            let text = String::from_utf8_lossy(&out.stdout);
-            if let Some(sha) = text.split_whitespace().next() {
-                let sha = sha.to_ascii_lowercase();
-                if sha.len() == 64 {
-                    return Some(sha);
-                }
-            }
-        }
-    }
-    let out = std::process::Command::new("shasum")
-        .args(["-a", "256"])
-        .arg(path)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let sha = text.split_whitespace().next()?.to_ascii_lowercase();
-    if sha.len() == 64 {
-        Some(sha)
-    } else {
-        None
-    }
+    let data = std::fs::read(path).ok()?;
+    Some(hex_lower(&crate::dsh_login::sha256(&data)))
+}
+
+/// SHA-256 of the running binary, if readable.
+pub fn current_sha256() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    file_sha256(&exe)
 }
 
 fn our_sha256() -> Result<String, String> {
-    let exe = std::env::current_exe().map_err(|e| format!("cannot locate the running binary: {e}"))?;
-    file_sha256(&exe).ok_or_else(|| "cannot hash the running binary (sha256sum/shasum missing)".to_string())
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("cannot locate the running binary: {e}"))?;
+    file_sha256(&exe).ok_or_else(|| format!("cannot read running binary {}", exe.display()))
 }
 
-/// Check the selected channel. `Ok(None)` means the running build is current.
+fn resolve_stable_label(b: &str) -> String {
+    let Ok(effective) = final_url(&format!("{b}/releases/latest")) else {
+        return "stable".into();
+    };
+    let tag = effective
+        .rsplit("/tag/")
+        .next()
+        .filter(|_| effective.contains("/tag/"))
+        .unwrap_or("");
+    if let Some(v) = tag_version(tag) {
+        format!("v{v}")
+    } else if !tag.is_empty() {
+        tag.to_string()
+    } else {
+        "stable".into()
+    }
+}
+
+/// Check the selected channel by SHA-256. `Ok(None)` means the running binary
+/// already matches the published SHA-256 digest.
 pub fn check(channel: Channel) -> Result<Option<UpdateInfo>, String> {
     let asset = asset_name().ok_or_else(|| {
         format!(
@@ -210,54 +224,37 @@ pub fn check(channel: Channel) -> Result<Option<UpdateInfo>, String> {
         )
     })?;
     let b = base();
-    match channel {
-        Channel::Stable => {
-            let effective = final_url(&format!("{b}/releases/latest"))?;
-            let tag = effective
-                .rsplit("/tag/")
-                .next()
-                .filter(|_| effective.contains("/tag/"))
-                .unwrap_or("")
-                .to_string();
-            if tag.is_empty() {
-                return Err(format!("could not resolve the latest release tag ({effective})"));
-            }
-            let version = tag_version(&tag)
-                .ok_or_else(|| format!("unexpected release tag {tag:?}"))?;
-            if !version_newer(&version, env!("CARGO_PKG_VERSION")) {
-                return Ok(None);
-            }
-            let sums = curl(&[&format!("{b}/releases/latest/download/SHA256SUMS")])?;
-            let sha256 = parse_sha256sums(&sums)
-                .get(asset)
-                .cloned()
-                .ok_or_else(|| format!("SHA256SUMS of {tag} has no {asset}"))?;
-            Ok(Some(UpdateInfo {
-                channel,
-                version,
-                asset: asset.to_string(),
-                url: format!("{b}/releases/latest/download/{asset}"),
-                sha256,
-            }))
-        }
-        Channel::Nightly => {
-            let sums = curl(&[&format!("{b}/releases/download/nightly/SHA256SUMS")])?;
-            let sha256 = parse_sha256sums(&sums)
-                .get(asset)
-                .cloned()
-                .ok_or_else(|| format!("nightly SHA256SUMS has no {asset}"))?;
-            if our_sha256()?.eq_ignore_ascii_case(&sha256) {
-                return Ok(None);
-            }
-            Ok(Some(UpdateInfo {
-                channel,
-                version: "nightly".into(),
-                asset: asset.to_string(),
-                url: format!("{b}/releases/download/nightly/{asset}"),
-                sha256,
-            }))
-        }
+    let (sums_url, asset_url) = match channel {
+        Channel::Stable => (
+            format!("{b}/releases/latest/download/SHA256SUMS"),
+            format!("{b}/releases/latest/download/{asset}"),
+        ),
+        Channel::Nightly => (
+            format!("{b}/releases/download/nightly/SHA256SUMS"),
+            format!("{b}/releases/download/nightly/{asset}"),
+        ),
+    };
+    let sums = curl(&[&sums_url])?;
+    let sha256 = parse_sha256sums(&sums)
+        .get(asset)
+        .cloned()
+        .ok_or_else(|| format!("{} SHA256SUMS has no {asset}", channel.as_str()))?;
+    let local_sha256 = our_sha256()?;
+    if !needs_update(&local_sha256, &sha256) {
+        return Ok(None);
     }
+    let version = match channel {
+        Channel::Stable => resolve_stable_label(&b),
+        Channel::Nightly => "nightly".into(),
+    };
+    Ok(Some(UpdateInfo {
+        channel,
+        version,
+        asset: asset.to_string(),
+        url: asset_url,
+        sha256,
+        local_sha256,
+    }))
 }
 
 /// Download, verify and atomically replace the running binary.
@@ -375,13 +372,26 @@ mod tests {
     }
 
     #[test]
-    fn versions_compare_numerically() {
-        assert!(version_newer("0.2.0", "0.1.9"));
-        assert!(version_newer("1.0.0", "0.9.9"));
-        assert!(version_newer("0.1.10", "0.1.9"));
-        assert!(!version_newer("0.1.0", "0.1.0"));
-        assert!(!version_newer("0.1", "0.1.0"));
-        assert!(version_newer("0.1.1", "0.1"));
+    fn sha256_comparison_ignores_case_and_detects_diff() {
+        let a = "b10fcf7d281a5e3611a70f47e6d8a2d372214190ca29aefa47eb0dcd982ba90c";
+        let a_upper = "B10FCF7D281A5E3611A70F47E6D8A2D372214190CA29AEFA47EB0DCD982BA90C";
+        let b = "e8798c0b26e01b8be5b56409f20a27096fb39d5b9a6be614cc81234f6d962d94";
+        assert!(!needs_update(a, a));
+        assert!(!needs_update(a, a_upper));
+        assert!(needs_update(a, b));
+        assert_eq!(short_sha(a), "b10fcf7d");
+    }
+
+    #[test]
+    fn file_sha256_matches_standard_vector() {
+        let p = std::env::temp_dir().join(format!("dst-sha256-test-{}.bin", std::process::id()));
+        std::fs::write(&p, b"abc").unwrap();
+        let got = file_sha256(&p);
+        let _ = std::fs::remove_file(&p);
+        assert_eq!(
+            got.as_deref(),
+            Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        );
     }
 
     #[test]
@@ -417,8 +427,64 @@ mod tests {
     }
 
     #[test]
-    fn no_update_means_the_running_build_is_current() {
-        // Current tag == running version on the stable channel: no offer.
-        assert!(!version_newer(env!("CARGO_PKG_VERSION"), env!("CARGO_PKG_VERSION")));
+    fn stable_channel_compares_sha256_not_version() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let Some(asset) = asset_name() else { return };
+        let Some(local_sha) = current_sha256() else { return };
+        let diff_sha = "0".repeat(64);
+        assert_ne!(local_sha, diff_sha);
+
+        // Serve a local HTTP mock for /releases/latest/download/SHA256SUMS and /releases/latest.
+        let spawn_server = |sha: String, tag: String| {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let asset_s = asset.to_string();
+            std::thread::spawn(move || {
+                for _ in 0..3 {
+                    let Ok((mut stream, _)) = listener.accept() else { break };
+                    let mut buf = [0u8; 1024];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let path = req.split_whitespace().nth(1).unwrap_or("");
+                    if path.ends_with("/SHA256SUMS") {
+                        let body = format!("{sha}  {asset_s}\n");
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = stream.write_all(resp.as_bytes());
+                    } else if path == "/releases/latest" {
+                        let loc = format!("http://127.0.0.1:{port}/releases/tag/{tag}");
+                        let resp = format!(
+                            "HTTP/1.1 302 Found\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        );
+                        let _ = stream.write_all(resp.as_bytes());
+                    } else {
+                        let resp = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
+                        let _ = stream.write_all(resp.as_bytes());
+                    }
+                }
+            });
+            format!("http://127.0.0.1:{port}")
+        };
+
+        // Case 1: Same Cargo version tag (v0.1.0), DIFFERENT SHA-256 -> MUST offer update!
+        let base_diff = spawn_server(diff_sha.clone(), format!("v{}", env!("CARGO_PKG_VERSION")));
+        std::env::set_var("DST_UPDATE_BASE", &base_diff);
+        let info = check(Channel::Stable)
+            .expect("stable check succeeds")
+            .expect("different sha256 must offer update even when version tag matches");
+        assert_eq!(info.sha256, diff_sha);
+        assert_eq!(info.local_sha256, local_sha);
+        assert_eq!(info.version, format!("v{}", env!("CARGO_PKG_VERSION")));
+
+        // Case 2: Matching SHA-256 -> up to date (None).
+        let base_same = spawn_server(local_sha.clone(), "v9.9.9".into());
+        std::env::set_var("DST_UPDATE_BASE", &base_same);
+        let none = check(Channel::Stable).expect("stable check succeeds");
+        assert!(none.is_none(), "matching sha256 must report up to date");
+        std::env::remove_var("DST_UPDATE_BASE");
     }
 }

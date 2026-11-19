@@ -1,0 +1,50 @@
+{
+ "responses": [
+  {
+   "reasoning": "compose a 3-page dashboard artifact",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_art_rich",
+     "name": "artifact",
+     "arguments": {
+      "title": "Device Health",
+      "theme": "info",
+      "pages": [
+       {
+        "title": "System",
+        "blocks": [
+         {"type": "kv", "items": [["Host", "cardputer"], ["RAM", "180/446 MB"]]},
+         {"type": "bar", "label": "Battery", "value": 78, "max": 100, "unit": "%"},
+         {"type": "spark", "label": "CPU", "values": [12, 30, 55, 80, 45], "unit": "%"}
+        ]
+       },
+       {
+        "title": "Compare",
+        "blocks": [
+         {"type": "columns", "left": "**Before**\n- slow\n- 120ms", "right": "**After**\n- fast\n- 12ms"},
+         {"type": "divider", "label": "Files"},
+         {"type": "table", "headers": ["Name", "Size", "OK"], "rows": [["dst", "1.4M", "[OK]"], ["cfg", "2K", "[OK]"]], "align": ["left", "right", "center"]}
+        ]
+       },
+       {
+        "title": "Summary",
+        "layout": "center",
+        "blocks": [
+         {"type": "box", "title": "Status", "text": "[OK] All checks passed", "tone": "ok"}
+        ]
+       }
+      ]
+     }
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  {
+   "reasoning": "done",
+   "content": "Dashboard closed.",
+   "finish_reason": "stop"
+  }
+ ],
+ "auto_tool": false
+}

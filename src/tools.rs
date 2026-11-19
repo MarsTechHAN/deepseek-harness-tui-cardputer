@@ -484,25 +484,23 @@ device, returning the text page by page.",
         },
         ToolDef {
             name: "artifact",
-            description: "Take over the whole screen with a panel you compose, instead of \
-the scrolling chat. Use it when an answer needs more room than a few lines: tables, \
-code, diagrams, step lists, comparisons. It stays up until the user dismisses it \
-(Esc), so put the finished result in it, not a progress message.",
-            params: vec![
-                Param::req("title", "string", "Panel title, one line, max 53 characters."),
-                Param::req(
-                    "body",
-                    "string",
-                    "Panel content. One row per line. The panel shows about 10 rows of \
-53 characters; content longer than the screen is scrollable, but keep it close to \
-10 lines so it reads at a glance.",
-                ),
-            ],
+            description: "Take over the whole screen with a fixed-size, page-by-page panel \
+(no scrolling; each page is exactly 53x10 cells on the pocket display, flipped with ←/→ \
+or PgUp/PgDn, saved with s, dismissed with Esc). Use for finished results that benefit from \
+structured layout: dashboards, tables, comparisons, checklists, code, diagrams, multi-page \
+decks. Supports rich Markdown in `body` (headings `#/##/###`, `**bold**`, `` `code` ``, \
+badges `[OK]/[WARN]/[ERR]/[INFO]`, checklists `- [x]/-[ ]`, tables `| a | b |`, aligned \
+`Key :: Value`, inline progress bars `[bar:78%] Label`, callouts `> [!NOTE]/[!WARN]/[!ERR]`, \
+code blocks, `---` dividers, and `=== Title` explicit page breaks), OR structured `pages` \
+and `blocks` (`heading`, `text`, `divider`, `kv`, `table`, `list`, `checklist`, `bar`, \
+`bars`, `spark`, `callout`, `code`, `columns`, `box`, `spacer`) with `theme` and `layout` \
+(`auto`, `center`, `kv`, `columns`). Never use for progress messages.",
+            params: vec![],
             concurrency_safe: false,
             access: None,
             timeout_ms: 10_000,
             execute: artifact_exec,
-            schema_override: None,
+            schema_override: Some(ARTIFACT_SCHEMA.to_string()),
             dynamic: None,
             render: artifact_render,
             present: |a| format!("artifact {}", short(&str_arg(a, "title").unwrap_or_default(), 40)),
@@ -536,16 +534,27 @@ Say what is happening now, in the user's language: \"scanning /proc\".",
     ]
 }
 
-/// Panel width, installed by the TUI at startup. `state_report` enforces it so
-/// a report can never be cut off: it must fit on the row, or it is rejected.
+/// Panel dimensions, installed by the TUI at startup. `state_report` enforces
+/// the width and `artifact` paginates to exact fixed-size pages (`rows - 2` x `cols`).
 static PANEL_COLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(53);
+static PANEL_ROWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(12);
 
+pub fn set_panel_size(rows: usize, cols: usize) {
+    PANEL_ROWS.store(rows.clamp(6, 100), std::sync::atomic::Ordering::Relaxed);
+    PANEL_COLS.store(cols.clamp(20, 200), std::sync::atomic::Ordering::Relaxed);
+}
+
+#[allow(dead_code)]
 pub fn set_panel_cols(cols: usize) {
     PANEL_COLS.store(cols.clamp(20, 200), std::sync::atomic::Ordering::Relaxed);
 }
 
 fn panel_cols() -> usize {
     PANEL_COLS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn panel_rows() -> usize {
+    PANEL_ROWS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Display cells on the 6x13 cell grid: CJK/full-width glyphs take two.
@@ -1480,29 +1489,86 @@ fn read_image_present(a: &J) -> String {
     )
 }
 
-fn artifact_exec(args: &J) -> Result<J, Fail> {
-    let title = str_arg(args, "title").ok_or_else(|| Fail::new("missing 'title'"))?;
-    let body = str_arg(args, "body").ok_or_else(|| Fail::new("missing 'body'"))?;
-    if body.trim().is_empty() {
-        return Err(Fail::new("body is empty"));
+const ARTIFACT_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Panel title shown in the top bar (one line, <= 45 cells)."
+    },
+    "subtitle": {
+      "type": "string",
+      "description": "Optional short tag shown on the right side of the header."
+    },
+    "theme": {
+      "type": "string",
+      "enum": ["default", "info", "ok", "warn", "error", "code"],
+      "description": "Color accent theme for the header and layout accents."
+    },
+    "layout": {
+      "type": "string",
+      "enum": ["auto", "center", "kv", "columns"],
+      "description": "Default page layout: auto (flow), center (centered card), kv (Key: Value pairs), columns (2-col split on ||)."
+    },
+    "footer": {
+      "type": "string",
+      "description": "Optional short footer note."
+    },
+    "body": {
+      "type": "string",
+      "description": "Rich Markdown content. Supports #/##/### headings, **bold**, `code`, [OK]/[WARN]/[ERR]/[INFO] badges, - [x]/[ ] checklists, | tables |, Key :: Value, [bar:78%] Label, > [!NOTE]/[!WARN]/[!ERR] callouts, ```code``` blocks, --- dividers, and `=== Page Title` explicit page breaks."
+    },
+    "pages": {
+      "type": "array",
+      "description": "Explicit page-by-page deck (each page is fixed 53x10 cells). Items may be strings or objects {title?, layout?, body?, blocks?}.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "layout": {"type": "string", "enum": ["auto", "center", "kv", "columns"]},
+          "body": {"type": "string"},
+          "blocks": {"type": "array", "items": {"type": "object"}}
+        }
+      }
+    },
+    "blocks": {
+      "type": "array",
+      "description": "Structured layout blocks: heading, text, divider, kv, table, list, checklist, bar, bars, spark, callout, code, columns, box, spacer.",
+      "items": {"type": "object"}
     }
-    let lines = body.lines().count();
-    let widest = body
-        .lines()
-        .map(|l| l.chars().count())
-        .max()
-        .unwrap_or(0);
-    Ok(obj(vec![
-        ("title", J::s(&title)),
-        ("body", J::s(&body)),
-        ("lines", J::Num(lines as f64)),
-        ("widest", J::Num(widest as f64)),
-    ]))
+  },
+  "required": ["title"]
+}"#;
+
+fn artifact_exec(args: &J) -> Result<J, Fail> {
+    let cols = panel_cols();
+    let body_rows = panel_rows().saturating_sub(2).max(1);
+    let res = crate::artifact::Artifact::from_tool_json(args, body_rows, cols)
+        .map_err(Fail::new)?;
+    let mut fields = match args {
+        J::Obj(kvs) => kvs.clone(),
+        _ => Vec::new(),
+    };
+    fields.push(("_pages".to_string(), J::Num(res.artifact.total_pages() as f64)));
+    fields.push(("_page_cols".to_string(), J::Num(cols as f64)));
+    fields.push(("_page_rows".to_string(), J::Num(body_rows as f64)));
+    fields.push(("_overflowed".to_string(), J::Num(res.overflowed_pages as f64)));
+    Ok(J::Obj(fields))
 }
 
 fn artifact_render(_args: &J, v: &J) -> String {
-    let lines = v.get("lines").and_then(|x| x.as_num()).unwrap_or(0.0);
-    format!("panel shown full-screen ({lines:.0} rows); user dismisses it with Esc")
+    let pages = v.get("_pages").and_then(|x| x.as_num()).unwrap_or(1.0) as usize;
+    let cols = v.get("_page_cols").and_then(|x| x.as_num()).unwrap_or(53.0) as usize;
+    let rows = v.get("_page_rows").and_then(|x| x.as_num()).unwrap_or(10.0) as usize;
+    let over = v.get("_overflowed").and_then(|x| x.as_num()).unwrap_or(0.0) as usize;
+    let page_word = if pages == 1 { "page" } else { "pages" };
+    let mut msg = format!(
+        "panel shown full-screen ({pages} {page_word}, {cols}x{rows} fixed per page); user flips pages with ←/→ or PgUp/PgDn and dismisses with Esc"
+    );
+    if over > 0 {
+        msg.push_str(&format!(" ({over} explicit page overflowed and was auto-split)"));
+    }
+    msg
 }
 
 #[cfg(test)]

@@ -493,6 +493,10 @@ const EN: &[(&str, &str)] = &[
     ("ui_update_unsupported", "self-update is not available on this platform"),
     ("ui_update_skipped", "update skipped — /update to install it later"),
     ("ui_update_asset_label", "asset"),
+    ("artifact_page", "←→ page"),
+    ("btw_live_title", "btw … {}"),
+    ("btw_cancel_hint", "Esc cancel"),
+    ("ui_startup_version", "dst v{} ({}) · {} · /update"),
 ];
 
 const ZH: &[(&str, &str)] = &[
@@ -899,6 +903,10 @@ const ZH: &[(&str, &str)] = &[
     ("ui_update_unsupported", "此平台不支持自更新"),
     ("ui_update_skipped", "已跳过更新 —— 可用 /update 稍后安装"),
     ("ui_update_asset_label", "文件"),
+    ("artifact_page", "←→ 翻页"),
+    ("btw_live_title", "旁支 … {}"),
+    ("btw_cancel_hint", "Esc 取消"),
+    ("ui_startup_version", "dst v{} ({}) · {} · /update"),
 ];
 const ES: &[(&str, &str)] = &[
     ("tagline", "dst | un harness DeepSeek en un Cardputer Zero"),
@@ -1304,6 +1312,10 @@ const ES: &[(&str, &str)] = &[
     ("ui_update_unsupported", "la autactualización no está disponible en esta plataforma"),
     ("ui_update_skipped", "actualización omitida — /update para instalarla luego"),
     ("ui_update_asset_label", "archivo"),
+    ("artifact_page", "←→ pág."),
+    ("btw_live_title", "btw … {}"),
+    ("btw_cancel_hint", "Esc cancelar"),
+    ("ui_startup_version", "dst v{} ({}) · {} · /update"),
 ];
 
 const JA: &[(&str, &str)] = &[
@@ -1710,6 +1722,10 @@ const JA: &[(&str, &str)] = &[
     ("ui_update_unsupported", "このプラットフォームでは自動更新できません"),
     ("ui_update_skipped", "更新を保留しました — 後で /update でインストール"),
     ("ui_update_asset_label", "ファイル"),
+    ("artifact_page", "←→ ページ"),
+    ("btw_live_title", "btw … {}"),
+    ("btw_cancel_hint", "Esc キャンセル"),
+    ("ui_startup_version", "dst v{} ({}) · {} · /update"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -2116,6 +2132,10 @@ const DE: &[(&str, &str)] = &[
     ("ui_update_unsupported", "Selbstupdate ist auf dieser Plattform nicht verfügbar"),
     ("ui_update_skipped", "Update übersprungen — später mit /update installieren"),
     ("ui_update_asset_label", "Datei"),
+    ("artifact_page", "←→ Seite"),
+    ("btw_live_title", "btw … {}"),
+    ("btw_cancel_hint", "Esc abbrechen"),
+    ("ui_startup_version", "dst v{} ({}) · {} · /update"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -2522,6 +2542,10 @@ const IT: &[(&str, &str)] = &[
     ("ui_update_unsupported", "l’auto-aggiornamento non è disponibile su questa piattaforma"),
     ("ui_update_skipped", "aggiornamento rinviato — /update per installarlo dopo"),
     ("ui_update_asset_label", "file"),
+    ("artifact_page", "←→ pag."),
+    ("btw_live_title", "btw … {}"),
+    ("btw_cancel_hint", "Esc annulla"),
+    ("ui_startup_version", "dst v{} ({}) · {} · /update"),
 ];
 
 

@@ -167,7 +167,8 @@ fn spawn_server(name: &str, cfg: &J) -> Result<Server, String> {
     let id = server.next_id;
     server.next_id += 1;
     let init = format!(
-        r#"{{"jsonrpc":"2.0","id":{id},"method":"initialize","params":{{"protocolVersion":"{PROTOCOL}","capabilities":{{}},"clientInfo":{{"name":"dst","version":"0.1.0"}}}}}}"#
+        r#"{{"jsonrpc":"2.0","id":{id},"method":"initialize","params":{{"protocolVersion":"{PROTOCOL}","capabilities":{{}},"clientInfo":{{"name":"dst","version":"{}"}}}}}}"#,
+            env!("CARGO_PKG_VERSION")
     );
     send(&mut server.stdin, &init)?;
     read_response(&server.rx, id, Duration::from_secs(10))?;

@@ -447,7 +447,7 @@ has the model refine the skill afterwards).
 
 ```sh
 dst                      # interactive TUI
-dst --version                           # build identity (e.g. dst 0.1.0 (aarch64, release))
+dst --version                           # build identity (e.g. dst 0.2.0 (aarch64, release))
 dst --once "summarise this repo"        # one turn, prints events
 dst --tools                             # effective tool set + capability decision
 dst --hwinfo-scan                       # run the hardware scan, print the skill summary

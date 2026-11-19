@@ -13,6 +13,7 @@
 mod api;
 mod apps;
 mod art;
+mod artifact;
 mod ask;
 mod bg;
 mod checkpoint;
@@ -42,6 +43,7 @@ mod vision;
 mod voice;
 
 use api::Cfg;
+use artifact::Artifact;
 use harness::{Action, Ev};
 use std::io::{Read, Write};
 
@@ -117,6 +119,8 @@ pub struct Scr {
     state_line: Option<String>,
     /// A finished background update check waiting for the user's yes/no.
     update_offer: Option<crate::update::UpdateInfo>,
+    /// One-time version banner shown on startup until the first user action.
+    startup_notice: Option<String>,
     /// Strict-mode permission pop-up.
     approval: Option<ApprovalView>,
     /// Interactive `ask_user` question modal.
@@ -313,17 +317,6 @@ struct Menu {
     preview: Option<Vec<String>>,
 }
 
-/// A full-screen panel composed by the agent (`artifact` tool).
-struct Artifact {
-    title: String,
-    body: Vec<String>,
-    scroll: usize,
-    /// Transient footer notice (e.g. "saved to ~/.dst/tmp/...").
-    notice: Option<String>,
-    /// Enter submits (used when reviewing a prompt app) instead of only closing.
-    submit: bool,
-}
-
 impl Scr {
     fn new() -> Scr {
         let (r, c) = term_size();
@@ -363,6 +356,7 @@ impl Scr {
             live: None,
             state_line: None,
             update_offer: None,
+            startup_notice: None,
             approval: None,
             ask: None,
             creator: false,
@@ -541,6 +535,7 @@ impl Scr {
         self.state_line = None;
         self.note = None;
         self.artifact = None;
+        self.startup_notice = None;
         for (l, kind) in art_frame_lines(frame, self.cols) {
             self.lines.push((l, kind));
         }
@@ -771,20 +766,27 @@ impl Scr {
                 pal.len()
             );
         }
-        // Idle status line doubles as a key-hint area.
+        // Idle status line doubles as a one-time startup version banner, then
+        // a key-hint area once dismissed.
+        let mut cyan = false;
         if live_line.is_empty() && !self.busy && self.input.is_empty() && self.scroll == 0 {
-            live_line = if self.creator {
-                if self.broken_apps > 0 {
-                    i18n::tf(
-                        "creator_hint_broken",
-                        &[&self.apps_count.to_string(), &self.broken_apps.to_string()],
-                    )
-                } else {
-                    i18n::tf("creator_hint", &[&self.apps_count.to_string()])
-                }
+            if let Some(v) = &self.startup_notice {
+                live_line = v.clone();
+                cyan = true;
             } else {
-                i18n::t("idle_hint").to_string()
-            };
+                live_line = if self.creator {
+                    if self.broken_apps > 0 {
+                        i18n::tf(
+                            "creator_hint_broken",
+                            &[&self.apps_count.to_string(), &self.broken_apps.to_string()],
+                        )
+                    } else {
+                        i18n::tf("creator_hint", &[&self.apps_count.to_string()])
+                    }
+                } else {
+                    i18n::t("idle_hint").to_string()
+                };
+            }
             hot = false;
         }
         if self.scroll > 0 {
@@ -796,7 +798,13 @@ impl Scr {
             }
         }
         if !live_line.is_empty() {
-            s.push_str(if hot { "\x1b[31m" } else { "\x1b[90m" });
+            s.push_str(if hot {
+                "\x1b[31m"
+            } else if cyan {
+                "\x1b[36m"
+            } else {
+                "\x1b[90m"
+            });
             s.push_str(&fit(&live_line, self.cols));
             s.push_str("\x1b[0m");
         }
@@ -1146,36 +1154,79 @@ impl Scr {
         let _ = out.flush();
     }
 
+    fn artifact_body_rows(&self) -> usize {
+        self.rows.saturating_sub(2).max(1)
+    }
+
     fn draw_artifact(&self, a: &Artifact) {
         let mut s = String::with_capacity(4096);
         s.push_str("\x1b[?25l\x1b[H");
-        s.push_str("\x1b[1;37m");
-        s.push_str(&fit(&format!(" {}", a.title), self.cols));
+        let total = a.total_pages();
+        let page = a.current_page();
+        let right = if total > 1 {
+            format!("{}/{}", a.page + 1, total)
+        } else if let Some(sub) = &a.subtitle {
+            sub.clone()
+        } else {
+            String::new()
+        };
+        let heading = match &page.title {
+            Some(pt) if !pt.is_empty() => format!("{} \u{b7} {pt}", a.title),
+            _ => a.title.clone(),
+        };
+        let right_w = dw(&right);
+        let left_room = if right_w > 0 {
+            self.cols.saturating_sub(right_w + 3).max(8)
+        } else {
+            self.cols.saturating_sub(1).max(8)
+        };
+        let left = format!(" {}", fit_ellipsis(&heading, left_room));
+        let gap = self.cols.saturating_sub(dw(&left) + right_w);
+        let header = if right_w > 0 {
+            format!("{left}{}{right}", " ".repeat(gap))
+        } else {
+            left
+        };
+        s.push_str(a.theme.header_sgr());
+        s.push_str(&fit(&header, self.cols));
         s.push_str("\x1b[0m\x1b[K\r\n");
-        let body_rows = self.rows.saturating_sub(2).max(1);
+
+        // Fixed-size page canvas: every page occupies exactly `body_rows` rows.
+        let body_rows = self.artifact_body_rows();
         for i in 0..body_rows {
-            if let Some(l) = a.body.get(a.scroll + i) {
-                s.push_str(l);
+            if let Some(l) = page.lines.get(i) {
+                s.push_str(&crate::artifact::clip_ansi(l, self.cols));
             }
             s.push_str("\x1b[0m\x1b[K\r\n");
         }
-        let hidden = a.body.len().saturating_sub(a.scroll + body_rows);
+
         // With a save notice, the notice is what the user needs; the key
-        // hints come back once the notice is dismissed (Esc closes the panel).
-        let footer = match (&a.notice, a.submit) {
-            (Some(n), _) => format!(" {} | {}", i18n::t("artifact_back"), n),
-            (None, true) => format!(
+        // hints come back on the next page flip or after dismissal.
+        let page_badge = format!("{}/{}", a.page + 1, total);
+        let footer = match (&a.notice, a.submit, total > 1) {
+            (Some(n), _, _) => format!(" {} | {}", i18n::t("artifact_back"), n),
+            (None, true, true) => format!(
+                " {} | {} | {} {} | s save",
+                i18n::t("artifact_send"),
+                i18n::t("artifact_back"),
+                i18n::t("artifact_page"),
+                page_badge
+            ),
+            (None, true, false) => format!(
                 " {} | {} | s save",
                 i18n::t("artifact_send"),
                 i18n::t("artifact_back")
             ),
-            (None, false) if hidden > 0 => format!(
-                " {} | {} | s save | {}",
+            (None, false, true) => format!(
+                " {} | {} {} | s save",
                 i18n::t("artifact_back"),
-                i18n::t("artifact_scroll"),
-                i18n::tf("artifact_more", &[&hidden.to_string()])
+                i18n::t("artifact_page"),
+                page_badge
             ),
-            (None, false) => format!(" {} | s save", i18n::t("artifact_back")),
+            (None, false, false) => match &a.footer {
+                Some(f) if !f.is_empty() => format!(" {} | s save | {f}", i18n::t("artifact_back")),
+                _ => format!(" {} | s save", i18n::t("artifact_back")),
+            },
         };
         s.push_str("\x1b[90m");
         s.push_str(&fit_dots(&footer, self.cols));
@@ -1212,103 +1263,143 @@ impl Scr {
         }
     }
 
-    fn artifact_scroll(&mut self, delta: isize) {
-        let page = self.rows.saturating_sub(2).max(1) as isize;
-        if let Some(a) = self.artifact.as_mut() {
-            let max = (a.body.len() as isize - page).max(0);
-            a.scroll = ((a.scroll as isize + delta).clamp(0, max)) as usize;
+    /// Dispatch one decoded key event to the active fixed-page artifact viewer.
+    fn handle_artifact_event(&mut self, ev: KeyEvent) -> bool {
+        match ev {
+            KeyEvent::Char(b's') | KeyEvent::Char(b'S') => {
+                if let Some(a) = self.artifact.as_mut() {
+                    // Keep the file name short enough that the saved-path
+                    // notice fits next to the footer's Esc hint on the
+                    // 53-cell panel (long artifact titles used to be cut
+                    // mid-word).
+                    let name: String = a
+                        .title
+                        .chars()
+                        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+                        .take(20)
+                        .collect();
+                    let name = match name.rfind('-') {
+                        Some(pos) if pos >= 8 => name[..pos].to_string(),
+                        _ => name,
+                    };
+                    let name = name.trim_end_matches('-').to_string();
+                    let name = if name.is_empty() { "artifact".to_string() } else { name };
+                    let path = crate::config::tmp_dir().join(format!("{name}.txt"));
+                    match std::fs::write(&path, &a.save_text) {
+                        Ok(()) => {
+                            let home = std::env::var("HOME").unwrap_or_default();
+                            let mut shown = path.display().to_string();
+                            if !home.is_empty() && shown.starts_with(&home) {
+                                shown = format!("~{}", &shown[home.len()..]);
+                            }
+                            a.notice = Some(i18n::tf("ui_saved", &[&shown]));
+                        }
+                        Err(e) => {
+                            a.notice = Some(i18n::tf("ui_save_failed", &[&e.to_string()]))
+                        }
+                    }
+                    self.draw();
+                }
+                true
+            }
+            KeyEvent::Char(0x0d) | KeyEvent::Char(0x0a) => {
+                if let Some(a) = &self.artifact {
+                    if a.submit {
+                        self.artifact_action = 1;
+                    }
+                }
+                self.artifact = None;
+                self.draw();
+                true
+            }
+            KeyEvent::Esc | KeyEvent::Char(b'q') | KeyEvent::Char(b'Q') | KeyEvent::Char(0x03) => {
+                self.artifact = None;
+                self.draw();
+                true
+            }
+            KeyEvent::Right
+            | KeyEvent::Down
+            | KeyEvent::PageDown
+            | KeyEvent::Char(b' ')
+            | KeyEvent::Char(b'n')
+            | KeyEvent::Char(b'N')
+            | KeyEvent::Char(b'l')
+            | KeyEvent::Char(b'L') => {
+                if let Some(a) = self.artifact.as_mut() {
+                    if a.next_page() {
+                        self.draw();
+                    }
+                }
+                true
+            }
+            KeyEvent::Left
+            | KeyEvent::Up
+            | KeyEvent::PageUp
+            | KeyEvent::Char(0x7f)
+            | KeyEvent::Char(0x08)
+            | KeyEvent::Char(b'p')
+            | KeyEvent::Char(b'P')
+            | KeyEvent::Char(b'h')
+            | KeyEvent::Char(b'H') => {
+                if let Some(a) = self.artifact.as_mut() {
+                    if a.prev_page() {
+                        self.draw();
+                    }
+                }
+                true
+            }
+            KeyEvent::Home | KeyEvent::Char(b'g') => {
+                if let Some(a) = self.artifact.as_mut() {
+                    if a.first_page() {
+                        self.draw();
+                    }
+                }
+                true
+            }
+            KeyEvent::End | KeyEvent::Char(b'G') => {
+                if let Some(a) = self.artifact.as_mut() {
+                    if a.last_page() {
+                        self.draw();
+                    }
+                }
+                true
+            }
+            KeyEvent::Char(d @ b'1'..=b'9') => {
+                if let Some(a) = self.artifact.as_mut() {
+                    if a.total_pages() > 1 && a.goto_page((d - b'1') as usize) {
+                        self.draw();
+                    }
+                }
+                true
+            }
+            _ => false,
         }
-        self.draw();
     }
 
-    /// One keystroke while a panel is up: scroll or dismiss.
+    /// Blocking-with-timeout keystroke while a panel is up in idle/modal loops.
     fn artifact_keystroke(&mut self) -> bool {
         if self.artifact.is_none() {
             return false;
         }
-        let page = self.rows.saturating_sub(2).max(1) as isize;
-        match self.read_key_timeout() {
+        match self.read_key_event() {
+            Some(ev) => self.handle_artifact_event(ev),
             None => false,
-            Some(b) => match b {
-                b's' | b'S' => {
-                    if let Some(a) = self.artifact.as_mut() {
-                        // Keep the file name short enough that the saved-path
-                        // notice fits next to the footer's Esc hint on the
-                        // 53-cell panel (long artifact titles used to be cut
-                        // mid-word).
-                        let name: String = a
-                            .title
-                            .chars()
-                            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
-                            .take(20)
-                            .collect();
-                        // Prefer a whole-word short name ("Release-checklist")
-                        // over a mid-word cut ("Release-checklist-fo").
-                        let name = match name.rfind('-') {
-                            Some(pos) if pos >= 8 => name[..pos].to_string(),
-                            _ => name,
-                        };
-                        let name = name.trim_end_matches('-').to_string();
-                        let path = crate::config::tmp_dir().join(format!("{name}.txt"));
-                        let text = a.body.join("\n");
-                        match std::fs::write(&path, text) {
-                            Ok(()) => {
-                                let home = std::env::var("HOME").unwrap_or_default();
-                                let mut shown = path.display().to_string();
-                                if !home.is_empty() && shown.starts_with(&home) {
-                                    shown = format!("~{}", &shown[home.len()..]);
-                                }
-                                a.notice = Some(i18n::tf("ui_saved", &[&shown]));
-                            }
-                            Err(e) => {
-                                a.notice = Some(i18n::tf("ui_save_failed", &[&e.to_string()]))
-                            }
-                        }
-                        self.draw();
-                    }
-                    true
-                }
-                0x0d | 0x0a => {
-                    if let Some(a) = &self.artifact {
-                        if a.submit {
-                            self.artifact_action = 1;
-                        }
-                    }
-                    self.artifact = None;
-                    self.draw();
-                    true
-                }
-                b'q' | 0x03 => {
-                    self.artifact = None;
-                    self.draw();
-                    true
-                }
-                KEY_PGUP => {
-                    self.artifact_scroll(-page);
-                    true
-                }
-                KEY_PGDN => {
-                    self.artifact_scroll(page);
-                    true
-                }
-                0x1b => match self.read_key_after_esc() {
-                    Some(b'[') | Some(b'O') => {
-                        match self.read_key_timeout() {
-                            Some(b'A') => self.artifact_scroll(-1),
-                            Some(b'B') => self.artifact_scroll(1),
-                            _ => {}
-                        }
-                        true
-                    }
-                    _ => {
-                        self.artifact = None;
-                        self.draw();
-                        true
-                    }
-                },
-                _ => false,
-            },
         }
+    }
+
+    /// Non-blocking drain of artifact keystrokes during a running turn's `pump()`,
+    /// so keeping an artifact or `/btw` panel open never stalls the background turn.
+    fn artifact_keystroke_now(&mut self) -> bool {
+        let mut handled = false;
+        while self.artifact.is_some() {
+            match self.read_key_event_now() {
+                Some(ev) => {
+                    handled |= self.handle_artifact_event(ev);
+                }
+                None => break,
+            }
+        }
+        handled
     }
 
     fn pop_pending(&self) -> Option<u8> {
@@ -1828,21 +1919,15 @@ impl Scr {
                 0x0d | 0x0a => {
                     let id = views[sel].id.clone();
                     let text = crate::bg::output_of(&id, 200);
-                    let mut lines: Vec<String> = Vec::new();
-                    for l in text.lines() {
-                        let mut wrapped = Vec::new();
-                        Scr::wrap_into(&mut wrapped, l, self.cols);
-                        if wrapped.is_empty() { lines.push(String::new()); }
-                        lines.extend(wrapped);
-                    }
+                    let rows = self.artifact_body_rows();
+                    let cols = self.cols;
                     self.menu = None;
-                    self.artifact = Some(Artifact {
-                        title: format!("{id} output"),
-                        body: lines,
-                        scroll: 0,
-                        notice: None,
-                        submit: false,
-                    });
+                    self.artifact = Some(Artifact::from_plain(
+                        format!("{id} output"),
+                        &text,
+                        rows,
+                        cols,
+                    ));
                     self.draw();
                     return;
                 }
@@ -2016,7 +2101,18 @@ impl Scr {
     /// dismisses it for this session (`/update` can re-offer at any time).
     fn offer_update(&mut self) {
         let Some(info) = self.update_offer.clone() else { return };
+        self.startup_notice = None;
         let mut sel = 0usize;
+        let target_label = format!(
+            "{} ({})",
+            info.version,
+            crate::update::short_sha(&info.sha256)
+        );
+        let current_label = format!(
+            "{} ({})",
+            env!("CARGO_PKG_VERSION"),
+            crate::update::short_sha(&info.local_sha256)
+        );
         loop {
             let items = vec![
                 MenuItem {
@@ -2029,8 +2125,8 @@ impl Scr {
                 },
             ];
             let preview = Some(vec![
-                i18n::tf("ui_update_target", &[&info.version, info.channel.as_str()]),
-                i18n::tf("ui_update_current", &[env!("CARGO_PKG_VERSION")]),
+                i18n::tf("ui_update_target", &[&target_label, info.channel.as_str()]),
+                i18n::tf("ui_update_current", &[&current_label]),
                 format!("{}: {}", i18n::t("ui_update_asset_label"), info.asset),
             ]);
             self.menu = Some(Menu {
@@ -2164,6 +2260,8 @@ impl Scr {
                     continue;
                 }
             };
+            // Dismiss the one-time startup version banner on first interaction.
+            self.startup_notice = None;
             // Navigation keys are handled before the byte dispatch: they are
             // decoded sequences, not characters.
             let b = match ev {
@@ -2924,10 +3022,16 @@ and input rows).
 - Formatting: lead with the answer or result. No preamble, no restating the question, no \
 step-by-step narration. Aim for <= 4-8 short lines (< 53 cells each). No emoji, no wide \
 Markdown tables, no horizontal rules.
-- `artifact`: replaces the whole screen with a scrollable panel (title <= 53 chars; ~10 \
-rows of 53 chars visible at once; dismissed with Esc). Use ONLY for finished results that \
-genuinely need room (code, tables, diagrams, checklists, comparisons) - never for progress \
-notes or one-line answers.
+- `artifact`: replaces the whole screen with a fixed-size, page-by-page panel (NO scrolling; \
+each page is 53x10 cells, flipped with ←/→ or PgUp/PgDn, saved with s, dismissed with Esc). \
+Supports rich Markdown in `body` (headings `#/##/###`, `**bold**`, `` `code` ``, badges \
+`[OK]/[WARN]/[ERR]/[INFO]`, checklists `- [x]/[ ]`, tables `| a | b |`, `Key :: Value`, \
+`[bar:78%] Label`, callouts `> [!NOTE]/[!WARN]/[!ERR]`, code blocks, `---` dividers, and \
+`=== Page Title` explicit page breaks), plus structured `pages`, `blocks` (`kv`, `table`, \
+`bar`, `bars`, `spark`, `columns`, `box`, `callout`, `code`, `list`, `checklist`, `divider`, \
+`heading`, `text`), `theme`, and `layout` (`auto`, `center`, `kv`, `columns`). Use ONLY for \
+finished results that genuinely need structured room - never for progress notes or one-line \
+answers.
 
 TOOLS
 Prefer dedicated tools over `bash` whenever one fits:
@@ -3065,9 +3169,10 @@ fn btw_tail(src: &[json::J]) -> Vec<json::J> {
     src[start..].to_vec()
 }
 
-/// A bounded pre-turn context snapshot the busy-time `/btw` can use without
-/// borrowing the live `msgs` (the turn holds a mutable borrow of it).
-fn btw_snapshot(msgs: &[json::J]) -> jobs::Msgs {
+/// A bounded context snapshot the busy-time `/btw` can use without borrowing
+/// the live `msgs` (the turn holds a mutable borrow of it). Includes the
+/// current turn's user prompt so mid-turn `/btw` knows what is being asked.
+fn btw_snapshot(msgs: &[json::J], current_prompt: Option<&str>) -> jobs::Msgs {
     let base = msgs
         .first()
         .and_then(|m| m.get("content"))
@@ -3075,75 +3180,117 @@ fn btw_snapshot(msgs: &[json::J]) -> jobs::Msgs {
         .unwrap_or("");
     let mut v = vec![harness::msg("system", base)];
     v.extend(btw_tail(msgs));
+    if let Some(p) = current_prompt {
+        let p = p.trim();
+        if !p.is_empty() {
+            v.push(harness::msg("user", p));
+        }
+    }
     std::rc::Rc::new(std::cell::RefCell::new(v))
 }
 
 /// The side-question contract appended to the live system prompt.
-fn btw_contract(base: &str, question: &str) -> String {
-    format!(
+/// Does not duplicate the question (which `run_turn` appends as the user turn).
+fn btw_contract(base: &str, in_flight: Option<&str>) -> String {
+    let mut s = format!(
         "{base}\n\nSIDE QUESTION MODE\n\
-You are a one-off, read-only subagent answering a side question about this \
-conversation.\n\
-- Allowed: answer from the conversation above and read-only tools only \
+You are a one-off, read-only subagent answering an ephemeral side question about \
+this conversation.\n\
+- Allowed: answer directly from the conversation above and read-only tools only \
 (`read_file`, `read_image`, `list_dir`, `glob`, `grep`, `search`, `fetch`, \
 `ocr`, `skill`, `memory_read`, `memory_search`, `todo_read`, `get_goal`, \
 `job_list`, `job_output`, `watcher_list`).\n\
 - Forbidden: never write, edit, run shell commands, mutate skills/apps/memory/\
-todos/goals, start jobs/watchers/schedules, call `artifact`, `speak`, `ask_user`, or \
-`state_report`.\n\
-- Output: shown directly in a full-screen panel (nothing is saved to the main \
-conversation). Keep it <= 10 lines of <= 52 cells each, direct and grounded, \
-with no preamble or \"based on the context\" filler. If the answer is not \
-available, state exactly what is missing.\n\n\
-Side question: {question}"
-    )
+todos/goals, start jobs/watchers/schedules, call `artifact`, `speak`, `ask_user`, \
+`rename`, or `state_report`.\n\
+- Output: rendered directly in a dedicated full-screen paginated panel (nothing \
+is saved to the main conversation). Be direct, concise, and grounded — no \
+preamble or \"based on the context\" filler. Short Markdown (bullets, `code`, \
+`**bold**`, `Key :: Value`) is supported. If the answer is not available, state \
+exactly what is missing."
+    );
+    if let Some(status) = in_flight {
+        if !status.trim().is_empty() {
+            s.push_str("\n\nIN-FLIGHT MAIN TURN (currently running in background):\n");
+            s.push_str(status.trim());
+        }
+    }
+    s
 }
 
 /// Context handed to a one-off `/btw` subagent: the current system prompt with
 /// a side-question contract, a bounded tail of the conversation, then the
 /// question (appended by `run_turn`). Nothing is written back to `msgs`.
-fn btw_context(msgs: &jobs::Msgs, question: &str) -> Vec<json::J> {
+fn btw_context(msgs: &jobs::Msgs, in_flight: Option<&str>) -> Vec<json::J> {
     let src = msgs.borrow();
     let base = src
         .first()
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
         .unwrap_or("");
-    let mut out = vec![harness::msg("system", &btw_contract(base, question))];
+    let mut out = vec![harness::msg("system", &btw_contract(base, in_flight))];
     out.extend(btw_tail(&src));
     out
 }
 
-/// Minimal UI for the `/btw` subagent: a live status line and Esc to cancel.
-/// It deliberately does not write tool cards or streamed text into the
-/// transcript — the side question must leave the main conversation untouched.
+/// Live overlay UI for `/btw`: renders thinking, read-only tool activity, and
+/// streamed answer directly inside the `/btw` panel while leaving the main
+/// transcript completely untouched. Esc cancels immediately.
 struct BtwUi<'a> {
     scr: &'a mut Scr,
+    live_title: String,
+    status: String,
     acc: String,
     note: Option<String>,
     interrupted: bool,
 }
 
+impl<'a> BtwUi<'a> {
+    fn repaint(&mut self) {
+        let rows = self.scr.artifact_body_rows();
+        let cols = self.scr.cols;
+        let body = if !self.acc.trim().is_empty() {
+            self.acc.clone()
+        } else if !self.status.is_empty() {
+            format!("*{}*", self.status)
+        } else {
+            format!("*{}*", i18n::t("btw_thinking"))
+        };
+        let mut a = Artifact::from_markdown(&self.live_title, &body, rows, cols);
+        a.theme = crate::artifact::Theme::Info;
+        a.notice = Some(i18n::t("btw_cancel_hint").to_string());
+        // Show the latest page while streaming so newly arrived lines are visible.
+        a.page = a.total_pages().saturating_sub(1);
+        self.scr.artifact = Some(a);
+        self.scr.draw();
+    }
+}
+
 impl<'a> harness::Ui for BtwUi<'a> {
     fn on(&mut self, ev: Ev) {
         match ev {
-            Ev::TurnStart => self.scr.busy = true,
+            Ev::TurnStart => {
+                self.scr.busy = true;
+                self.repaint();
+            }
             Ev::Delta(d) => {
                 self.acc.push_str(&d);
-                self.scr.live = Some((2, tail_chars(&self.acc, 44)));
-                self.scr.draw();
+                self.repaint();
             }
             Ev::Thinking { secs, .. } => {
-                self.scr.live = Some((1, format!("{} {secs:.1}s", i18n::t("btw_thinking"))));
-                self.scr.draw();
+                self.status = format!("{} {secs:.1}s", i18n::t("btw_thinking"));
+                self.repaint();
             }
             Ev::ThinkingDone { .. } => {}
-            Ev::Assistant(_) => self.scr.live = None,
+            Ev::Assistant(_) => {}
             Ev::ToolCall { name, .. } => {
-                self.scr.live = Some((1, i18n::tf("btw_tool", &[&name])));
-                self.scr.draw();
+                self.status = i18n::tf("btw_tool", &[&name]);
+                self.repaint();
             }
-            Ev::ToolResult { .. } => self.scr.live = None,
+            Ev::ToolResult { .. } => {
+                self.status = i18n::t("btw_thinking").to_string();
+                self.repaint();
+            }
             Ev::Note(n) => self.note = Some(n),
             Ev::Info(n) => {
                 if self.note.is_none() {
@@ -3180,8 +3327,9 @@ impl<'a> harness::Ui for BtwUi<'a> {
     }
 }
 
-/// Run one read-only side question and show the answer in a full-screen panel.
-/// The main conversation and session are not modified.
+/// Run one read-only side question and show the answer in a dedicated fixed-page
+/// panel. The main transcript, conversation history, context ring, and session
+/// are never modified.
 fn run_btw(
     scr: &mut Scr,
     cfg: &Cfg,
@@ -3189,54 +3337,68 @@ fn run_btw(
     msgs: &jobs::Msgs,
     question: &str,
     opts: &harness::RunOpts,
+    in_flight: Option<&str>,
 ) {
     let reg = tools::view_registry(caps);
-    let mut ctx = btw_context(msgs, question);
+    let mut ctx = btw_context(msgs, in_flight);
+    let mut btw_opts = opts.clone();
+    // Ephemeral side question: never trigger compaction, never mutate global
+    // time-context throttling, and never overwrite the main context ring.
+    btw_opts.compact.enabled = false;
+    btw_opts.context_time = false;
+    btw_opts.update_context = false;
+    btw_opts.max_steps = if btw_opts.max_steps == 0 {
+        8
+    } else {
+        btw_opts.max_steps.min(8)
+    };
+
+    let prev_busy = scr.busy;
+    let prev_live = scr.live.clone();
+    let flat = question.split_whitespace().collect::<Vec<_>>().join(" ");
+    let live_title = i18n::tf("btw_live_title", &[&fit_dots(&flat, 40)]);
+    let final_title = i18n::tf("btw_title", &[&fit_dots(&flat, 42)]);
+
     scr.busy = true;
-    scr.live = Some((1, i18n::t("btw_thinking").to_string()));
-    scr.draw();
     // The subagent polls the keyboard from `pump` (Esc cancels it), so stdin
     // must be non-blocking for its whole run — the idle editor leaves VMIN=1.
     poll_mode(true);
     let (report, note) = {
         let mut ui = BtwUi {
             scr: &mut *scr,
+            live_title,
+            status: i18n::t("btw_thinking").to_string(),
             acc: String::new(),
             note: None,
             interrupted: false,
         };
-        let report = harness::run_turn(cfg, opts, &mut ctx, &reg, question, &[], &mut ui);
+        ui.repaint();
+        let report = harness::run_turn(cfg, &btw_opts, &mut ctx, &reg, question, &[], &mut ui);
         (report, ui.note.take())
     };
-    poll_mode(false);
-    scr.busy = false;
-    scr.live = None;
+    poll_mode(prev_busy);
+    scr.busy = prev_busy;
+    scr.live = prev_live;
+
+    let rows = scr.artifact_body_rows();
+    let cols = scr.cols;
     if report.cancelled {
-        scr.push(i18n::t("btw_cancelled"), K_DIM);
+        // Clean cancel: dismiss the overlay without polluting the main transcript.
+        scr.artifact = None;
     } else if report.text.trim().is_empty() {
         let why = note.unwrap_or_else(|| i18n::t("btw_empty").to_string());
-        scr.push(&i18n::tf("btw_failed", &[&why]), K_ERR);
+        let mut a = Artifact::from_markdown(
+            &final_title,
+            &format!("> [!ERR] {}", i18n::tf("btw_failed", &[&why])),
+            rows,
+            cols,
+        );
+        a.theme = crate::artifact::Theme::Error;
+        scr.artifact = Some(a);
     } else {
-        let answer = report.text.trim();
-        let mut body: Vec<String> = Vec::new();
-        for line in answer.lines() {
-            let mut wrapped = Vec::new();
-            Scr::wrap_into(&mut wrapped, line, scr.cols);
-            if wrapped.is_empty() {
-                body.push(String::new());
-            } else {
-                body.extend(wrapped);
-            }
-        }
-        let flat = question.split_whitespace().collect::<Vec<_>>().join(" ");
-        let title = i18n::tf("btw_title", &[&fit_dots(&flat, 42)]);
-        scr.artifact = Some(Artifact {
-            title,
-            body,
-            scroll: 0,
-            notice: None,
-            submit: false,
-        });
+        let mut a = Artifact::from_markdown(&final_title, report.text.trim(), rows, cols);
+        a.theme = crate::artifact::Theme::Info;
+        scr.artifact = Some(a);
     }
     scr.draw();
 }
@@ -3525,24 +3687,15 @@ impl<'a> harness::Ui for TermUi<'a> {
                     self.scr.push(&fit_dots(&line, cols), kind);
                 }
             }
-            Ev::Artifact { title, body } => {
+            Ev::Artifact(v) => {
                 self.acc.clear();
                 self.scr.live = None;
+                let rows = self.scr.artifact_body_rows();
                 let cols = self.scr.cols;
-                let mut lines: Vec<String> = Vec::new();
-                for l in body.lines() {
-                    let mut w: Vec<String> = Vec::new();
-                    Scr::wrap_into(&mut w, l, cols);
-                    lines.extend(w);
+                if let Ok(res) = Artifact::from_tool_json(&v, rows, cols) {
+                    self.scr.artifact = Some(res.artifact);
+                    self.scr.draw();
                 }
-                self.scr.artifact = Some(Artifact {
-                    title: tidy(&title),
-                    body: lines,
-                    scroll: 0,
-                    notice: None,
-                    submit: false,
-                });
-                self.scr.draw();
             }
             Ev::Context(c) => self.scr.push(&context_marker(&c), K_DIM),
             Ev::Compacting { tokens, messages } => {
@@ -3839,8 +3992,9 @@ impl<'a> harness::Ui for TermUi<'a> {
 
     fn pump(&mut self) -> Action {
         if self.scr.artifact.is_some() {
-            self.scr.artifact_keystroke();
-            poll_mode(true); // read_key_timeout left the tty blocking
+            // Non-blocking drain so an open `/btw` or artifact panel never
+            // stalls the background turn with 300ms blocking waits.
+            self.scr.artifact_keystroke_now();
             return Action::Continue;
         }
         let mut changed = false;
@@ -4099,20 +4253,54 @@ impl<'a> TermUi<'a> {
         self.scr.draw();
     }
 
+    /// Summarize the currently running turn so a mid-turn `/btw` knows what
+    /// tools or progress are active right now.
+    fn in_flight_summary(&self) -> Option<String> {
+        let mut parts = Vec::new();
+        if let Some(st) = &self.scr.state_line {
+            parts.push(format!("Stage: {st}"));
+        }
+        if !self.tools.is_empty() {
+            let mut active: Vec<String> = self
+                .tools
+                .values()
+                .map(|t| format!("{} ({})", t.0, first_line_short(&t.1, 48)))
+                .collect();
+            active.sort();
+            parts.push(format!("Running tools: {}", active.join(", ")));
+        }
+        if !self.acc.trim().is_empty() {
+            parts.push(format!(
+                "Partial reply so far: {}",
+                first_line_short(self.acc.trim(), 120)
+            ));
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n"))
+        }
+    }
+
     /// Run one command while the model is busy. The dispatcher is the same as
     /// on the idle path; only the outcomes that are safe mid-turn are acted on
     /// (text, /btw, /image, rename, goal, /update-hwinfo's local scan, quit).
     fn run_command_now(&mut self, line: &str) {
         self.scr.history_push(line);
-        self.scr.push(&format!("> {line}"), K_USER);
         let dispatched = {
             let mut guard = self.cfg_rc.borrow_mut();
             cmd::dispatch(line, &mut guard)
         };
         let Some(out) = dispatched else {
+            self.scr.push(&format!("> {line}"), K_USER);
             self.scr.draw();
             return;
         };
+        // `/btw` is an ephemeral side question: never echo `> /btw ...` into
+        // the main transcript.
+        if out.btw.is_none() {
+            self.scr.push(&format!("> {line}"), K_USER);
+        }
         for (text, kind) in &out.lines {
             self.scr.push(text, *kind);
         }
@@ -4143,20 +4331,19 @@ impl<'a> TermUi<'a> {
             } else {
                 let caps = self.cfg_rc.borrow().capabilities();
                 let now_cfg = api_cfg(&self.cfg_rc.borrow());
-                let mut opts =
+                let opts =
                     harness::RunOpts::from_config(&self.cfg_rc.borrow(), self.scr.ctx_window);
-                opts.max_steps = if opts.max_steps == 0 {
-                    8
-                } else {
-                    opts.max_steps.min(8)
-                };
                 let ctx = self.btw_ctx.clone();
-                run_btw(&mut self.scr, &now_cfg, caps, &ctx, &question, &opts);
-                // run_btw owns the screen for a moment; hand it back to the
-                // running turn (the answer stays in the artifact panel and the
-                // next pump() call shows it until Esc).
-                self.scr.busy = true;
-                poll_mode(true);
+                let in_flight = self.in_flight_summary();
+                run_btw(
+                    &mut self.scr,
+                    &now_cfg,
+                    caps,
+                    &ctx,
+                    &question,
+                    &opts,
+                    in_flight.as_deref(),
+                );
             }
         }
         if out.model_prompt.is_some() {
@@ -5195,6 +5382,18 @@ fn update_channel(cfg: &config::Config) -> crate::update::Channel {
     crate::update::Channel::parse(&cfg.update_channel).unwrap_or(crate::update::Channel::Nightly)
 }
 
+/// One-time version banner displayed on startup until the first user action.
+fn startup_version_notice(cfg: &config::Config) -> String {
+    let sha = crate::update::current_sha256()
+        .map(|s| crate::update::short_sha(&s).to_string())
+        .unwrap_or_else(|| "dev".into());
+    let channel = update_channel(cfg).as_str();
+    i18n::tf(
+        "ui_startup_version",
+        &[env!("CARGO_PKG_VERSION"), &sha, channel],
+    )
+}
+
 /// `/update [nightly|stable]`: switch the channel (saved), check now and queue
 /// the yes/no offer; the download/install happens only after confirmation.
 fn run_update_command(scr: &mut Scr, config_rc: &ConfigRc, arg: &str) {
@@ -5234,13 +5433,20 @@ fn run_update_command(scr: &mut Scr, config_rc: &ConfigRc, arg: &str) {
             // The idle loop asks yes/no on its next iteration.
             scr.update_offer = Some(info);
         }
-        Ok(None) => scr.push(
-            &i18n::tf(
-                "ui_update_up_to_date",
-                &[env!("CARGO_PKG_VERSION"), channel.as_str()],
-            ),
-            K_NORM,
-        ),
+        Ok(None) => {
+            let label = match crate::update::current_sha256() {
+                Some(sha) => format!(
+                    "{} ({})",
+                    env!("CARGO_PKG_VERSION"),
+                    crate::update::short_sha(&sha)
+                ),
+                None => env!("CARGO_PKG_VERSION").to_string(),
+            };
+            scr.push(
+                &i18n::tf("ui_update_up_to_date", &[&label, channel.as_str()]),
+                K_NORM,
+            );
+        }
         Err(e) => scr.push(&i18n::tf("ui_update_failed", &[&e]), K_ERR),
     }
     scr.draw();
@@ -5872,28 +6078,16 @@ fn extensions_menu(scr: &mut Scr, config_rc: &ConfigRc) {
                         // Enter keeps the fast metadata preview.
                         if let Some(name) = &kinds[sel] {
                             if let Some(sk) = skills.iter().find(|x| &x.name == name) {
-                                let mut body: Vec<String> = Vec::new();
-                                for line in sk.body.lines() {
-                                    let mut wrapped = Vec::new();
-                                    Scr::wrap_into(&mut wrapped, line, scr.cols);
-                                    if wrapped.is_empty() {
-                                        body.push(String::new());
-                                    } else {
-                                        body.extend(wrapped);
-                                    }
-                                }
-                                if body.is_empty() {
-                                    body.push(String::new());
-                                }
+                                let rows = scr.artifact_body_rows();
+                                let cols = scr.cols;
                                 scr.menu = None;
                                 scr.artifact_action = 0;
-                                scr.artifact = Some(Artifact {
-                                    title: format!("skill {}", sk.name),
-                                    body,
-                                    scroll: 0,
-                                    notice: None,
-                                    submit: false,
-                                });
+                                scr.artifact = Some(Artifact::from_markdown(
+                                    format!("skill {}", sk.name),
+                                    &sk.body,
+                                    rows,
+                                    cols,
+                                ));
                                 scr.draw();
                                 while scr.artifact.is_some() {
                                     scr.artifact_keystroke();
@@ -6034,8 +6228,14 @@ fn tool_output_panel(scr: &mut Scr) {
                 if wrapped.is_empty() { body.push(String::new()); }
                 body.extend(wrapped);
             }
+            let rows = scr.artifact_body_rows();
+            let cols = scr.cols;
             scr.menu = None;
-            scr.artifact = Some(Artifact { title, body, scroll: 0, notice: None, submit: false });
+            let mut a = Artifact::from_lines_plain(title, &body, rows, cols);
+            if e.is_error {
+                a.theme = crate::artifact::Theme::Error;
+            }
+            scr.artifact = Some(a);
             scr.draw();
             return;
         }
@@ -6498,15 +6698,13 @@ fn review_prompt_app(scr: &mut Scr, app: &crate::apps::App) -> bool {
     if body.is_empty() {
         body.push(String::new());
     }
+    let rows = scr.artifact_body_rows();
+    let cols = scr.cols;
     scr.menu = None;
     scr.artifact_action = 0;
-    scr.artifact = Some(Artifact {
-        title: app.title.clone(),
-        body,
-        scroll: 0,
-        notice: None,
-        submit: true,
-    });
+    let mut a = Artifact::from_lines_plain(app.title.clone(), &body, rows, cols);
+    a.submit = true;
+    scr.artifact = Some(a);
     scr.draw();
     while scr.artifact.is_some() {
         scr.artifact_keystroke();
@@ -6600,17 +6798,10 @@ fn apps_menu(scr: &mut Scr, config_rc: &ConfigRc) -> AppsAction {
     fn open_panel(scr: &mut Scr, app: &crate::apps::App, short_path: String) {
         scr.menu = None;
         scr.draw();
-        let mut body: Vec<String> = Vec::new();
-        for line in panel_body(app, short_path) {
-            Scr::wrap_into(&mut body, &line, scr.cols);
-        }
-        scr.artifact = Some(Artifact {
-            title: app.title.clone(),
-            body,
-            scroll: 0,
-            notice: None,
-            submit: false,
-        });
+        let rows = scr.artifact_body_rows();
+        let cols = scr.cols;
+        let text = panel_body(app, short_path).join("\n");
+        scr.artifact = Some(Artifact::from_markdown(app.title.clone(), &text, rows, cols));
         scr.draw();
         while scr.artifact.is_some() {
             scr.artifact_keystroke();
@@ -6878,15 +7069,16 @@ fn apps_menu(scr: &mut Scr, config_rc: &ConfigRc) -> AppsAction {
                             }
                         }
                     }
+                    let rows = scr.artifact_body_rows();
+                    let cols = scr.cols;
                     scr.menu = None;
                     scr.artifact_action = 0;
-                    scr.artifact = Some(Artifact {
-                        title: format!("{} · {}", app.title, i18n::t("apps_log")),
-                        body,
-                        scroll: 0,
-                        notice: None,
-                        submit: false,
-                    });
+                    scr.artifact = Some(Artifact::from_lines_plain(
+                        format!("{} · {}", app.title, i18n::t("apps_log")),
+                        &body,
+                        rows,
+                        cols,
+                    ));
                     scr.draw();
                     while scr.artifact.is_some() {
                         scr.artifact_keystroke();
@@ -7082,8 +7274,11 @@ fn main() {
     if argv.get(1).map(|s| s.as_str()) == Some("--version")
         || argv.get(1).map(|s| s.as_str()) == Some("-V")
     {
+        let sha = crate::update::current_sha256()
+            .map(|s| format!(", sha256:{}", crate::update::short_sha(&s)))
+            .unwrap_or_default();
         println!(
-            "dst {} ({}, {})",
+            "dst {} ({}, {}{sha})",
             env!("CARGO_PKG_VERSION"),
             std::env::consts::ARCH,
             if cfg!(debug_assertions) { "debug" } else { "release" }
@@ -7329,7 +7524,7 @@ start another one in a different terminal or tmux window"
     }
 
     let mut scr = Scr::new();
-    tools::set_panel_cols(scr.cols);
+    tools::set_panel_size(scr.rows, scr.cols);
     if let Ok(text) = std::fs::read_to_string(config::history_path()) {
         for line in text.lines().rev().take(60).collect::<Vec<_>>().into_iter().rev() {
             let line = line.trim();
@@ -7353,6 +7548,7 @@ start another one in a different terminal or tmux window"
     onboarding(&mut scr, &config_rc);
     maybe_show_tips(&mut scr, &config_rc);
     flush_onboard_notice(&mut scr);
+    scr.startup_notice = Some(startup_version_notice(&config_rc.borrow()));
     cfg = api_cfg(&config_rc.borrow());
     *shared_cfg.borrow_mut() = cfg.clone();
     tools::set_cfg(cfg.clone());
@@ -7454,7 +7650,11 @@ start another one in a different terminal or tmux window"
                 cmd::dispatch(&line, &mut guard)
             };
             if let Some(out) = dispatched {
-                scr.push(&format!("> {line}"), K_USER);
+                // `/btw` is an ephemeral side question: keep the main transcript
+                // (and opening splash) completely untouched.
+                if out.btw.is_none() {
+                    scr.push(&format!("> {line}"), K_USER);
+                }
                 if out.clear {
                     // /clear and /new start a new conversation, not just a new
                     // screen: fresh system prompt, no session file, zero
@@ -7493,7 +7693,7 @@ start another one in a different terminal or tmux window"
                     let defs = shared_tdefs.borrow().clone();
                     let window = scr.ctx_window;
                     let result = {
-                        let btw_ctx = btw_snapshot(&msgs.borrow());
+                        let btw_ctx = btw_snapshot(&msgs.borrow(), None);
                         let mut m = msgs.borrow_mut();
                         let mut ui = TermUi {
                             scr: &mut scr,
@@ -7708,18 +7908,11 @@ start another one in a different terminal or tmux window"
                     } else {
                         let caps = config_rc.borrow().capabilities();
                         let now_cfg = api_cfg(&config_rc.borrow());
-                        let mut btw_opts = harness::RunOpts::from_config(
+                        let btw_opts = harness::RunOpts::from_config(
                             &config_rc.borrow(),
                             scr.ctx_window,
                         );
-                        // A side question is a small task: bound it even when
-                        // the user's main limits are unlimited.
-                        btw_opts.max_steps = if btw_opts.max_steps == 0 {
-                            8
-                        } else {
-                            btw_opts.max_steps.min(8)
-                        };
-                        run_btw(&mut scr, &now_cfg, caps, &msgs, &question, &btw_opts);
+                        run_btw(&mut scr, &now_cfg, caps, &msgs, &question, &btw_opts, None);
                         scr.draw();
                     }
                 }
@@ -7834,9 +8027,9 @@ start another one in a different terminal or tmux window"
             scr.busy = true;
             poll_mode(true);
             {
-                // Snapshot before the mutable borrow: a mid-turn /btw answers
-                // from the conversation as it stood when the turn started.
-                let btw_ctx = btw_snapshot(&msgs.borrow());
+                // Snapshot before the mutable borrow, including the current
+                // prompt so a mid-turn `/btw` knows what this turn is doing.
+                let btw_ctx = btw_snapshot(&msgs.borrow(), Some(&submit));
                 let mut m = msgs.borrow_mut();
                 let mut ui = TermUi {
                     scr: &mut scr,

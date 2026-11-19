@@ -115,6 +115,25 @@ pub fn record_opt(u: Option<&Usage>) {
     }
 }
 
+/// Record a side-question request's tokens toward cumulative totals without
+/// overwriting the main conversation's context-pressure ring.
+pub fn record_side(u: &Usage) {
+    if let Ok(mut g) = STATS.lock() {
+        g.requests += 1;
+        g.prompt += u.prompt;
+        g.completion += u.completion;
+        g.cache_hit += u.cache_hit;
+        g.cache_miss += u.cache_miss;
+        save(&g);
+    }
+}
+
+pub fn record_side_opt(u: Option<&Usage>) {
+    if let Some(u) = u {
+        record_side(u);
+    }
+}
+
 pub fn snapshot() -> Stats {
     STATS.lock().map(|g| g.clone()).unwrap_or_default()
 }

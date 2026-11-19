@@ -48,6 +48,8 @@ pub struct RunOpts {
     /// Transient-failure retries and fallback models.
     pub retries: u32,
     pub fallbacks: Vec<String>,
+    /// Update the main conversation's context-pressure ring (`false` for `/btw`).
+    pub update_context: bool,
 }
 
 impl Default for RunOpts {
@@ -63,6 +65,7 @@ impl Default for RunOpts {
             sandbox: crate::sandbox::Settings::default(),
             retries: 0,
             fallbacks: Vec::new(),
+            update_context: true,
         }
     }
 }
@@ -80,6 +83,7 @@ impl RunOpts {
             sandbox: crate::sandbox::Settings::from_config(c),
             retries: c.api_retries,
             fallbacks: c.api_fallbacks.clone(),
+            update_context: true,
         }
     }
 }
@@ -145,8 +149,8 @@ pub enum Ev {
     Compacting { tokens: u64, messages: usize },
     /// Compaction finished; `ok=false` means the history was left untouched.
     CompactingDone { ok: bool, note: String },
-    /// The agent asked to take over the screen with a composed panel.
-    Artifact { title: String, body: String },
+    /// The agent asked to take over the screen with a fixed-size paginated panel.
+    Artifact(J),
     /// Harness-level notice (limit reached, failure, compaction).
     Note(String),
     /// Informational notice (compaction done, pruned, step budget reached).
@@ -737,7 +741,11 @@ pub fn run_turn(
             let snapshot = serialize_msgs(msgs);
             match stream_once(&active, &snapshot, &defs, ui) {
                 Ok(o) => {
-                    crate::usage::record_opt(o.usage.as_ref());
+                    if opts.update_context {
+                        crate::usage::record_opt(o.usage.as_ref());
+                    } else {
+                        crate::usage::record_side_opt(o.usage.as_ref());
+                    }
                     break Ok(o);
                 }
                 Err((partial, was_cancelled)) if !was_cancelled
@@ -882,19 +890,7 @@ pub fn run_turn(
             }
             if o.name == "artifact" && !o.is_error {
                 if let Some(v) = &o.value {
-                    let title = v
-                        .get("title")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let body = v
-                        .get("body")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    if !body.is_empty() {
-                        ui.on(Ev::Artifact { title, body });
-                    }
+                    ui.on(Ev::Artifact(v.clone()));
                 }
             }
         }

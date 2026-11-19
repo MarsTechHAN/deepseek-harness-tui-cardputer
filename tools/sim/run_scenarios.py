@@ -873,19 +873,52 @@ def check_artifact_scroll(screens, reqs, work):
     checks = []
     checks.append(("Release checklist for the pocket terminal" in top,
                    "artifact title shown"))
-    checks.append(("more" in top or "scroll" in top,
-                   "footer advertises scrolling while content is hidden"))
-    checks.append(("step 1:" in top and "Checklist" not in paged or
-                   "step 1:" not in paged,
-                   "PgDn scrolls the artifact body"))
+    checks.append(("1/2" in top and "page" in top,
+                   "footer and header show fixed page-by-page indicator (1/2)"))
+    checks.append(("step 1:" in top and "step 10:" in top and "step 11:" not in top,
+                   "page 1 shows exactly one fixed page (steps 1..10)"))
+    checks.append(("2/2" in paged and "step 11:" in paged and "step 1:" not in paged,
+                   "PgDn flips to page 2/2 with no line-scroll overlap"))
     checks.append((bool(saved_files) and "step 1:" in saved_text
-                   and "step 15:" in saved_text,
-                   "s saves the full artifact body to ~/.dst/tmp"))
+                   and "step 15:" in saved_text and "\x1b[" not in saved_text,
+                   "s saves the full ANSI-free artifact body to ~/.dst/tmp"))
     checks.append(("saved" in saved and "Release-checkli" in saved
                    and ".txt" in saved,
                    "save notice renders the full (shortened) path in the footer"))
     checks.append(("Checklist is on screen." in dismissed,
                    "Esc returns to the transcript and the turn continues"))
+    return checks
+
+
+def check_artifact_rich(screens, reqs, work):
+    p1 = screens.get("page1", "")
+    p2 = screens.get("page2", "")
+    p3 = screens.get("page3", "")
+    saved = screens.get("saved", "")
+    dismissed = screens.get("dismissed", "")
+    tmp = os.path.join(work, "home", ".dst", "tmp")
+    saved_files = []
+    if os.path.isdir(tmp):
+        saved_files = [f for f in os.listdir(tmp) if f.endswith(".txt")]
+    saved_text = read_file(os.path.join(tmp, saved_files[0])) if saved_files else ""
+    checks = []
+    checks.append(("Device Health" in p1 and "System" in p1 and "1/3" in p1,
+                   "page 1 shows main title, per-page subtitle, and 1/3 badge"))
+    checks.append(("Battery" in p1 and "78%" in p1 and "cardputer" in p1,
+                   "page 1 renders kv pairs and progress bar"))
+    checks.append(("2/3" in p2 and "Compare" in p2 and "Before" in p2 and "After" in p2,
+                   "Right key flips to page 2/3 with 2-column split"))
+    checks.append(("dst" in p2 and "1.4M" in p2,
+                   "page 2 renders aligned table inside 53 cells"))
+    checks.append(("3/3" in p3 and "Summary" in p3 and "All checks passed" in p3,
+                   "Right key flips to page 3/3 with centered box card"))
+    checks.append((bool(saved_files) and "Battery" in saved_text and "All checks passed" in saved_text
+                   and "\x1b[" not in saved_text,
+                   "s saves all pages as clean ANSI-free text"))
+    checks.append(("saved" in saved and ".txt" in saved,
+                   "save notice appears in the footer"))
+    checks.append(("Dashboard closed." in dismissed,
+                   "Esc dismisses the rich artifact and continues the turn"))
     return checks
 
 
@@ -2314,6 +2347,8 @@ def check_btw_side_question(screens, reqs, work):
                        "the side question and its answer are not persisted"))
         checks.append(("Alpha noted." in joined and "Main reply." in after,
                        "the main conversation continues normally after the side question"))
+        checks.append(("/btw" not in after,
+                       "the /btw command itself does not pollute the main transcript"))
     return checks
 
 
@@ -2346,6 +2381,11 @@ def check_busy_commands(screens, reqs, work):
                       for m in (b.get("messages") or []))]
     checks.append((len(btw_req) == 1,
                    "the side question is one separate read-only request"))
+    if btw_req:
+        btw_joined = "\n".join(str(m.get("content") or "")
+                               for m in (btw_req[0].get("messages") or []))
+        checks.append(("start a slow job" in btw_joined and "bash" in btw_joined,
+                       "mid-turn /btw receives the current turn prompt and running tool status"))
     last_user = [str(m.get("content") or "")
                  for m in ((reqs[-1].get("messages") or []) if reqs else [])
                  if m.get("role") == "user"]
@@ -2394,6 +2434,8 @@ def check_usage_ring_reset(screens, reqs, work):
     checks.append((bool(startup), "the startup screen renders"))
     checks.append((any("\u25cb 0%" in l for l in ring_line),
                    "the context ring starts at 0%, not the previous session's value"))
+    checks.append(("dst v" in startup and "/update" in startup,
+                   "the one-time startup version banner is shown on launch"))
     checks.append((len(reqs) == 0, "no model request is needed for a fresh start"))
     return checks
 
@@ -2666,6 +2708,7 @@ CHECKS = {
     "commands": check_commands,
     "artifact": check_artifact,
     "artifact_scroll": check_artifact_scroll,
+    "artifact_rich": check_artifact_rich,
     "goal_blocked": check_goal_blocked,
     "goal": check_goal,
     "compact": check_compact,
